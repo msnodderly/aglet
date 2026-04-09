@@ -12,8 +12,9 @@ use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
-    ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource, Item, ItemId, Query, Section,
-    SummaryFn, View,
+    ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource, DatebookAnchor,
+    DatebookConfig, DatebookInterval, DatebookPeriod, Item, ItemId, Query, Section, SummaryFn,
+    View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
@@ -289,6 +290,119 @@ enum Command {
     Unlink {
         #[command(subcommand)]
         command: UnlinkCommand,
+    },
+
+    /// Item commands (alternative noun-verb syntax)
+    #[command(subcommand)]
+    Item(ItemCommand),
+}
+
+/// Noun-verb aliases for item operations: `agenda item add`, `agenda item list`, etc.
+#[derive(Subcommand, Debug)]
+enum ItemCommand {
+    /// Add a new item
+    Add {
+        /// Item title/text.
+        text: String,
+        /// Optional note/body text stored with the item.
+        #[arg(long)]
+        note: Option<String>,
+        /// Explicit date/time override for the item's `when` value.
+        #[arg(long)]
+        when: Option<String>,
+        /// Category to assign after item creation. Repeat for multiple categories.
+        #[arg(long = "category")]
+        categories: Vec<String>,
+        /// Numeric category assignment in CATEGORY=NUMBER form. Repeat as needed.
+        #[arg(long = "value")]
+        values: Vec<String>,
+    },
+
+    /// List items (optionally filtered)
+    List {
+        /// View to render.
+        #[arg(long)]
+        view: Option<String>,
+        /// Category filter (repeat for AND).
+        #[arg(long)]
+        category: Vec<String>,
+        /// OR-category filter (repeat for OR).
+        #[arg(long = "any-category")]
+        any_category: Vec<String>,
+        /// Exclude-category filter (repeat for OR).
+        #[arg(long = "exclude-category")]
+        exclude_category: Vec<String>,
+        /// Only include items blocked by at least one unresolved dependency.
+        #[arg(long, conflicts_with = "not_blocked")]
+        blocked: bool,
+        /// Only include items that are not blocked by unresolved dependencies.
+        #[arg(long = "not-blocked", conflicts_with = "blocked")]
+        not_blocked: bool,
+        /// Numeric equality filter: category value must equal VALUE.
+        #[arg(long = "value-eq", value_names = ["CATEGORY", "VALUE"], num_args = 2)]
+        value_eq: Vec<String>,
+        /// Numeric membership filter: category value must be in CSV_VALUES.
+        #[arg(long = "value-in", value_names = ["CATEGORY", "CSV_VALUES"], num_args = 2)]
+        value_in: Vec<String>,
+        /// Numeric max filter: category value must be <= VALUE.
+        #[arg(long = "value-max", value_names = ["CATEGORY", "VALUE"], num_args = 2)]
+        value_max: Vec<String>,
+        /// Sort key(s): item, when, or category name.
+        #[arg(long = "sort", value_name = "COLUMN[:asc|desc]")]
+        sort: Vec<String>,
+        /// Output format.
+        #[arg(long = "format", value_enum, default_value_t = OutputFormatArg::Table)]
+        format: OutputFormatArg,
+        /// Include done items (default excludes them).
+        #[arg(long)]
+        include_done: bool,
+    },
+
+    /// Show a single item with its assignments
+    Show {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
+
+    /// Edit an existing item's text, note, and/or done state
+    Edit {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+        /// New text (positional argument).
+        text: Option<String>,
+        /// Replace the entire note.
+        #[arg(long)]
+        note: Option<String>,
+        /// Append text to the existing note (separated by newline).
+        #[arg(long = "append-note")]
+        append_note: Option<String>,
+        /// Replace the note with stdin content.
+        #[arg(long = "note-stdin")]
+        note_stdin: bool,
+        /// Remove the note entirely.
+        #[arg(long = "clear-note")]
+        clear_note: bool,
+        /// Mark item done (`true`) or not done (`false`).
+        #[arg(long)]
+        done: Option<bool>,
+        /// Explicit date/time override for the item's `when` value.
+        #[arg(long)]
+        when: Option<String>,
+        /// Clear the item's explicit `when` value.
+        #[arg(long = "clear-when")]
+        clear_when: bool,
+        /// Set recurrence rule.
+        #[arg(long)]
+        recurrence: Option<String>,
+        /// Remove the recurrence rule from the item.
+        #[arg(long = "clear-recurrence")]
+        clear_recurrence: bool,
+    },
+
+    /// Delete an item (writes deletion log)
+    Delete {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
     },
 }
 
@@ -634,6 +748,35 @@ enum ViewCommand {
         #[arg(long)]
         clear: bool,
     },
+
+    /// Create a datebook (date-interval) view
+    #[command(name = "create-datebook")]
+    CreateDatebook {
+        /// New view name.
+        name: String,
+        /// Time window size.
+        #[arg(long, value_enum, default_value_t = CliDatebookPeriod::Week)]
+        period: CliDatebookPeriod,
+        /// Section granularity within the period.
+        #[arg(long, value_enum, default_value_t = CliDatebookInterval::Daily)]
+        interval: CliDatebookInterval,
+        /// Date anchor for the window start.
+        #[arg(long, value_enum, default_value_t = CliDatebookAnchor::StartOfWeek)]
+        anchor: CliDatebookAnchor,
+        /// Which date field to use for item placement.
+        #[arg(long, value_enum, default_value_t = DateSourceArg::When)]
+        date_source: DateSourceArg,
+    },
+
+    /// Shift a datebook view's browse window
+    #[command(name = "datebook-browse")]
+    DatebookBrowse {
+        /// View name (case-insensitive).
+        name: String,
+        /// Offset to apply: +N forward, -N backward, 0 reset to anchor.
+        #[arg(long, default_value_t = 1)]
+        offset: i32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -702,6 +845,71 @@ impl CliColumnKind {
         match self {
             Self::Standard => ColumnKind::Standard,
             Self::When => ColumnKind::When,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliDatebookPeriod {
+    Day,
+    Week,
+    Month,
+    Quarter,
+    Year,
+}
+
+impl CliDatebookPeriod {
+    fn into_model(self) -> DatebookPeriod {
+        match self {
+            Self::Day => DatebookPeriod::Day,
+            Self::Week => DatebookPeriod::Week,
+            Self::Month => DatebookPeriod::Month,
+            Self::Quarter => DatebookPeriod::Quarter,
+            Self::Year => DatebookPeriod::Year,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliDatebookInterval {
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+impl CliDatebookInterval {
+    fn into_model(self) -> DatebookInterval {
+        match self {
+            Self::Hourly => DatebookInterval::Hourly,
+            Self::Daily => DatebookInterval::Daily,
+            Self::Weekly => DatebookInterval::Weekly,
+            Self::Monthly => DatebookInterval::Monthly,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum CliDatebookAnchor {
+    Today,
+    #[value(name = "start-of-week")]
+    StartOfWeek,
+    #[value(name = "start-of-month")]
+    StartOfMonth,
+    #[value(name = "start-of-quarter")]
+    StartOfQuarter,
+    #[value(name = "start-of-year")]
+    StartOfYear,
+}
+
+impl CliDatebookAnchor {
+    fn into_model(self) -> DatebookAnchor {
+        match self {
+            Self::Today => DatebookAnchor::Today,
+            Self::StartOfWeek => DatebookAnchor::StartOfWeek,
+            Self::StartOfMonth => DatebookAnchor::StartOfMonth,
+            Self::StartOfQuarter => DatebookAnchor::StartOfQuarter,
+            Self::StartOfYear => DatebookAnchor::StartOfYear,
         }
     }
 }
@@ -1064,6 +1272,83 @@ fn run() -> Result<(), String> {
         Command::Import { command } => cmd_import(&agenda, &store, command),
         Command::Link { command } => cmd_link(&agenda, command),
         Command::Unlink { command } => cmd_unlink(&agenda, command),
+        Command::Item(item_cmd) => match item_cmd {
+            ItemCommand::Add {
+                text,
+                note,
+                when,
+                categories,
+                values,
+            } => cmd_add(&agenda, text, note, when, categories, values),
+            ItemCommand::List {
+                view,
+                category,
+                any_category,
+                exclude_category,
+                blocked,
+                not_blocked,
+                value_eq,
+                value_in,
+                value_max,
+                sort,
+                format,
+                include_done,
+            } => cmd_list(
+                &store,
+                view,
+                ListFilters {
+                    all_categories: category,
+                    any_categories: any_category,
+                    exclude_categories: exclude_category,
+                    dependency_state_filter: dependency_state_filter_from_flags(
+                        blocked,
+                        not_blocked,
+                    ),
+                    value_eq,
+                    value_in,
+                    value_max,
+                    include_done,
+                },
+                sort,
+                format,
+            ),
+            ItemCommand::Show { item_id } => cmd_show(&store, item_id),
+            ItemCommand::Edit {
+                item_id,
+                text,
+                note,
+                append_note,
+                note_stdin: note_stdin_flag,
+                clear_note,
+                done,
+                when,
+                clear_when,
+                recurrence,
+                clear_recurrence,
+            } => {
+                let note_stdin = if note_stdin_flag {
+                    let mut stdin = io::stdin().lock();
+                    Some(read_note_from_stdin(&mut stdin)?)
+                } else {
+                    None
+                };
+                cmd_edit(
+                    &agenda,
+                    item_id,
+                    text,
+                    note,
+                    append_note,
+                    note_stdin,
+                    clear_note,
+                    done,
+                    when,
+                    clear_when,
+                    recurrence,
+                    clear_recurrence,
+                )
+            }
+            ItemCommand::Delete { item_id } => cmd_delete(&agenda, item_id),
+        },
         Command::Tui => Ok(()),
     }
 }
@@ -3203,6 +3488,56 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             };
             store.update_view(&view).map_err(|e| e.to_string())?;
             println!("updated remove-from-view categories for view {}", view.name);
+            Ok(())
+        }
+
+        ViewCommand::CreateDatebook {
+            name,
+            period,
+            interval,
+            anchor,
+            date_source,
+        } => {
+            let config = DatebookConfig {
+                period: period.into_model(),
+                interval: interval.into_model(),
+                anchor: anchor.into_model(),
+                date_source: date_source.into_model(),
+                browse_offset: 0,
+                ..Default::default()
+            };
+            if !config.is_valid() {
+                return Err(format!(
+                    "invalid datebook config: {} interval is too coarse for {} period",
+                    config.interval.label(),
+                    config.period.label(),
+                ));
+            }
+            let mut view = View::new(name);
+            view.datebook_config = Some(config);
+            store.create_view(&view).map_err(|e| e.to_string())?;
+            println!("created datebook view \"{}\"", view.name);
+            Ok(())
+        }
+
+        ViewCommand::DatebookBrowse { name, offset } => {
+            let mut view = view_by_name(store, &name)?;
+            ensure_mutable_view(&view)?;
+            if view.datebook_config.is_none() {
+                return Err(format!("\"{}\" is not a datebook view", view.name));
+            }
+            let config = view.datebook_config.as_mut().unwrap();
+            if offset == 0 {
+                config.browse_offset = 0;
+            } else {
+                config.browse_offset += offset;
+            }
+            let new_offset = config.browse_offset;
+            store.update_view(&view).map_err(|e| e.to_string())?;
+            println!(
+                "browse offset for \"{}\" set to {}",
+                view.name, new_offset
+            );
             Ok(())
         }
     }

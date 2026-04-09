@@ -2430,7 +2430,7 @@ impl App {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
                 self.status =
-                    "View palette: Enter switch, n create, r rename, x delete, e edit view, Esc cancel"
+                    "View palette: Enter switch, n new, d datebook, r rename, x delete, e edit, Esc cancel"
                         .to_string();
             }
             KeyCode::F(10) => {
@@ -2552,6 +2552,15 @@ impl App {
             }
             KeyCode::Char('[') => {
                 self.move_selected_item_between_slots(-1, agenda)?;
+            }
+            KeyCode::Char('}') => {
+                self.datebook_browse(1, agenda)?;
+            }
+            KeyCode::Char('{') => {
+                self.datebook_browse(-1, agenda)?;
+            }
+            KeyCode::Char('0') => {
+                self.datebook_browse(0, agenda)?;
             }
             KeyCode::Char('=') => {
                 let item_ids: Vec<ItemId> = if self.has_selected_items() {
@@ -3174,6 +3183,43 @@ impl App {
                 SectionFlow::Horizontal => "horizontal",
             }
         );
+        Ok(())
+    }
+
+    /// Browse a datebook view forward/backward by one period, or reset to today.
+    /// `delta`: +1 = forward, -1 = backward, 0 = reset to today.
+    fn datebook_browse(&mut self, delta: i32, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(mut view) = self.current_view().cloned() else {
+            return Ok(());
+        };
+        let Some(config) = &mut view.datebook_config else {
+            self.status = "Not a datebook view".to_string();
+            return Ok(());
+        };
+        if delta == 0 {
+            config.browse_offset = 0;
+        } else {
+            config.browse_offset += delta;
+        }
+        let offset = config.browse_offset;
+        let period_label = config.period.label().to_lowercase();
+        let view_name = view.name.clone();
+
+        agenda.store().update_view(&view)?;
+        self.refresh(agenda.store())?;
+        self.set_view_selection_by_name(&view_name);
+
+        self.status = if offset == 0 {
+            format!("Datebook: this {period_label}")
+        } else if offset == 1 {
+            format!("Datebook: next {period_label}")
+        } else if offset == -1 {
+            format!("Datebook: last {period_label}")
+        } else if offset > 0 {
+            format!("Datebook: {offset} {period_label}s ahead")
+        } else {
+            format!("Datebook: {} {period_label}s ago", offset.abs())
+        };
         Ok(())
     }
 
@@ -3836,10 +3882,16 @@ impl App {
             })
             .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
 
-        self.input_panel = Some(input_panel::InputPanel::new_add_item(
-            &section_title,
-            &on_insert_assign,
-        ));
+        let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
+
+        // For datebook views, pre-fill the when date from the current section's
+        // date range so items are created in the focused time slot.
+        if let Some(date_str) = self.datebook_slot_date_string() {
+            panel.when_buffer = text_buffer::TextBuffer::new(date_str.clone());
+            panel.original_when = date_str;
+        }
+
+        self.input_panel = Some(panel);
         self.mode = Mode::InputPanel;
         self.status = "Add item: type text, Tab for note/categories, Esc to close".to_string();
     }
@@ -4865,9 +4917,13 @@ impl App {
         }
 
         // Insert into section context (applies on_insert_assign rules).
+        // Skip for datebook views: items land in sections by when_date, not
+        // category assignment, and datebook views have no manual sections.
         if let Some(view) = self.current_view().cloned() {
-            if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
-                self.insert_into_context(agenda, item.id, &view, &context)?;
+            if view.datebook_config.is_none() {
+                if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
+                    self.insert_into_context(agenda, item.id, &view, &context)?;
+                }
             }
         }
 

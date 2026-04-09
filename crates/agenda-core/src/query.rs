@@ -2,7 +2,10 @@ use jiff::civil::{Date, DateTime};
 use jiff::Span;
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{Category, CategoryId, Item, Query, Section, View, WhenBucket};
+use crate::model::{
+    month_name, weekday_name, Category, CategoryId, DateSource, DatebookAnchor, DatebookConfig,
+    DatebookInterval, DatebookPeriod, Item, Query, Section, View, WhenBucket,
+};
 
 /// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
 pub fn resolve_when_bucket(
@@ -106,6 +109,10 @@ pub fn resolve_view(
     categories: &[Category],
     reference_date: Date,
 ) -> ViewResult {
+    if let Some(config) = &view.datebook_config {
+        return resolve_datebook_view(view, config, items, reference_date);
+    }
+
     let categories_by_id: HashMap<CategoryId, &Category> = categories
         .iter()
         .map(|category| (category.id, category))
@@ -373,6 +380,228 @@ fn start_of_iso_week(date: Date) -> Date {
     let offset = date.weekday().to_monday_zero_offset() as i64;
     date.checked_sub(Span::new().days(offset))
         .expect("valid ISO week start")
+}
+
+// ── Datebook section generation ─────────────────────────────────────
+
+/// A dynamically generated datebook section with time boundaries.
+#[derive(Debug, Clone)]
+pub struct DatebookSection {
+    pub title: String,
+    pub range_start: DateTime,
+    pub range_end: DateTime, // exclusive
+}
+
+/// Generate the section boundaries for a datebook view.
+pub fn generate_datebook_sections(
+    config: &DatebookConfig,
+    reference_date: Date,
+) -> Vec<DatebookSection> {
+    let (window_start, window_end) = compute_datebook_window(config, reference_date);
+    let mut sections = Vec::new();
+    let mut cursor = window_start;
+    while cursor < window_end {
+        let next = advance_by_interval(cursor, config.interval);
+        let clamped = if next > window_end { window_end } else { next };
+        sections.push(DatebookSection {
+            title: format_datebook_section_title(cursor, clamped, config),
+            range_start: cursor,
+            range_end: clamped,
+        });
+        cursor = next;
+    }
+    sections
+}
+
+/// Compute the visible time window for a datebook config.
+pub fn compute_datebook_window(
+    config: &DatebookConfig,
+    reference_date: Date,
+) -> (DateTime, DateTime) {
+    let base = resolve_datebook_anchor(&config.anchor, reference_date);
+    let shifted = apply_browse_offset(base, config.period, config.browse_offset);
+    let end = advance_by_period(shifted, config.period);
+    (shifted, end)
+}
+
+fn resolve_datebook_anchor(anchor: &DatebookAnchor, ref_date: Date) -> DateTime {
+    match anchor {
+        DatebookAnchor::Today => ref_date.at(0, 0, 0, 0),
+        DatebookAnchor::StartOfWeek => start_of_iso_week(ref_date).at(0, 0, 0, 0),
+        DatebookAnchor::StartOfMonth => Date::new(ref_date.year(), ref_date.month(), 1)
+            .expect("first of month is valid")
+            .at(0, 0, 0, 0),
+        DatebookAnchor::StartOfQuarter => {
+            let q_month = ((ref_date.month() - 1) / 3) * 3 + 1;
+            Date::new(ref_date.year(), q_month, 1)
+                .expect("quarter start is valid")
+                .at(0, 0, 0, 0)
+        }
+        DatebookAnchor::StartOfYear => Date::new(ref_date.year(), 1, 1)
+            .expect("jan 1 is valid")
+            .at(0, 0, 0, 0),
+        DatebookAnchor::Absolute(d) => d.at(0, 0, 0, 0),
+    }
+}
+
+fn advance_by_period(dt: DateTime, period: DatebookPeriod) -> DateTime {
+    let span = match period {
+        DatebookPeriod::Day => Span::new().days(1),
+        DatebookPeriod::Week => Span::new().weeks(1),
+        DatebookPeriod::Month => Span::new().months(1),
+        DatebookPeriod::Quarter => Span::new().months(3),
+        DatebookPeriod::Year => Span::new().years(1),
+    };
+    dt.checked_add(span).expect("period advance overflow")
+}
+
+fn advance_by_interval(dt: DateTime, interval: DatebookInterval) -> DateTime {
+    let span = match interval {
+        DatebookInterval::Hourly => Span::new().hours(1),
+        DatebookInterval::Daily => Span::new().days(1),
+        DatebookInterval::Weekly => Span::new().weeks(1),
+        DatebookInterval::Monthly => Span::new().months(1),
+    };
+    dt.checked_add(span).expect("interval advance overflow")
+}
+
+fn apply_browse_offset(base: DateTime, period: DatebookPeriod, offset: i32) -> DateTime {
+    if offset == 0 {
+        return base;
+    }
+    let span = match period {
+        DatebookPeriod::Day => Span::new().days(i64::from(offset)),
+        DatebookPeriod::Week => Span::new().weeks(i64::from(offset)),
+        DatebookPeriod::Month => Span::new().months(offset),
+        DatebookPeriod::Quarter => Span::new().months(offset * 3),
+        DatebookPeriod::Year => Span::new().years(offset),
+    };
+    base.checked_add(span).expect("browse offset overflow")
+}
+
+fn format_datebook_section_title(
+    start: DateTime,
+    end: DateTime,
+    config: &DatebookConfig,
+) -> String {
+    match config.interval {
+        DatebookInterval::Hourly => {
+            // "Mon Apr 7, 09:00"
+            format!(
+                "{}, {:02}:{:02}",
+                format_date_short(start.date()),
+                start.hour(),
+                start.minute()
+            )
+        }
+        DatebookInterval::Daily => {
+            // "Mon, Apr 7"
+            format_date_with_weekday(start.date())
+        }
+        DatebookInterval::Weekly => {
+            // "Apr 7 - Apr 13"
+            let end_date = end
+                .checked_sub(Span::new().days(1))
+                .unwrap_or(end)
+                .date();
+            format!(
+                "{} - {}",
+                format_date_short(start.date()),
+                format_date_short(end_date)
+            )
+        }
+        DatebookInterval::Monthly => {
+            // "April 2026"
+            format!(
+                "{} {}",
+                month_name(start.date().month() as u8),
+                start.date().year()
+            )
+        }
+    }
+}
+
+/// Short date: "Apr 7" or "Apr 7, 2027" if year differs from section start context.
+fn format_date_short(date: Date) -> String {
+    let month_abbr = &month_name(date.month() as u8)[..3];
+    format!("{} {}", month_abbr, date.day())
+}
+
+/// Date with weekday: "Mon, Apr 7"
+fn format_date_with_weekday(date: Date) -> String {
+    let wd = &weekday_name(date.weekday())[..3];
+    let month_abbr = &month_name(date.month() as u8)[..3];
+    format!("{}, {} {}", wd, month_abbr, date.day())
+}
+
+/// Extract the relevant date from an item based on the configured date source.
+pub fn extract_item_date(item: &Item, source: DateSource) -> Option<DateTime> {
+    match source {
+        DateSource::When => item.when_date,
+        DateSource::Done => item.done_date,
+        DateSource::Entry => {
+            let zdt = item.created_at.to_zoned(jiff::tz::TimeZone::UTC);
+            Some(zdt.datetime())
+        }
+    }
+}
+
+/// Resolve a datebook view into ordered section groups.
+fn resolve_datebook_view(
+    view: &View,
+    config: &DatebookConfig,
+    items: &[Item],
+    reference_date: Date,
+) -> ViewResult {
+    // 1. Apply view-level criteria filter
+    let view_items: Vec<Item> = evaluate_query(&view.criteria, items, reference_date)
+        .into_iter()
+        .cloned()
+        .collect();
+
+    // 2. Generate time-interval sections
+    let db_sections = generate_datebook_sections(config, reference_date);
+
+    // 3. Bucket items into sections by date
+    let mut matched_ids = HashSet::new();
+    let sections: Vec<ViewSectionResult> = db_sections
+        .iter()
+        .enumerate()
+        .map(|(idx, ds)| {
+            let section_items: Vec<Item> = view_items
+                .iter()
+                .filter(|item| {
+                    let dt = extract_item_date(item, config.date_source);
+                    matches!(dt, Some(d) if d >= ds.range_start && d < ds.range_end)
+                })
+                .cloned()
+                .collect();
+            matched_ids.extend(section_items.iter().map(|i| i.id));
+            ViewSectionResult {
+                section_index: idx,
+                title: ds.title.clone(),
+                items: section_items,
+                subsections: Vec::new(),
+            }
+        })
+        .collect();
+
+    // 4. Unmatched: items with no date or date outside window
+    let (unmatched, unmatched_label) = if view.show_unmatched {
+        let unmatched_items = view_items
+            .into_iter()
+            .filter(|item| !matched_ids.contains(&item.id))
+            .collect();
+        (Some(unmatched_items), Some(view.unmatched_label.clone()))
+    } else {
+        (None, None)
+    };
+
+    ViewResult {
+        sections,
+        unmatched,
+        unmatched_label,
+    }
 }
 
 #[cfg(test)]
@@ -1643,5 +1872,317 @@ mod tests {
     fn text_search_no_match_returns_false() {
         let item = item_with_assignments("alpha", None, None, &[]);
         assert!(!matches_text_search(&item, "zzz", None));
+    }
+
+    // ── Datebook tests ──────────────────────────────────────────────
+
+    use super::{
+        compute_datebook_window, extract_item_date, generate_datebook_sections,
+    };
+    use crate::model::{
+        DateSource, DatebookAnchor, DatebookConfig, DatebookInterval, DatebookPeriod,
+    };
+
+    fn default_datebook_config() -> DatebookConfig {
+        DatebookConfig::default()
+    }
+
+    #[test]
+    fn datebook_config_validation() {
+        let mut c = default_datebook_config();
+        // Week + Daily is valid
+        assert!(c.is_valid());
+
+        // Week + Monthly is invalid (too coarse)
+        c.interval = DatebookInterval::Monthly;
+        assert!(!c.is_valid());
+
+        // Day + Hourly is valid
+        c.period = DatebookPeriod::Day;
+        c.interval = DatebookInterval::Hourly;
+        assert!(c.is_valid());
+
+        // Day + Daily is invalid
+        c.interval = DatebookInterval::Daily;
+        assert!(!c.is_valid());
+
+        // Quarter + Monthly is valid
+        c.period = DatebookPeriod::Quarter;
+        c.interval = DatebookInterval::Monthly;
+        assert!(c.is_valid());
+
+        // Quarter + Daily is invalid
+        c.interval = DatebookInterval::Daily;
+        assert!(!c.is_valid());
+
+        // Year + Weekly is valid
+        c.period = DatebookPeriod::Year;
+        c.interval = DatebookInterval::Weekly;
+        assert!(c.is_valid());
+    }
+
+    #[test]
+    fn datebook_week_daily_generates_7_sections() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::StartOfWeek,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        // 2026-04-06 is a Monday
+        let reference = day(2026, 4, 6);
+        let sections = generate_datebook_sections(&config, reference);
+        assert_eq!(sections.len(), 7);
+        assert_eq!(sections[0].range_start, datetime(2026, 4, 6, 0, 0));
+        assert_eq!(sections[0].range_end, datetime(2026, 4, 7, 0, 0));
+        assert_eq!(sections[6].range_start, datetime(2026, 4, 12, 0, 0));
+        assert_eq!(sections[6].range_end, datetime(2026, 4, 13, 0, 0));
+        // Title format: "Mon, Apr 6"
+        assert!(sections[0].title.contains("Mon"));
+        assert!(sections[0].title.contains("Apr"));
+    }
+
+    #[test]
+    fn datebook_month_weekly_generates_sections() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Month,
+            interval: DatebookInterval::Weekly,
+            anchor: DatebookAnchor::StartOfMonth,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        // April 2026
+        let reference = day(2026, 4, 15);
+        let sections = generate_datebook_sections(&config, reference);
+        // April 1 to May 1 = ~4-5 weekly sections
+        assert!(sections.len() >= 4 && sections.len() <= 5);
+        assert_eq!(sections[0].range_start, datetime(2026, 4, 1, 0, 0));
+    }
+
+    #[test]
+    fn datebook_quarter_monthly_generates_3_sections() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Quarter,
+            interval: DatebookInterval::Monthly,
+            anchor: DatebookAnchor::StartOfQuarter,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        // Q2 2026
+        let reference = day(2026, 5, 10);
+        let sections = generate_datebook_sections(&config, reference);
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0].range_start, datetime(2026, 4, 1, 0, 0));
+        assert_eq!(sections[1].range_start, datetime(2026, 5, 1, 0, 0));
+        assert_eq!(sections[2].range_start, datetime(2026, 6, 1, 0, 0));
+        assert!(sections[0].title.contains("April"));
+        assert!(sections[1].title.contains("May"));
+        assert!(sections[2].title.contains("June"));
+    }
+
+    #[test]
+    fn datebook_day_hourly_generates_24_sections() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Day,
+            interval: DatebookInterval::Hourly,
+            anchor: DatebookAnchor::Today,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        let reference = day(2026, 4, 6);
+        let sections = generate_datebook_sections(&config, reference);
+        assert_eq!(sections.len(), 24);
+        assert_eq!(sections[0].range_start, datetime(2026, 4, 6, 0, 0));
+        assert_eq!(sections[9].range_start, datetime(2026, 4, 6, 9, 0));
+        assert_eq!(sections[23].range_start, datetime(2026, 4, 6, 23, 0));
+    }
+
+    #[test]
+    fn datebook_browse_offset_shifts_window() {
+        let mut config = DatebookConfig {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::StartOfWeek,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        let reference = day(2026, 4, 6); // Monday
+
+        // No offset: Apr 6 - Apr 12
+        let (start, end) = compute_datebook_window(&config, reference);
+        assert_eq!(start, datetime(2026, 4, 6, 0, 0));
+        assert_eq!(end, datetime(2026, 4, 13, 0, 0));
+
+        // +1 week forward: Apr 13 - Apr 19
+        config.browse_offset = 1;
+        let (start, end) = compute_datebook_window(&config, reference);
+        assert_eq!(start, datetime(2026, 4, 13, 0, 0));
+        assert_eq!(end, datetime(2026, 4, 20, 0, 0));
+
+        // -1 week backward: Mar 30 - Apr 5
+        config.browse_offset = -1;
+        let (start, end) = compute_datebook_window(&config, reference);
+        assert_eq!(start, datetime(2026, 3, 30, 0, 0));
+        assert_eq!(end, datetime(2026, 4, 6, 0, 0));
+    }
+
+    #[test]
+    fn datebook_resolve_buckets_items() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::StartOfWeek,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        let mut view = View::new("Week".to_string());
+        view.datebook_config = Some(config);
+
+        let reference = day(2026, 4, 6); // Monday
+
+        let items = vec![
+            item_with_assignments("Monday task", None, Some(datetime(2026, 4, 6, 10, 0)), &[]),
+            item_with_assignments("Wednesday task", None, Some(datetime(2026, 4, 8, 14, 30)), &[]),
+            item_with_assignments("No date task", None, None, &[]),
+            item_with_assignments(
+                "Outside window",
+                None,
+                Some(datetime(2026, 4, 20, 9, 0)),
+                &[],
+            ),
+        ];
+
+        let result = resolve_view(&view, &items, &[], reference);
+
+        // 7 sections (one per day)
+        assert_eq!(result.sections.len(), 7);
+
+        // Monday task in section 0
+        assert_eq!(result.sections[0].items.len(), 1);
+        assert_eq!(result.sections[0].items[0].text, "Monday task");
+
+        // Wednesday task in section 2
+        assert_eq!(result.sections[2].items.len(), 1);
+        assert_eq!(result.sections[2].items[0].text, "Wednesday task");
+
+        // Unmatched: "No date task" + "Outside window"
+        let unmatched = result.unmatched.as_ref().unwrap();
+        assert_eq!(unmatched.len(), 2);
+    }
+
+    #[test]
+    fn datebook_boundary_item_goes_to_later_section() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::StartOfWeek,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        let mut view = View::new("Week".to_string());
+        view.datebook_config = Some(config);
+        let reference = day(2026, 4, 6);
+
+        // Item exactly at midnight Tuesday = start of section 1 (inclusive)
+        let items = vec![item_with_assignments(
+            "Midnight Tuesday",
+            None,
+            Some(datetime(2026, 4, 7, 0, 0)),
+            &[],
+        )];
+
+        let result = resolve_view(&view, &items, &[], reference);
+        assert_eq!(result.sections[1].items.len(), 1); // Tuesday section
+        assert_eq!(result.sections[0].items.len(), 0); // Not Monday
+    }
+
+    #[test]
+    fn datebook_year_monthly_sections() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Year,
+            interval: DatebookInterval::Monthly,
+            anchor: DatebookAnchor::StartOfYear,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        let reference = day(2026, 6, 15);
+        let sections = generate_datebook_sections(&config, reference);
+        assert_eq!(sections.len(), 12);
+        assert!(sections[0].title.contains("January"));
+        assert!(sections[11].title.contains("December"));
+    }
+
+    #[test]
+    fn datebook_anchor_start_of_quarter() {
+        let config = DatebookConfig {
+            period: DatebookPeriod::Quarter,
+            interval: DatebookInterval::Monthly,
+            anchor: DatebookAnchor::StartOfQuarter,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        // January -> Q1 starts Jan 1
+        let (start, _) = compute_datebook_window(&config, day(2026, 1, 15));
+        assert_eq!(start, datetime(2026, 1, 1, 0, 0));
+
+        // March -> still Q1
+        let (start, _) = compute_datebook_window(&config, day(2026, 3, 31));
+        assert_eq!(start, datetime(2026, 1, 1, 0, 0));
+
+        // April -> Q2
+        let (start, _) = compute_datebook_window(&config, day(2026, 4, 1));
+        assert_eq!(start, datetime(2026, 4, 1, 0, 0));
+
+        // December -> Q4
+        let (start, _) = compute_datebook_window(&config, day(2026, 12, 25));
+        assert_eq!(start, datetime(2026, 10, 1, 0, 0));
+    }
+
+    #[test]
+    fn datebook_extract_item_date_sources() {
+        let mut item = Item::new("test".to_string());
+        item.when_date = Some(datetime(2026, 4, 6, 10, 0));
+        item.done_date = Some(datetime(2026, 4, 7, 11, 0));
+
+        assert_eq!(
+            extract_item_date(&item, DateSource::When),
+            Some(datetime(2026, 4, 6, 10, 0))
+        );
+        assert_eq!(
+            extract_item_date(&item, DateSource::Done),
+            Some(datetime(2026, 4, 7, 11, 0))
+        );
+        // Entry source derives from created_at (UTC timestamp)
+        assert!(extract_item_date(&item, DateSource::Entry).is_some());
+    }
+
+    #[test]
+    fn datebook_month_end_clamping_feb() {
+        // Monthly interval across months with different lengths
+        let config = DatebookConfig {
+            period: DatebookPeriod::Quarter,
+            interval: DatebookInterval::Monthly,
+            anchor: DatebookAnchor::StartOfQuarter,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            ..Default::default()
+        };
+        // Q1 2024 (leap year)
+        let reference = day(2024, 2, 15);
+        let sections = generate_datebook_sections(&config, reference);
+        assert_eq!(sections.len(), 3);
+        // Feb in leap year has 29 days
+        assert_eq!(sections[1].range_start, datetime(2024, 2, 1, 0, 0));
+        assert_eq!(sections[1].range_end, datetime(2024, 3, 1, 0, 0));
     }
 }

@@ -21,7 +21,7 @@ use crate::model::{
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 17;
+const SCHEMA_VERSION: i32 = 18;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS views (
     item_column_label           TEXT,
     board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
     section_flow                TEXT NOT NULL DEFAULT 'Vertical',
-    hide_dependent_items        INTEGER NOT NULL DEFAULT 0
+    hide_dependent_items        INTEGER NOT NULL DEFAULT 0,
+    datebook_config_json        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS deletion_log (
@@ -1026,14 +1027,19 @@ impl Store {
                 }
             })?;
 
+        let datebook_config_json: Option<String> = view
+            .datebook_config
+            .as_ref()
+            .map(|c| serde_json::to_string(c).expect("DatebookConfig serializable"));
+
         self.conn
             .execute(
                 "INSERT INTO views (
                     id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    section_flow, hide_dependent_items
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    section_flow, hide_dependent_items, datebook_config_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     view.id.to_string(),
                     view.name,
@@ -1050,6 +1056,7 @@ impl Store {
                     serde_json::to_string(&view.section_flow)
                         .unwrap_or_else(|_| "\"Vertical\"".to_string()),
                     view.hide_dependent_items as i32,
+                    datebook_config_json,
                 ],
             )
             .map_err(|err| Self::map_view_write_error(err, &view.name))?;
@@ -1062,7 +1069,7 @@ impl Store {
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    section_flow, hide_dependent_items
+                    section_flow, hide_dependent_items, datebook_config_json
              FROM views WHERE id = ?1",
         )?;
         stmt.query_row(params![id.to_string()], Self::row_to_view)
@@ -1109,6 +1116,11 @@ impl Store {
                 }
             })?;
 
+        let datebook_config_json: Option<String> = view
+            .datebook_config
+            .as_ref()
+            .map(|c| serde_json::to_string(c).expect("DatebookConfig serializable"));
+
         let rows = self
             .conn
             .execute(
@@ -1124,8 +1136,9 @@ impl Store {
                      item_column_label = ?9,
                      board_display_mode = ?10,
                      section_flow = ?11,
-                     hide_dependent_items = ?12
-                 WHERE id = ?13",
+                     hide_dependent_items = ?12,
+                     datebook_config_json = ?13
+                 WHERE id = ?14",
                 params![
                     view.name,
                     criteria_json,
@@ -1141,6 +1154,7 @@ impl Store {
                     serde_json::to_string(&view.section_flow)
                         .unwrap_or_else(|_| "\"Vertical\"".to_string()),
                     view.hide_dependent_items as i32,
+                    datebook_config_json,
                     view.id.to_string(),
                 ],
             )
@@ -1159,7 +1173,7 @@ impl Store {
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    section_flow, hide_dependent_items
+                    section_flow, hide_dependent_items, datebook_config_json
              FROM views
              ORDER BY name COLLATE NOCASE ASC",
         )?;
@@ -1365,6 +1379,7 @@ impl Store {
         let board_display_mode_json: Option<String> = row.get(10)?;
         let section_flow_json: Option<String> = row.get(11)?;
         let hide_dependent_items: Option<i32> = row.get(12)?;
+        let datebook_config_json: Option<String> = row.get(13)?;
 
         // Corrupt or legacy view row: fall back to empty defaults so the view
         // still loads rather than failing the entire hierarchy read.
@@ -1381,6 +1396,8 @@ impl Store {
         let section_flow = section_flow_json
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or(SectionFlow::Vertical);
+        let datebook_config = datebook_config_json
+            .and_then(|json| serde_json::from_str(&json).ok());
 
         Ok(View {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
@@ -1395,6 +1412,7 @@ impl Store {
             board_display_mode,
             section_flow,
             hide_dependent_items: hide_dependent_items.unwrap_or(0) != 0,
+            datebook_config,
         })
     }
 
@@ -2339,6 +2357,13 @@ impl Store {
                     "ALTER TABLE items ADD COLUMN recurrence_parent_item_id TEXT;",
                 )?;
             }
+        }
+
+        // v17 → v18: datebook config on views
+        if !self.column_exists("views", "datebook_config_json")? {
+            self.conn.execute_batch(
+                "ALTER TABLE views ADD COLUMN datebook_config_json TEXT;",
+            )?;
         }
 
         Ok(())

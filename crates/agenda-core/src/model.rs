@@ -241,7 +241,7 @@ pub fn weekday_to_u8(wd: jiff::civil::Weekday) -> u8 {
     wd.to_monday_one_offset() as u8
 }
 
-fn weekday_name(wd: jiff::civil::Weekday) -> &'static str {
+pub(crate) fn weekday_name(wd: jiff::civil::Weekday) -> &'static str {
     match wd {
         jiff::civil::Weekday::Monday => "Monday",
         jiff::civil::Weekday::Tuesday => "Tuesday",
@@ -253,7 +253,7 @@ fn weekday_name(wd: jiff::civil::Weekday) -> &'static str {
     }
 }
 
-fn month_name(m: u8) -> &'static str {
+pub(crate) fn month_name(m: u8) -> &'static str {
     match m {
         1 => "January",
         2 => "February",
@@ -677,6 +677,24 @@ pub enum DateSource {
     Done,
 }
 
+impl DateSource {
+    pub fn next(self) -> Self {
+        match self {
+            Self::When => Self::Entry,
+            Self::Entry => Self::Done,
+            Self::Done => Self::When,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::When => "When",
+            Self::Entry => "Entry",
+            Self::Done => "Done",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DateCompareOp {
     On,
@@ -749,6 +767,8 @@ pub struct View {
     pub section_flow: SectionFlow,
     #[serde(default)]
     pub hide_dependent_items: bool,
+    #[serde(default)]
+    pub datebook_config: Option<DatebookConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -764,6 +784,192 @@ pub enum SectionFlow {
     Vertical,
     Horizontal,
 }
+
+// ── Datebook view types ─────────────────────────────────────────────
+
+/// The total time span shown in a datebook view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DatebookPeriod {
+    Day,
+    Week,
+    Month,
+    Quarter,
+    Year,
+}
+
+impl DatebookPeriod {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Day => Self::Week,
+            Self::Week => Self::Month,
+            Self::Month => Self::Quarter,
+            Self::Quarter => Self::Year,
+            Self::Year => Self::Day,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Day => "Day",
+            Self::Week => "Week",
+            Self::Month => "Month",
+            Self::Quarter => "Quarter",
+            Self::Year => "Year",
+        }
+    }
+}
+
+/// The granularity of each auto-generated section within the period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DatebookInterval {
+    Hourly,
+    Daily,
+    Weekly,
+    Monthly,
+}
+
+impl DatebookInterval {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hourly => Self::Daily,
+            Self::Daily => Self::Weekly,
+            Self::Weekly => Self::Monthly,
+            Self::Monthly => Self::Hourly,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hourly => "Hourly",
+            Self::Daily => "Daily",
+            Self::Weekly => "Weekly",
+            Self::Monthly => "Monthly",
+        }
+    }
+}
+
+/// How the base date of the datebook window is anchored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DatebookAnchor {
+    Today,
+    StartOfWeek,
+    StartOfMonth,
+    StartOfQuarter,
+    StartOfYear,
+    Absolute(jiff::civil::Date),
+}
+
+impl DatebookAnchor {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Today => Self::StartOfWeek,
+            Self::StartOfWeek => Self::StartOfMonth,
+            Self::StartOfMonth => Self::StartOfQuarter,
+            Self::StartOfQuarter => Self::StartOfYear,
+            Self::StartOfYear => Self::Today,
+            Self::Absolute(_) => Self::Today,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Today => "Today",
+            Self::StartOfWeek => "Start of week",
+            Self::StartOfMonth => "Start of month",
+            Self::StartOfQuarter => "Start of quarter",
+            Self::StartOfYear => "Start of year",
+            Self::Absolute(_) => "Absolute date",
+        }
+    }
+}
+
+/// Controls how empty sections are displayed on the board.
+///
+/// Defined as a standalone enum so it can later be promoted to a view-level
+/// setting without restructuring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EmptySections {
+    /// All sections rendered with equal space (default).
+    #[default]
+    Show,
+    /// Empty sections collapse to a single header line.
+    Collapse,
+    /// Empty sections are hidden entirely.
+    Hide,
+}
+
+impl EmptySections {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Show => Self::Collapse,
+            Self::Collapse => Self::Hide,
+            Self::Hide => Self::Show,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Show => "Show all",
+            Self::Collapse => "Collapse",
+            Self::Hide => "Hide",
+        }
+    }
+}
+
+/// Configuration for a datebook (time-interval) view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatebookConfig {
+    pub period: DatebookPeriod,
+    pub interval: DatebookInterval,
+    pub anchor: DatebookAnchor,
+    pub date_source: DateSource,
+    /// How to display empty time-slot sections.
+    #[serde(default)]
+    pub empty_sections: EmptySections,
+    /// Signed offset: +1 = shift forward by one period, -1 backward.
+    #[serde(default)]
+    pub browse_offset: i32,
+}
+
+impl DatebookConfig {
+    /// Validate that the interval is finer than the period.
+    pub fn is_valid(&self) -> bool {
+        match self.period {
+            DatebookPeriod::Day => matches!(self.interval, DatebookInterval::Hourly),
+            DatebookPeriod::Week => matches!(
+                self.interval,
+                DatebookInterval::Hourly | DatebookInterval::Daily
+            ),
+            DatebookPeriod::Month => matches!(
+                self.interval,
+                DatebookInterval::Daily | DatebookInterval::Weekly
+            ),
+            DatebookPeriod::Quarter => matches!(
+                self.interval,
+                DatebookInterval::Weekly | DatebookInterval::Monthly
+            ),
+            DatebookPeriod::Year => matches!(
+                self.interval,
+                DatebookInterval::Weekly | DatebookInterval::Monthly
+            ),
+        }
+    }
+}
+
+impl Default for DatebookConfig {
+    fn default() -> Self {
+        Self {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::StartOfWeek,
+            date_source: DateSource::When,
+            empty_sections: EmptySections::default(),
+            browse_offset: 0,
+        }
+    }
+}
+
+// ── Section ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
@@ -1107,6 +1313,7 @@ impl View {
             board_display_mode: BoardDisplayMode::SingleLine,
             section_flow: SectionFlow::Vertical,
             hide_dependent_items: false,
+            datebook_config: None,
         }
     }
 }

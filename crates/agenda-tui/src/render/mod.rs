@@ -102,6 +102,44 @@ fn clip_text_for_row(
     (out, cursor_visible)
 }
 
+/// Build spans for inline-edited text with a visible block cursor.
+/// `prefix` is rendered with `prefix_style`, the text around the cursor in `text_style`,
+/// and the cursor character itself with inverted fg/bg so it stands out against any background.
+fn inline_edit_spans<'a>(
+    prefix: &str,
+    text: &str,
+    cursor_pos: usize,
+    prefix_style: Style,
+    text_style: Style,
+) -> Vec<Span<'a>> {
+    let chars: Vec<char> = text.chars().collect();
+    let pos = cursor_pos.min(chars.len());
+    let before: String = chars[..pos].iter().collect();
+    let cursor_char: String = if pos < chars.len() {
+        chars[pos].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if pos < chars.len() {
+        chars[pos + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+    let cursor_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(prefix.to_string(), prefix_style)];
+    if !before.is_empty() {
+        spans.push(Span::styled(before, text_style));
+    }
+    spans.push(Span::styled(cursor_char, cursor_style));
+    if !after.is_empty() {
+        spans.push(Span::styled(after, text_style));
+    }
+    spans
+}
+
 fn board_column_offsets(widths: &[usize], spacing: usize) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(widths.len());
     let mut cursor = 0usize;
@@ -2234,10 +2272,27 @@ impl App {
             return;
         }
 
-        let slot_count = self.slots.len() as u16;
-        let pct = (100 / slot_count).max(1);
-        let constraints: Vec<Constraint> = (0..self.slots.len())
-            .map(|_| Constraint::Percentage(pct))
+        let empty_sections_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let constraints: Vec<Constraint> = self
+            .slots
+            .iter()
+            .map(|slot| {
+                let is_empty = slot.items.is_empty();
+                match empty_sections_mode {
+                    EmptySections::Show => {
+                        let slot_count = self.slots.len() as u16;
+                        Constraint::Percentage((100 / slot_count).max(1))
+                    }
+                    EmptySections::Collapse if is_empty && has_any_non_empty => {
+                        Constraint::Length(1)
+                    }
+                    EmptySections::Hide if is_empty && has_any_non_empty => {
+                        Constraint::Length(0)
+                    }
+                    _ => Constraint::Fill(1),
+                }
+            })
             .collect();
         let slot_direction = if self.is_horizontal_section_flow() {
             Direction::Horizontal
@@ -2263,11 +2318,46 @@ impl App {
             .as_ref()
             .and_then(|v| v.item_column_label.clone())
             .filter(|label| !label.trim().is_empty());
+        let today_slot = self.datebook_today_slot_index();
+
         if self.is_horizontal_section_flow() {
-            self.render_horizontal_board_lanes(frame, &columns, &category_display_names);
+            self.render_horizontal_board_lanes(frame, &columns, &category_display_names, today_slot);
             return;
         }
         for (slot_index, slot) in self.slots.iter().enumerate() {
+            // Skip hidden slots (zero-height rect from constraint).
+            if columns[slot_index].height == 0 {
+                continue;
+            }
+            // Render collapsed empty slots as a single dim header line.
+            if slot.items.is_empty()
+                && empty_sections_mode == EmptySections::Collapse
+                && has_any_non_empty
+            {
+                let is_selected_slot = slot_index == self.slot_index;
+                let is_today_slot = today_slot == Some(slot_index);
+                let border_color = if is_selected_slot {
+                    Color::Cyan
+                } else if is_today_slot {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                let title = format!("{} (0)", slot.title);
+                let avail = columns[slot_index].width as usize;
+                let pad_len = avail.saturating_sub(title.len() + 2);
+                let line = Line::from(vec![
+                    Span::styled("─ ", Style::default().fg(border_color)),
+                    Span::styled(title, Style::default().fg(border_color)),
+                    Span::styled(
+                        " ─".to_string() + &"─".repeat(pad_len),
+                        Style::default().fg(border_color),
+                    ),
+                ]);
+                frame.render_widget(Paragraph::new(line), columns[slot_index]);
+                continue;
+            }
+
             let effective_display_mode = match (&slot.context, current_view.as_ref()) {
                 (SlotContext::Section { section_index }, Some(view))
                 | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
@@ -2296,8 +2386,11 @@ impl App {
             let slot_item_label = explicit_item_label
                 .clone()
                 .unwrap_or_else(|| slot.title.clone());
+            let is_today_slot = today_slot == Some(slot_index);
             let border_color = if is_selected_slot {
                 Color::Cyan
+            } else if is_today_slot {
+                Color::Yellow
             } else {
                 Color::Blue
             };
@@ -2994,10 +3087,37 @@ impl App {
         frame: &mut ratatui::Frame<'_>,
         columns: &[Rect],
         category_display_names: &HashMap<CategoryId, String>,
+        today_slot: Option<usize>,
     ) {
-        let all_slots_empty = self.slots.iter().all(|slot| slot.items.is_empty());
+        let empty_sections_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let all_slots_empty = !has_any_non_empty;
         for (slot_index, slot) in self.slots.iter().enumerate() {
             let slot_area = columns[slot_index];
+            // Skip hidden slots (zero-width rect).
+            if slot_area.width == 0 {
+                continue;
+            }
+            // Collapsed empty lane: render a thin vertical border.
+            if slot.items.is_empty()
+                && empty_sections_mode == EmptySections::Collapse
+                && has_any_non_empty
+            {
+                let is_selected = slot_index == self.slot_index;
+                let is_today = today_slot == Some(slot_index);
+                let color = if is_selected {
+                    Color::Cyan
+                } else if is_today {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                let block = Block::default()
+                    .borders(Borders::LEFT)
+                    .border_style(Style::default().fg(color));
+                frame.render_widget(block, slot_area);
+                continue;
+            }
             let is_selected_slot = slot_index == self.slot_index;
             let selected_row = if is_selected_slot && !slot.items.is_empty() {
                 Some(self.item_index.min(slot.items.len().saturating_sub(1)))
@@ -3011,8 +3131,11 @@ impl App {
                 .map(|needle| format!("  filter:{needle}"))
                 .unwrap_or_default();
             let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let is_today_slot = today_slot == Some(slot_index);
             let border_color = if is_selected_slot {
                 Color::Cyan
+            } else if is_today_slot {
+                Color::Yellow
             } else {
                 Color::Blue
             };
@@ -4083,6 +4206,7 @@ impl App {
                 vec![
                     ("Enter", "switch"),
                     ("N", "new"),
+                    ("d", "datebook"),
                     ("c", "clone"),
                     ("r", "rename"),
                     ("e", "edit"),
@@ -4338,6 +4462,16 @@ impl App {
                     if self.section_filters.iter().any(|f| f.is_some()) {
                         let insert_pos = hints.len().min(5);
                         hints.insert(insert_pos, ("Esc", "clear search"));
+                    }
+                    if self
+                        .current_view()
+                        .is_some_and(|v| v.datebook_config.is_some())
+                    {
+                        hints.extend_from_slice(&[
+                            ("}", "fwd"),
+                            ("{", "back"),
+                            ("0", "today"),
+                        ]);
                     }
                     hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
                 }
@@ -7958,26 +8092,33 @@ impl App {
                 // ── Name ──
                 let editing_view_name =
                     matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
-                let view_name_text = if editing_view_name {
-                    format!("◀ {}", state.inline_buf.text())
-                } else {
-                    state.draft.name.clone()
-                };
-                let view_name_style = if editing_view_name {
+                let name_row_focused = details_focused
+                    && Self::view_details_on_name_row(state)
+                    && !editing_view_name;
+                let view_name_style = if editing_view_name || name_row_focused {
                     selected_line = Some(items.len());
                     sel_style
                 } else {
                     Style::default()
                 };
-                items.push(
-                    ListItem::new(Line::from(format!(
+                let name_line = if editing_view_name {
+                    let label = format!("  {:<width$}◀ ", "Name", width = pad);
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        view_name_style,
+                        view_name_style,
+                    ))
+                } else {
+                    Line::from(format!(
                         "  {:<width$}{}",
                         "Name",
-                        view_name_text,
+                        state.draft.name,
                         width = pad
-                    )))
-                    .style(view_name_style),
-                );
+                    ))
+                };
+                items.push(ListItem::new(name_line).style(view_name_style));
 
                 // ── Separator ──
                 items.push(ListItem::new(Line::from(Span::styled(
@@ -8024,6 +8165,45 @@ impl App {
                             Style::default()
                         };
                         items.push(ListItem::new(line).style(style));
+                    }
+                }
+
+                // ── Datebook config (only for datebook views) ──
+                if let Some(config) = &state.draft.datebook_config {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "  ─────────────────────────────────────────",
+                        separator_style,
+                    ))));
+                    items.push(ListItem::new(Line::from("  Datebook config:")));
+
+                    let datebook_fields: &[(&str, String)] = &[
+                        ("Period", config.period.label().to_string()),
+                        ("Interval", config.interval.label().to_string()),
+                        ("Anchor", config.anchor.label().to_string()),
+                        ("Date source", config.date_source.label().to_string()),
+                        ("Empty sections", config.empty_sections.label().to_string()),
+                    ];
+                    for (fi, (label, value)) in datebook_fields.iter().enumerate() {
+                        let is_selected = details_focused
+                            && state.region == ViewEditRegion::Datebook
+                            && state.datebook_field_index == fi;
+                        if is_selected {
+                            selected_line = Some(items.len());
+                        }
+                        let style = if is_selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(
+                            ListItem::new(Line::from(format!(
+                                "    {:<width$}{}",
+                                label,
+                                value,
+                                width = pad - 2
+                            )))
+                            .style(style),
+                        );
                     }
                 }
 
@@ -8202,26 +8382,35 @@ impl App {
                     )),
                 );
 
-                let unmatched_label_text = if matches!(
+                let editing_unmatched_label = matches!(
                     state.inline_input,
                     Some(ViewEditInlineInput::UnmatchedLabel)
-                ) {
-                    format!("◀ {}", state.inline_buf.text())
+                );
+                let unmatched_label_style = style_for_unmatched_field(
+                    6,
+                    &items,
+                    &mut selected_line,
+                );
+                let unmatched_label_line = if editing_unmatched_label {
+                    let label = format!("  {:<width$}◀ ", "Unmatched label", width = pad);
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        unmatched_label_style,
+                        unmatched_label_style,
+                    ))
                 } else {
-                    format!("\"{}\"", state.draft.unmatched_label)
+                    Line::from(format!(
+                        "  {:<width$}\"{}\"",
+                        "Unmatched label",
+                        state.draft.unmatched_label,
+                        width = pad
+                    ))
                 };
                 items.push(
-                    ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
-                        "Unmatched label",
-                        unmatched_label_text,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        6,
-                        &items,
-                        &mut selected_line,
-                    )),
+                    ListItem::new(unmatched_label_line)
+                        .style(unmatched_label_style),
                 );
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
@@ -8260,18 +8449,31 @@ impl App {
                     };
 
                 // ── Group 1: Identity ──
-                items.push(
-                    ListItem::new(Line::from(format!(
+                let title_field_style = style_for_section_field(
+                    0,
+                    &items,
+                    &mut selected_line,
+                );
+                let title_line = if editing_title {
+                    let label = format!("  {:<width$}◀ ", "Title", width = pad);
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        title_field_style,
+                        title_field_style,
+                    ))
+                } else {
+                    Line::from(format!(
                         "  {:<width$}{}",
                         "Title",
                         title_text,
                         width = pad
-                    )))
-                    .style(style_for_section_field(
-                        0,
-                        &items,
-                        &mut selected_line,
-                    )),
+                    ))
+                };
+                items.push(
+                    ListItem::new(title_line)
+                        .style(title_field_style),
                 );
 
                 let criteria_lines = summarize_query(&section.criteria);
@@ -8452,6 +8654,29 @@ impl App {
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(frame, details_area, content_len, list_state.offset());
+
+            // Position the terminal cursor on the active inline text input.
+            if state.inline_input.is_some() {
+                if let Some(sel) = selected_line {
+                    let offset = list_state.offset();
+                    if sel >= offset {
+                        let visible_row = (sel - offset) as u16;
+                        // inner area: 1 for border
+                        let inner_y = details_area.y + 1 + visible_row;
+                        if inner_y < details_area.y + details_area.height.saturating_sub(1) {
+                            // Compute x: the inline text is after "◀ " prefix inside
+                            // the formatted row. Place cursor at the TextBuffer cursor.
+                            let cursor_col = state.inline_buf.cursor();
+                            // The text starts at: border(1) + padding(2) + label(pad=26) + "◀ "(2)
+                            let text_start = details_area.x + 1 + 2 + 26 + 2;
+                            let cursor_x = text_start + cursor_col as u16;
+                            let max_x =
+                                details_area.x + details_area.width.saturating_sub(2);
+                            frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                        }
+                    }
+                }
+            }
         }
 
         // ── Sections region ──────────────────────────────────────────────────
@@ -8471,18 +8696,24 @@ impl App {
             );
             let dirty_marker = if state.dirty { " *" } else { "" };
             let view_label = format!("VIEW: {}", state.draft.name);
-            let sections_title = if filter_editing {
-                format!(
-                    " {view_label}{dirty_marker}  /{}◀ ",
-                    state.sections_filter_buf.text()
-                )
+            let sections_title: Line<'_> = if filter_editing {
+                let prefix = format!(
+                    " {view_label}{dirty_marker}  /",
+                );
+                Line::from(inline_edit_spans(
+                    &prefix,
+                    state.sections_filter_buf.text(),
+                    state.sections_filter_buf.cursor(),
+                    Style::default(),
+                    Style::default(),
+                ))
             } else if filter_active {
-                format!(
+                Line::from(format!(
                     " {view_label}{dirty_marker}  /{} ",
                     state.sections_filter_buf.text()
-                )
+                ))
             } else {
-                format!(" {view_label}{dirty_marker} ")
+                Line::from(format!(" {view_label}{dirty_marker} "))
             };
             let block = Block::default()
                 .title(sections_title)
@@ -8538,7 +8769,11 @@ impl App {
                 }
             };
 
-            if state.draft.sections.is_empty() {
+            if state.draft.datebook_config.is_some() {
+                items.push(ListItem::new(Line::from(
+                    "  (sections auto-generated from dates)",
+                )));
+            } else if state.draft.sections.is_empty() {
                 items.push(ListItem::new(Line::from("  (no sections — n:add)")));
             } else if visible_section_indices.is_empty() {
                 items.push(ListItem::new(Line::from("  (no matching sections)")));
@@ -8562,18 +8797,6 @@ impl App {
                     } else {
                         " "
                     };
-                    let title = if inline_editing_section == Some(i) {
-                        format!(
-                            " {} {} {}. {} ◀",
-                            connector,
-                            cursor,
-                            i + 1,
-                            state.inline_buf.text()
-                        )
-                    } else {
-                        format!(" {} {} {}. {}", connector, cursor, i + 1, section.title)
-                    };
-
                     let style = if is_active_section && sections_pane_focused {
                         Style::default()
                             .fg(Color::Black)
@@ -8584,7 +8807,25 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    items.push(ListItem::new(Line::from(title)).style(style));
+                    let line = if inline_editing_section == Some(i) {
+                        let prefix = format!(
+                            " {} {} {}. ",
+                            connector, cursor, i + 1,
+                        );
+                        Line::from(inline_edit_spans(
+                            &prefix,
+                            state.inline_buf.text(),
+                            state.inline_buf.cursor(),
+                            style,
+                            style,
+                        ))
+                    } else {
+                        Line::from(format!(
+                            " {} {} {}. {}",
+                            connector, cursor, i + 1, section.title
+                        ))
+                    };
+                    items.push(ListItem::new(line).style(style));
                 }
             }
 
@@ -8596,6 +8837,41 @@ impl App {
                 &mut list_state,
             );
             Self::render_vertical_scrollbar(frame, sections_area, content_len, list_state.offset());
+
+            // Position cursor for section title inline editing.
+            if inline_editing_section.is_some() {
+                if let Some(sel) = selected_line {
+                    let offset = list_state.offset();
+                    if sel >= offset {
+                        let visible_row = (sel - offset) as u16;
+                        let inner_y = sections_area.y + 1 + visible_row;
+                        if inner_y < sections_area.y + sections_area.height.saturating_sub(1) {
+                            let cursor_col = state.inline_buf.cursor();
+                            // Format: " {connector}(3) {cursor}(1) {idx}.(varies) {text}"
+                            // Approximate: prefix is ~10 chars + text
+                            let section_idx = inline_editing_section.unwrap();
+                            let idx_width = format!("{}.", section_idx + 1).len();
+                            let prefix_len = 1 + 3 + 1 + 1 + 1 + idx_width + 1; // " ├── ▸ N. "
+                            let text_start =
+                                sections_area.x + 1 + prefix_len as u16;
+                            let cursor_x = text_start + cursor_col as u16;
+                            let max_x =
+                                sections_area.x + sections_area.width.saturating_sub(2);
+                            frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                        }
+                    }
+                }
+            }
+            // Position cursor for sections filter in title bar.
+            if filter_editing {
+                let cursor_col = state.sections_filter_buf.cursor();
+                // Title: " VIEW: {name}{dirty}  /{filter}◀ "
+                let prefix_len = 1 + view_label.len() + dirty_marker.len() + 2 + 1; // " VIEW:...  /"
+                let cursor_x = sections_area.x + 1 + prefix_len as u16 + cursor_col as u16;
+                let max_x = sections_area.x + sections_area.width.saturating_sub(2);
+                let cursor_y = sections_area.y;
+                frame.set_cursor_position((cursor_x.min(max_x), cursor_y));
+            }
         }
 
         // ── Preview pane (optional) ─────────────────────────────────────────
@@ -8884,12 +9160,25 @@ impl App {
                                 } else {
                                     current_alias
                                 };
-                                let edit_marker = if active_alias_edit { " ◀" } else { "" };
-                                let label = format!(
-                                    "{indent}{}  alias: {alias_text}{edit_marker}",
-                                    row.name
-                                );
-                                ListItem::new(Line::from(label)).style(selected_style)
+                                if active_alias_edit {
+                                    let prefix = format!(
+                                        "{indent}{}  alias: ",
+                                        row.name
+                                    );
+                                    ListItem::new(Line::from(inline_edit_spans(
+                                        &prefix,
+                                        state.inline_buf.text(),
+                                        state.inline_buf.cursor(),
+                                        selected_style,
+                                        selected_style,
+                                    ))).style(selected_style)
+                                } else {
+                                    let label = format!(
+                                        "{indent}{}  alias: {alias_text}",
+                                        row.name
+                                    );
+                                    ListItem::new(Line::from(label)).style(selected_style)
+                                }
                             } else {
                                 let checked = match target {
                                     CategoryEditTarget::ViewAliases => false,
@@ -8941,6 +9230,47 @@ impl App {
                         overlay_area,
                         &mut list_state,
                     );
+
+                    // Position cursor for alias inline editing inside the overlay.
+                    if is_alias_picker {
+                        if let Some(ViewEditInlineInput::CategoryAlias { category_id }) =
+                            &state.inline_input
+                        {
+                            // Find the row for this category in the filtered list.
+                            if let Some(row) = self
+                                .category_rows
+                                .iter()
+                                .find(|r| r.id == *category_id)
+                            {
+                                let vis_sel = selected_filtered_index;
+                                let offset = list_state.offset();
+                                if vis_sel >= offset {
+                                    let visible_row = (vis_sel - offset) as u16;
+                                    let inner_y = overlay_area.y + 1 + visible_row;
+                                    if inner_y
+                                        < overlay_area.y
+                                            + overlay_area.height.saturating_sub(1)
+                                    {
+                                        let indent_len = 2 * row.depth;
+                                        let name_len = row.name.len();
+                                        let prefix_len =
+                                            indent_len + name_len + "  alias: ".len();
+                                        let cursor_col = state.inline_buf.cursor();
+                                        let cursor_x = overlay_area.x
+                                            + 1
+                                            + prefix_len as u16
+                                            + cursor_col as u16;
+                                        let max_x = overlay_area.x
+                                            + overlay_area.width.saturating_sub(2);
+                                        frame.set_cursor_position((
+                                            cursor_x.min(max_x),
+                                            inner_y,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 ViewEditOverlay::BucketPicker { .. } => {
                     let options = when_bucket_options();

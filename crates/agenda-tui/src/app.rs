@@ -361,6 +361,10 @@ impl App {
         self.clamp_horizontal_slot_item_indices();
         self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
+        // If Hide mode landed us on an empty slot, advance to the nearest non-empty.
+        if self.effective_empty_sections() == EmptySections::Hide {
+            self.skip_hidden_slots(1);
+        }
         if self.is_horizontal_section_flow() {
             self.item_index = self
                 .horizontal_slot_item_indices
@@ -641,11 +645,15 @@ impl App {
         if self.slots.is_empty() {
             return;
         }
+        let hide_empty = self.effective_empty_sections() == EmptySections::Hide;
         if self.is_horizontal_section_flow() {
             if let Some(stored) = self.horizontal_slot_item_indices.get_mut(self.slot_index) {
                 *stored = self.item_index;
             }
             self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
+            if hide_empty {
+                self.skip_hidden_slots(delta);
+            }
             self.item_index = self
                 .horizontal_slot_item_indices
                 .get(self.slot_index)
@@ -663,6 +671,9 @@ impl App {
             *stored = self.item_index;
         }
         self.slot_index = next_index_clamped(self.slot_index, self.slots.len(), delta);
+        if hide_empty {
+            self.skip_hidden_slots(delta);
+        }
         self.item_index = self
             .horizontal_slot_item_indices
             .get(self.slot_index)
@@ -674,6 +685,27 @@ impl App {
                     .unwrap_or(0),
             );
         self.column_index = self.current_slot_item_column_index();
+    }
+
+    /// When EmptySections::Hide is active, advance slot_index past empty slots
+    /// in the direction of `delta`. If no non-empty slot is reachable, stay put.
+    fn skip_hidden_slots(&mut self, delta: i32) {
+        let step = if delta > 0 { 1i32 } else { -1i32 };
+        let start = self.slot_index;
+        for _ in 0..self.slots.len() {
+            if self.slots.get(self.slot_index).is_none_or(|s| !s.items.is_empty()) {
+                return; // landed on a non-empty slot (or out of range)
+            }
+            let next = next_index_clamped(self.slot_index, self.slots.len(), step);
+            if next == self.slot_index {
+                break; // hit edge, can't advance further
+            }
+            self.slot_index = next;
+        }
+        // If we couldn't find a non-empty slot, revert.
+        if self.slots.get(self.slot_index).is_none_or(|s| s.items.is_empty()) {
+            self.slot_index = start;
+        }
     }
 
     pub(crate) fn move_item_cursor(&mut self, delta: i32) {
@@ -717,6 +749,15 @@ impl App {
         delta: i32,
         agenda: &Agenda<'_>,
     ) -> TuiResult<()> {
+        // Datebook sections are time-based; moving items between them would
+        // require changing the when_date, not category assignments.
+        if self
+            .current_view()
+            .is_some_and(|v| v.datebook_config.is_some())
+        {
+            self.status = "Cannot move items between datebook sections".to_string();
+            return Ok(());
+        }
         if self.slots.len() < 2 {
             return Ok(());
         }
@@ -818,6 +859,40 @@ impl App {
 
     pub(crate) fn current_slot(&self) -> Option<&Slot> {
         self.slots.get(self.slot_index)
+    }
+
+    /// For datebook views, returns the slot index whose date range contains today.
+    pub(crate) fn datebook_today_slot_index(&self) -> Option<usize> {
+        let view = self.current_view()?;
+        let config = view.datebook_config.as_ref()?;
+        let today = jiff::Zoned::now().date();
+        let today_dt = today.at(0, 0, 0, 0);
+        let sections = generate_datebook_sections(config, today);
+        sections
+            .iter()
+            .position(|s| today_dt >= s.range_start && today_dt < s.range_end)
+    }
+
+    /// For datebook views, returns the start date of the current slot as a
+    /// "YYYY-MM-DD" string, suitable for pre-filling the when_buffer.
+    pub(crate) fn datebook_slot_date_string(&self) -> Option<String> {
+        let view = self.current_view()?;
+        let config = view.datebook_config.as_ref()?;
+        let slot = self.current_slot()?;
+        // Only Section slots map 1:1 with datebook sections (not Unmatched)
+        let section_index = match &slot.context {
+            SlotContext::Section { section_index } => *section_index,
+            _ => return None,
+        };
+        let today = jiff::Zoned::now().date();
+        let sections = generate_datebook_sections(config, today);
+        let ds = sections.get(section_index)?;
+        Some(format!(
+            "{:04}-{:02}-{:02}",
+            ds.range_start.date().year(),
+            ds.range_start.date().month(),
+            ds.range_start.date().day()
+        ))
     }
 
     pub(crate) fn current_slot_sort_column(&self) -> Option<SlotSortColumn> {
@@ -1639,6 +1714,15 @@ impl App {
 
     pub(crate) fn current_view(&self) -> Option<&View> {
         self.views.get(self.view_index)
+    }
+
+    /// Resolve the effective empty-sections display mode for the current view.
+    /// Returns `Show` for non-datebook views.
+    pub(crate) fn effective_empty_sections(&self) -> EmptySections {
+        self.current_view()
+            .and_then(|v| v.datebook_config.as_ref())
+            .map(|dc| dc.empty_sections)
+            .unwrap_or(EmptySections::Show)
     }
 
     pub(crate) fn selected_category_is_ready_queue_role(&self) -> bool {
