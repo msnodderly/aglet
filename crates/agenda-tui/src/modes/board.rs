@@ -1058,12 +1058,18 @@ impl App {
     pub(crate) fn toggle_preview(&mut self) {
         self.show_preview = !self.show_preview;
         if self.show_preview {
-            self.preview_mode = PreviewMode::Summary;
+            self.preview_mode = PreviewMode::Note;
             self.normal_focus = NormalFocus::Board;
-            self.preview_summary_scroll = 0;
-            self.status = "Preview opened (Summary). f to focus pane, i for info".to_string();
+            self.preview_note_editing = false;
+            self.preview_note_dirty = false;
+            self.preview_note_discard_confirm = false;
+            self.sync_preview_note_editor_from_selection();
+            self.status = "Preview opened (Note). i for summary/info".to_string();
         } else {
             self.normal_focus = NormalFocus::Board;
+            self.preview_note_editing = false;
+            self.preview_note_dirty = false;
+            self.preview_note_discard_confirm = false;
             self.status = "Preview closed".to_string();
         }
     }
@@ -1074,12 +1080,29 @@ impl App {
             return;
         }
         self.preview_mode = match self.preview_mode {
+            PreviewMode::Note => PreviewMode::Summary,
             PreviewMode::Summary => PreviewMode::Provenance,
-            PreviewMode::Provenance => PreviewMode::Summary,
+            PreviewMode::Provenance => PreviewMode::Note,
         };
         self.status = match self.preview_mode {
+            PreviewMode::Note => "Preview mode: Note".to_string(),
             PreviewMode::Summary => "Preview mode: Summary".to_string(),
             PreviewMode::Provenance => "Preview mode: Info".to_string(),
+        };
+    }
+
+    fn toggle_preview_focus(&mut self) {
+        if !self.show_preview {
+            self.normal_focus = NormalFocus::Board;
+            return;
+        }
+        self.normal_focus = match self.normal_focus {
+            NormalFocus::Board => NormalFocus::Preview,
+            NormalFocus::Preview => NormalFocus::Board,
+        };
+        self.status = match self.normal_focus {
+            NormalFocus::Board => "Focus: Board".to_string(),
+            NormalFocus::Preview => "Focus: Preview".to_string(),
         };
     }
 
@@ -1088,7 +1111,7 @@ impl App {
             return;
         }
         match self.preview_mode {
-            PreviewMode::Summary => {
+            PreviewMode::Note | PreviewMode::Summary => {
                 if delta > 0 {
                     self.preview_summary_scroll = self.preview_summary_scroll.saturating_add(1);
                 } else {
@@ -1105,6 +1128,137 @@ impl App {
                 }
             }
         }
+    }
+
+    fn start_preview_note_edit(&mut self) {
+        let Some((item_id, note)) = self
+            .selected_item()
+            .map(|item| (item.id, item.note.clone().unwrap_or_default()))
+        else {
+            self.status = "No selected item to edit note".to_string();
+            return;
+        };
+        self.preview_note_item_id = Some(item_id);
+        self.preview_note_editor.set(note);
+        self.preview_note_editing = true;
+        self.preview_note_dirty = false;
+        self.preview_note_discard_confirm = false;
+        self.status = "Preview note editing: S save, Esc cancel".to_string();
+    }
+
+    fn stop_preview_note_edit(&mut self, discarded: bool) {
+        self.preview_note_editing = false;
+        self.preview_note_dirty = false;
+        self.preview_note_discard_confirm = false;
+        self.sync_preview_note_editor_from_selection();
+        self.status = if discarded {
+            "Preview note edit canceled".to_string()
+        } else {
+            "Preview note edit closed".to_string()
+        };
+    }
+
+    fn save_preview_note_edit(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
+        let Some(item_id) = self.preview_note_item_id else {
+            self.preview_note_editing = false;
+            self.preview_note_dirty = false;
+            self.preview_note_discard_confirm = false;
+            self.status = "Preview note save failed: no selected item".to_string();
+            return Ok(());
+        };
+        let mut item = agenda.store().get_item(item_id)?;
+        let old_text = item.text.clone();
+        let old_note = item.note.clone();
+        let updated_note = if self.preview_note_editor.trimmed().is_empty() {
+            None
+        } else {
+            Some(self.preview_note_editor.text().to_string())
+        };
+        if item.note == updated_note {
+            self.stop_preview_note_edit(false);
+            self.status = "Preview note unchanged".to_string();
+            return Ok(());
+        }
+
+        item.note = updated_note;
+        item.modified_at = Timestamp::now();
+        let reference_date = jiff::Zoned::now().date();
+        let process_result = agenda.update_item_cheap(&item, reference_date)?;
+        self.push_undo(UndoEntry::ItemEdited {
+            item_id,
+            old_text,
+            old_note,
+        });
+        self.refresh(agenda.store())?;
+        self.set_item_selection_by_id(item_id);
+        self.preview_note_editing = false;
+        self.preview_note_dirty = false;
+        self.preview_note_discard_confirm = false;
+        self.sync_preview_note_editor_from_selection();
+        let mut status = "Preview note saved".to_string();
+        if let Some((suffix, show_review_hint)) =
+            self.classification_feedback_for_saved_item(item_id, &process_result)
+        {
+            status = if show_review_hint {
+                format!("{status} | {suffix}. Press C to review.")
+            } else {
+                format!("{status} | {suffix}.")
+            };
+        }
+        self.status = status;
+        let _ = self.submit_background_classification(agenda, item_id);
+        Ok(())
+    }
+
+    fn handle_preview_note_edit_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        if !self.preview_note_editing {
+            return Ok(false);
+        }
+        if self.preview_note_discard_confirm {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.preview_note_discard_confirm = false;
+                    self.save_preview_note_edit(agenda)?;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.stop_preview_note_edit(true);
+                }
+                KeyCode::Esc => {
+                    self.preview_note_discard_confirm = false;
+                    self.status = "Continue editing preview note".to_string();
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
+        match code {
+            KeyCode::Char('S') => {
+                self.save_preview_note_edit(agenda)?;
+            }
+            KeyCode::Esc => {
+                if self.preview_note_dirty {
+                    self.preview_note_discard_confirm = true;
+                    self.status =
+                        "Save changes before cancel? y:save n:discard Esc:keep editing".to_string();
+                } else {
+                    self.stop_preview_note_edit(true);
+                }
+            }
+            _ => {
+                let changed = self
+                    .preview_note_editor
+                    .handle_key_event(self.text_key_event(code), true);
+                if changed {
+                    self.preview_note_dirty = true;
+                }
+            }
+        }
+        Ok(false)
     }
 
     pub(crate) fn open_board_add_column_picker(
@@ -2246,6 +2400,13 @@ impl App {
         code: KeyCode,
         agenda: &Agenda<'_>,
     ) -> TuiResult<bool> {
+        if self.show_preview
+            && self.normal_focus == NormalFocus::Preview
+            && self.preview_mode == PreviewMode::Note
+            && self.preview_note_editing
+        {
+            return self.handle_preview_note_edit_key(code, agenda);
+        }
         if let Some(prefix) = self.normal_mode_prefix.take() {
             match (prefix, code) {
                 (NormalModePrefix::G, KeyCode::Char('a')) => {
@@ -2382,7 +2543,12 @@ impl App {
                 self.open_suggestion_review(agenda)?;
             }
             KeyCode::Enter => {
-                if self.column_index != self.current_slot_item_column_index() {
+                if self.show_preview
+                    && self.normal_focus == NormalFocus::Preview
+                    && self.preview_mode == PreviewMode::Note
+                {
+                    self.start_preview_note_edit();
+                } else if self.column_index != self.current_slot_item_column_index() {
                     self.open_category_column_editor();
                 } else if self.selected_item_id().is_none() {
                     self.open_input_panel_add_item();
@@ -2443,8 +2609,20 @@ impl App {
             KeyCode::Char('.') => {
                 self.cycle_view(1, agenda)?;
             }
-            KeyCode::Tab => self.move_slot_cursor(1),
-            KeyCode::BackTab => self.move_slot_cursor(-1),
+            KeyCode::Tab => {
+                if self.show_preview {
+                    self.toggle_preview_focus();
+                } else {
+                    self.move_slot_cursor(1);
+                }
+            }
+            KeyCode::BackTab => {
+                if self.show_preview {
+                    self.toggle_preview_focus();
+                } else {
+                    self.move_slot_cursor(-1);
+                }
+            }
             KeyCode::Char('f') => {
                 self.cycle_column_numeric_format(agenda)?;
             }

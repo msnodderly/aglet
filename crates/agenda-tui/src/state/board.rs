@@ -200,6 +200,7 @@ pub(crate) struct BoardAddColumnState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PreviewMode {
+    Note,
     Summary,
     Provenance,
 }

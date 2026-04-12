@@ -2195,7 +2195,7 @@ impl App {
         }
     }
 
-    pub(crate) fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+    pub(crate) fn render_main(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         if self.mode == Mode::ViewEdit {
             self.render_view_edit_screen(frame, area);
             return;
@@ -2222,6 +2222,9 @@ impl App {
                 .split(area);
             self.render_board_columns(frame, split[0]);
             match self.preview_mode {
+                PreviewMode::Note => {
+                    self.render_preview_note_panel(frame, split[1]);
+                }
                 PreviewMode::Summary => {
                     frame.render_widget(self.render_preview_summary_panel(), split[1]);
                     let content_len = self
@@ -2271,7 +2274,11 @@ impl App {
 
     /// Estimate the number of terminal rows each slot needs for layout purposes.
     /// Used to determine which slots fit in the visible viewport.
-    fn estimate_slot_heights(&self, empty_mode: EmptySections, has_any_non_empty: bool) -> Vec<u16> {
+    fn estimate_slot_heights(
+        &self,
+        empty_mode: EmptySections,
+        has_any_non_empty: bool,
+    ) -> Vec<u16> {
         let border_rows: u16 = match self.section_border_mode {
             SectionBorderMode::Full => 2,    // top + bottom border
             SectionBorderMode::Compact => 1, // top border only
@@ -2340,7 +2347,8 @@ impl App {
         }
 
         // Check if focused slot is within the current visible window.
-        let visible = Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
+        let visible =
+            Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
         if visible.contains(&self.slot_index) {
             return;
         }
@@ -2435,11 +2443,8 @@ impl App {
 
         // ── Vertical board: windowed slot rendering ──────────────────────
         let slot_heights = self.estimate_slot_heights(empty_sections_mode, has_any_non_empty);
-        let visible_slots = Self::visible_slot_window(
-            &slot_heights,
-            self.board_scroll_offset,
-            area.height,
-        );
+        let visible_slots =
+            Self::visible_slot_window(&slot_heights, self.board_scroll_offset, area.height);
 
         if visible_slots.is_empty() {
             frame.render_widget(
@@ -3540,7 +3545,7 @@ impl App {
         } else {
             items.push(ListItem::new(Line::from("Info")));
             items.push(ListItem::new(Line::from(
-                "f focus | j/k scroll | i summary",
+                "Tab focus | j/k scroll | i summary",
             )));
             items.push(ListItem::new(Line::from("")));
             items.push(ListItem::new(Line::from("(no selected item)")));
@@ -3576,7 +3581,7 @@ impl App {
         let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
         let mut lines = vec![
             Line::from("Summary"),
-            Line::from("f focus | j/k scroll | i info"),
+            Line::from("Tab focus | j/k scroll | i info"),
             Line::from(""),
             Line::from(format!("ID: {}", item.id)),
             Line::from(format!(
@@ -3704,7 +3709,7 @@ impl App {
     pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
         let mut lines = vec![
             "Info".to_string(),
-            "f focus | j/k scroll | i summary".to_string(),
+            "Tab focus | j/k scroll | i summary".to_string(),
             String::new(),
             format!("ID: {}", item.id),
             format!(
@@ -3791,7 +3796,7 @@ impl App {
         } else {
             vec![
                 Line::from("Summary"),
-                Line::from("f focus | j/k scroll | i info"),
+                Line::from("Tab focus | j/k scroll | i info"),
                 Line::from(""),
                 Line::from("(no selected item)"),
             ]
@@ -3812,6 +3817,80 @@ impl App {
             )
             .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
             .wrap(Wrap { trim: false })
+    }
+
+    pub(crate) fn render_preview_note_panel(
+        &mut self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+    ) {
+        let border_color = if self.normal_focus == NormalFocus::Preview {
+            Color::Cyan
+        } else {
+            Color::Yellow
+        };
+
+        if self.preview_note_editing {
+            let note_widget = self.preview_note_editor.widget_mut();
+            note_widget.set_placeholder_text(ITEM_NOTE_PLACEHOLDER_TEXT);
+            note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+            note_widget.set_style(Style::default());
+            note_widget.set_cursor_line_style(Style::default());
+            note_widget.set_cursor_style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            );
+            note_widget.set_block(
+                Block::default()
+                    .title("Preview: Note (editing — S save | Esc cancel)")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color)),
+            );
+            frame.render_widget(self.preview_note_editor.widget(), area);
+
+            let note_scroll =
+                list_scroll_for_selected_line(area, Some(self.preview_note_editor.line_col().0));
+            Self::render_vertical_scrollbar(
+                frame,
+                area,
+                self.preview_note_editor.text().lines().count().max(1),
+                note_scroll as usize,
+            );
+            return;
+        }
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        if let Some(item) = self.selected_item() {
+            lines.push(Line::from("Note (Tab focus | Enter edit | i cycle mode)"));
+            lines.push(Line::from(""));
+            let note_text = item.note.as_deref().unwrap_or("");
+            if note_text.is_empty() {
+                lines.push(Line::from("(none)"));
+            } else {
+                lines.extend(note_text.lines().map(Line::from));
+            }
+        } else {
+            lines.push(Line::from("Note"));
+            lines.push(Line::from(""));
+            lines.push(Line::from("(no selected item)"));
+        }
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title("Preview: Note")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(border_color)),
+                )
+                .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+        let content_len = self.preview_note_editor.text().lines().count().max(1);
+        Self::render_vertical_scrollbar(frame, area, content_len, self.preview_summary_scroll);
     }
 
     fn render_suggestion_review(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {

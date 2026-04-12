@@ -13,8 +13,8 @@ use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Assignment, AssignmentExplanation, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, DateCompareOp, DateSource,
-    DatebookConfig, EmptySections, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow,
-    SummaryFn, View, WhenBucket,
+    DatebookConfig, EmptySections, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section,
+    SectionFlow, SummaryFn, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, generate_datebook_sections, resolve_view};
 use agenda_core::store::Store;
@@ -74,8 +74,8 @@ use state::category::{
     CategoryManagerDetailsFocus, CategoryManagerDetailsInlineField,
     CategoryManagerDetailsInlineInput, CategoryManagerFocus, CategoryManagerState,
     CategorySuggestState, ConditionEditState, ConditionEditorKind, DateConditionDraft,
-    DateConditionDraftKind, DateConditionField, GlobalSettingsRow, GlobalSettingsState, OllamaModelPickerState,
-    WorkflowRolePickerOrigin, WorkflowRolePickerState,
+    DateConditionDraftKind, DateConditionField, GlobalSettingsRow, GlobalSettingsState,
+    OllamaModelPickerState, WorkflowRolePickerOrigin, WorkflowRolePickerState,
 };
 use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
@@ -428,6 +428,11 @@ struct App {
     name_input_context: Option<NameInputContext>,
     preview_provenance_scroll: usize,
     preview_summary_scroll: usize,
+    preview_note_editing: bool,
+    preview_note_dirty: bool,
+    preview_note_discard_confirm: bool,
+    preview_note_item_id: Option<ItemId>,
+    preview_note_editor: text_buffer::TextBuffer,
     inspect_assignment_index: usize,
     slots: Vec<Slot>,
     selected_item_ids: HashSet<ItemId>,
@@ -466,7 +471,7 @@ impl Default for App {
             slot_sort_keys: Vec::new(),
             search_buffer: text_buffer::TextBuffer::empty(),
             show_preview: false,
-            preview_mode: PreviewMode::Summary,
+            preview_mode: PreviewMode::Note,
             normal_focus: NormalFocus::Board,
             all_items: Vec::new(),
             item_links_by_item_id: HashMap::new(),
@@ -508,6 +513,11 @@ impl Default for App {
             name_input_context: None,
             preview_provenance_scroll: 0,
             preview_summary_scroll: 0,
+            preview_note_editing: false,
+            preview_note_dirty: false,
+            preview_note_discard_confirm: false,
+            preview_note_item_id: None,
+            preview_note_editor: text_buffer::TextBuffer::empty(),
             inspect_assignment_index: 0,
             slots: Vec::new(),
             selected_item_ids: HashSet::new(),

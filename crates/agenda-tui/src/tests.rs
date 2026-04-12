@@ -6034,6 +6034,10 @@ fn normal_mode_p_and_i_manage_preview_modes() {
     app.handle_normal_key(KeyCode::Char('p'), &agenda)
         .expect("open preview");
     assert!(app.show_preview);
+    assert_eq!(app.preview_mode, super::PreviewMode::Note);
+
+    app.handle_normal_key(KeyCode::Char('i'), &agenda)
+        .expect("switch to summary");
     assert_eq!(app.preview_mode, super::PreviewMode::Summary);
 
     app.handle_normal_key(KeyCode::Char('i'), &agenda)
@@ -6041,12 +6045,104 @@ fn normal_mode_p_and_i_manage_preview_modes() {
     assert_eq!(app.preview_mode, super::PreviewMode::Provenance);
 
     app.handle_normal_key(KeyCode::Char('i'), &agenda)
-        .expect("switch to summary");
-    assert_eq!(app.preview_mode, super::PreviewMode::Summary);
+        .expect("switch back to note");
+    assert_eq!(app.preview_mode, super::PreviewMode::Note);
 
     app.handle_normal_key(KeyCode::Char('p'), &agenda)
         .expect("close preview");
     assert!(!app.show_preview);
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn preview_note_mode_supports_inline_edit_and_save_with_s() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("agenda-tui-preview-note-edit-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut item = Item::new("note item".to_string());
+    item.note = Some("hello".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.mode = Mode::Normal;
+    app.set_item_selection_by_id(item.id);
+
+    app.handle_normal_key(KeyCode::Char('p'), &agenda)
+        .expect("open preview");
+    assert_eq!(app.preview_mode, super::PreviewMode::Note);
+
+    app.handle_normal_key(KeyCode::Tab, &agenda)
+        .expect("focus preview");
+    assert_eq!(app.normal_focus, super::NormalFocus::Preview);
+
+    app.handle_normal_key(KeyCode::Enter, &agenda)
+        .expect("start preview note edit");
+    assert!(app.preview_note_editing);
+
+    app.handle_normal_key(KeyCode::Char('!'), &agenda)
+        .expect("edit preview note");
+    assert!(app.preview_note_dirty);
+
+    app.handle_normal_key(KeyCode::Char('S'), &agenda)
+        .expect("save preview note");
+    assert!(!app.preview_note_editing);
+
+    let updated = store.get_item(item.id).expect("load updated item");
+    assert_eq!(updated.note.as_deref(), Some("hello!"));
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn preview_note_mode_esc_prompts_then_discard_with_n() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path =
+        std::env::temp_dir().join(format!("agenda-tui-preview-note-discard-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut item = Item::new("discard item".to_string());
+    item.note = Some("base".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.mode = Mode::Normal;
+    app.set_item_selection_by_id(item.id);
+    app.handle_normal_key(KeyCode::Char('p'), &agenda)
+        .expect("open preview");
+    app.handle_normal_key(KeyCode::Tab, &agenda)
+        .expect("focus preview");
+    app.handle_normal_key(KeyCode::Enter, &agenda)
+        .expect("start preview note edit");
+    app.handle_normal_key(KeyCode::Char('!'), &agenda)
+        .expect("edit note");
+    assert!(app.preview_note_dirty);
+
+    app.handle_normal_key(KeyCode::Esc, &agenda)
+        .expect("open dirty confirm");
+    assert!(app.preview_note_discard_confirm);
+
+    app.handle_normal_key(KeyCode::Char('n'), &agenda)
+        .expect("discard edits");
+    assert!(!app.preview_note_editing);
+
+    let unchanged = store.get_item(item.id).expect("load unchanged item");
+    assert_eq!(unchanged.note.as_deref(), Some("base"));
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);

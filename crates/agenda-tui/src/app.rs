@@ -361,7 +361,9 @@ impl App {
         self.clamp_horizontal_slot_item_indices();
         self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
-        self.board_scroll_offset = self.board_scroll_offset.min(self.slots.len().saturating_sub(1));
+        self.board_scroll_offset = self
+            .board_scroll_offset
+            .min(self.slots.len().saturating_sub(1));
         // If Hide mode landed us on an empty slot, advance to the nearest non-empty.
         if self.effective_empty_sections() == EmptySections::Hide {
             self.skip_hidden_slots(1);
@@ -392,6 +394,7 @@ impl App {
         } else {
             self.column_index = self.column_index.min(self.current_slot_column_count());
         }
+        self.sync_preview_note_editor_from_selection();
         let provenance_len = self.preview_info_line_count_for_selected_item();
         let summary_len = self
             .selected_item()
@@ -409,6 +412,25 @@ impl App {
         self.rebuild_classification_ui(store)?;
 
         Ok(())
+    }
+
+    pub(crate) fn sync_preview_note_editor_from_selection(&mut self) {
+        if self.preview_note_editing {
+            return;
+        }
+        let selected_id = self.selected_item_id();
+        let selected_note = self
+            .selected_item()
+            .and_then(|item| item.note.clone())
+            .unwrap_or_default();
+        if self.preview_note_item_id != selected_id
+            || self.preview_note_editor.text() != selected_note
+        {
+            self.preview_note_item_id = selected_id;
+            self.preview_note_editor.set(selected_note);
+            self.preview_note_dirty = false;
+            self.preview_note_discard_confirm = false;
+        }
     }
 
     fn rebuild_classification_ui(&mut self, store: &Store) -> TuiResult<()> {
@@ -694,7 +716,11 @@ impl App {
         let step = if delta > 0 { 1i32 } else { -1i32 };
         let start = self.slot_index;
         for _ in 0..self.slots.len() {
-            if self.slots.get(self.slot_index).is_none_or(|s| !s.items.is_empty()) {
+            if self
+                .slots
+                .get(self.slot_index)
+                .is_none_or(|s| !s.items.is_empty())
+            {
                 return; // landed on a non-empty slot (or out of range)
             }
             let next = next_index_clamped(self.slot_index, self.slots.len(), step);
@@ -704,7 +730,11 @@ impl App {
             self.slot_index = next;
         }
         // If we couldn't find a non-empty slot, revert.
-        if self.slots.get(self.slot_index).is_none_or(|s| s.items.is_empty()) {
+        if self
+            .slots
+            .get(self.slot_index)
+            .is_none_or(|s| s.items.is_empty())
+        {
             self.slot_index = start;
         }
     }
