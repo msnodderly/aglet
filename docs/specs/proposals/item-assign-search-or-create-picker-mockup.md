@@ -1,3 +1,9 @@
+---
+title: Set Category Search-or-Create Mockup
+status: draft
+created: 2026-03-15
+---
+
 # Set Category Search-or-Create Mockup
 
 This mockup updates the board column `Set Category` popup to behave like a real

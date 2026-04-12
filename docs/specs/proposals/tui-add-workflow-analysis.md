@@ -1,3 +1,9 @@
+---
+title: TUI Add Item Workflow Analysis
+status: draft
+created: 2026-03-15
+---
+
 # TUI Add Item Workflow Analysis & Proposal
 
 **Date**: 2026-02-20

@@ -1,3 +1,10 @@
+---
+title: Store Refactor Restart Plan
+status: shipped
+created: 2026-03-01
+shipped: 2026-03-21
+---
+
 # Store Refactor Restart Plan (Post PR #48 / #49)
 
 ## Purpose

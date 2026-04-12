@@ -1,3 +1,8 @@
+---
+title: Product Roadmap
+updated: 2026-03-21
+---
+
 # Roadmap (Current Reality)
 
 Date: 2026-02-17

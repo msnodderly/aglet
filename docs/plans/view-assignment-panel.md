@@ -1,3 +1,10 @@
+---
+title: View/Section Assignment Pane (Proposal)
+status: shipped
+created: 2026-03-22
+shipped: 2026-03-22
+---
+
 # Proposal: View/Section Assignment Pane in the `a` Panel
 
 ## Summary

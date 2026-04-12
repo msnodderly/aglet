@@ -1,3 +1,8 @@
+---
+title: Codebase Walkthrough
+updated: 2026-04-01
+---
+
 # Aglet Codebase Walkthrough
 
 *2026-03-01 — updated to reflect current codebase*

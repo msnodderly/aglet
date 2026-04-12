@@ -1,3 +1,10 @@
+---
+title: Configurable View Columns
+status: shipped
+created: 2026-02-18
+shipped: 2026-03-21
+---
+
 # Configurable View Columns
 
 ## Context

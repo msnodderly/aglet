@@ -1,3 +1,10 @@
+---
+title: Dynamic Conditional Assignments Follow-Up
+status: shipped
+created: 2026-03-20
+shipped: 2026-03-29
+---
+
 # Dynamic Conditional Assignments Follow-Up
 
 ## Summary

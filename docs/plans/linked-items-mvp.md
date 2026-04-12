@@ -1,3 +1,10 @@
+---
+title: Linked Items MVP
+status: shipped
+created: 2026-02-15
+shipped: 2026-03-21
+---
+
 # Linked Items MVP Plan (`depends-on` / `blocks` / `related`)
 
 ## Goal

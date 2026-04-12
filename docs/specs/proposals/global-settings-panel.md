@@ -1,3 +1,9 @@
+---
+title: Global Settings Panel
+status: draft
+created: 2026-03-15
+---
+
 # Global Settings Panel
 
 Date: 2026-03-22

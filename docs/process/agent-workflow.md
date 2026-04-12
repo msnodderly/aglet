@@ -1,3 +1,8 @@
+---
+title: Agent Workflow
+updated: 2026-03-21
+---
+
 # Autonomous Agent Workflow
 
 **Project:** aglet (Rust CLI/TUI app)
@@ -193,7 +198,15 @@ cargo test
    git push origin HEAD:main
    ```
 
-6. **STOP** - do not pick another task.
+6. **Docs update** (required before handoff):
+   - For any plan touched this session: update its YAML frontmatter `status`
+     field (add `shipped: YYYY-MM-DD` if the plan shipped this session)
+   - For any non-trivial design choice made this session: create a decision
+     record in `docs/decisions/<topic>.md` with rationale, tradeoffs, and outcome
+   - If a proposal was accepted/rejected: update its `status` field and move
+     to `docs/decisions/` if accepted (add `origin:` pointing to original path)
+
+7. **STOP** - do not pick another task.
 
 ---
 

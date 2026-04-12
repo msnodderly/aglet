@@ -1,3 +1,10 @@
+---
+title: Text Editing Overhaul
+status: shipped
+created: 2026-03-15
+shipped: 2026-03-21
+---
+
 # Execute Plan: Save + Implement `a28c9e34`
 
 ## Summary

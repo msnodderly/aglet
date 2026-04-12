@@ -1,3 +1,8 @@
+---
+title: OpenAI Provider Handoff
+updated: 2026-03-30
+---
+
 # Handoff: OpenAI Provider Support
 
 **Date:** 2026-03-30

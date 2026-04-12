@@ -1,3 +1,10 @@
+---
+title: Also Match Terms + Suffix Normalization
+status: shipped
+created: 2026-03-15
+shipped: 2026-03-22
+---
+
 # Implementation Plan: Also Match Terms + Suffix Normalization
 
 ## Goal

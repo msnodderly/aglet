@@ -1,3 +1,8 @@
+---
+title: NLSpec v0.6 Product Specification
+updated: 2026-04-02
+---
+
 # Agenda Reborn — NLSpec v0.6
 
 > A modern clone of Lotus Agenda (1988–1992), the free-form personal information manager

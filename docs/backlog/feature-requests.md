@@ -1,3 +1,8 @@
+---
+title: Feature Requests
+updated: 2026-02-20
+---
+
 # Feature Requests
 
 Date: 2026-02-20

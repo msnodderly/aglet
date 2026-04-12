@@ -1,3 +1,10 @@
+---
+title: Datebook View Implementation
+status: shipped
+created: 2026-03-21
+shipped: 2026-04-08
+---
+
 # Datebook View Implementation Plan
 
 ## Context

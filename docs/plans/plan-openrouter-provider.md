@@ -1,3 +1,10 @@
+---
+title: Add OpenRouter as a Classification Provider
+status: shipped
+created: 2026-03-24
+shipped: 2026-03-24
+---
+
 # Plan: Add OpenRouter as a Classification Provider
 
 ## Status: In Progress — Architecture Research Done, Implementation Not Started

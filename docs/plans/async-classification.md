@@ -1,3 +1,10 @@
+---
+title: Async Classification for Expensive Classifiers
+status: shipped
+created: 2026-03-20
+shipped: 2026-03-26
+---
+
 # Async Classification for Expensive Classifiers
 
 ## Context

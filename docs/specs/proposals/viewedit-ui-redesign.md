@@ -1,3 +1,9 @@
+---
+title: ViewEdit UI Redesign
+status: draft
+created: 2026-03-15
+---
+
 # ViewEdit UI Redesign
 
 ## Context

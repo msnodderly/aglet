@@ -1,3 +1,10 @@
+---
+title: Assignment Provenance, Explanation, and Debug Logging
+status: shipped
+created: 2026-03-22
+shipped: 2026-03-29
+---
+
 # Assignment Provenance, Explanation, and Debug Logging Plan
 
 ## Summary

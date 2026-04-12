@@ -1,3 +1,9 @@
+---
+title: Category Manager UX Improvements
+status: draft
+created: 2026-03-15
+---
+
 # Category Manager UX Improvements
 
 ## Context

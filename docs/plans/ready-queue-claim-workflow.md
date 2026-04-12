@@ -1,3 +1,10 @@
+---
+title: Workflow-Backed Ready Queue, Claim, and Release
+status: shipped
+created: 2026-02-20
+shipped: 2026-03-21
+---
+
 # Plan: Workflow-Backed Ready Queue, Claim, and Release
 
 ## Summary

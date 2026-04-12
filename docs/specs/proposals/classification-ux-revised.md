@@ -1,3 +1,9 @@
+---
+title: Classification UX Revised
+status: draft
+created: 2026-03-21
+---
+
 # Classification UX — Revised Proposal
 
 ## Context

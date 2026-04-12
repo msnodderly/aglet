@@ -1,3 +1,8 @@
+---
+title: Feature Parity Gaps
+updated: 2026-03-21
+---
+
 # Domain + Product Gaps (Current Reality)
 
 Date: 2026-02-16

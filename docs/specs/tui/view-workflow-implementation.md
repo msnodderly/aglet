@@ -1,3 +1,8 @@
+---
+title: View Workflow Implementation
+updated: 2026-03-21
+---
+
 # TUI View Workflow Implementation Spec
 
 Date: 2026-02-17

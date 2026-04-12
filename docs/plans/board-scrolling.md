@@ -1,3 +1,10 @@
+---
+title: Vertical Board Scrolling for Datebook Views
+status: shipped
+created: 2026-04-05
+shipped: 2026-04-09
+---
+
 # Plan: Vertical Board Scrolling for Datebook Views
 
 ## Context

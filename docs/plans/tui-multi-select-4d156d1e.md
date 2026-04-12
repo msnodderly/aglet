@@ -1,3 +1,10 @@
+---
+title: Multi-Select in TUI
+status: shipped
+created: 2026-03-10
+shipped: 2026-03-21
+---
+
 # Implementation Plan: `4d156d1e` Multi-Select in TUI
 
 ## Goal

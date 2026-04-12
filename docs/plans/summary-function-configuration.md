@@ -1,3 +1,10 @@
+---
+title: Summary Function Configuration
+status: shipped
+created: 2026-03-10
+shipped: 2026-03-21
+---
+
 # Plan: Summary Function Configuration
 
 ## Problem

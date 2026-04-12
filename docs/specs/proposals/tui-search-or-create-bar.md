@@ -1,3 +1,9 @@
+---
+title: TUI Search-or-Create Bar
+status: draft
+created: 2026-03-15
+---
+
 # TUI Search-or-Create Bar
 
 ## Context

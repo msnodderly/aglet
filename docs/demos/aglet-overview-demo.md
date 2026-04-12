@@ -1,3 +1,8 @@
+---
+title: Aglet Overview Demo
+updated: 2026-03-21
+---
+
 # Aglet: Agenda Reborn — Project Overview Demo
 
 *2026-03-18T06:37:02Z by Showboat 0.6.1*

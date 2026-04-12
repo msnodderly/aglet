@@ -1,3 +1,10 @@
+---
+title: TUI UX Improvements
+status: shipped
+created: 2026-03-18
+shipped: 2026-03-21
+---
+
 # Plan: TUI UX Improvements — ViewEdit, Category Manager, Footer, Undo
 
 **Date:** 2026-03-18

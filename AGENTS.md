@@ -254,22 +254,48 @@ Practical implications:
 
 ## Documentation Layout
 
-Active project docs now live under `docs/` grouped by purpose:
+Active project docs live under `docs/` grouped by purpose. The full index is
+in `docs/README.md`. Every doc file must have YAML frontmatter (see below).
 
-- `docs/process/` for workflow/process docs
-- `docs/reference/` for codebase/reference docs
-- `docs/plans/` for active implementation plans
-- `docs/specs/` for active product/TUI specs and proposals
-- `docs/decisions/` for implementation/product decisions
-- `docs/backlog/` for feature/backlog notes
-- `docs/demos/` for executable demos
+### Directory taxonomy
 
-Practical implications:
-- If you are looking for a former `spec/*.md` or root-level planning doc, check
-  `docs/` first; many files were moved there in the March 2026 doc reorg.
-- `spec/` now contains only lightweight pointer docs kept for continuity.
-- `archive/` is historical material; prefer `archive/source-material/` for
-  raw references and `archive/superseded/` for replaced plans/docs.
+- `docs/plans/` — implementation plans (`status: draft | active | shipped | abandoned`)
+- `docs/decisions/` — decision records: accepted proposals + legacy decision logs
+- `docs/specs/product/` — product spec (target.md = NLSpec), roadmap, gaps, tasks
+- `docs/specs/tui/` — TUI-specific specs
+- `docs/specs/proposals/` — design proposals (`status: draft | rejected | deferred`;
+  accepted proposals move to `decisions/`)
+- `docs/reference/` — durable reference docs (codebase walkthrough, comparisons)
+- `docs/process/` — PM workflow, agent workflow
+- `docs/demos/` — executable demos
+- `docs/agents/handoff/` — session handoff logs (`YYYY-MM-DD-NNN-feature.md`)
+- `docs/backlog/` — feature requests
+
+### Frontmatter requirements
+
+Every doc file must have YAML frontmatter with at minimum `title` and `updated`.
+
+Plans add: `status` (draft|active|shipped|abandoned), `created`, optional `shipped`.
+Proposals add: `status` (draft|accepted|rejected|deferred), `created`, optional
+`decided` and `origin` (when moved to decisions/).
+
+To check plan status, read the frontmatter `status:` field, not file mtime.
+
+### Lifecycle rules
+
+- **Plans** stay in `docs/plans/` permanently. Status is updated in place.
+  When shipped: set `status: shipped` and add `shipped: YYYY-MM-DD`.
+- **Proposals** that are accepted move to `docs/decisions/` and become decision
+  records. Add an `origin:` field pointing back to the original proposal path.
+  Rejected/deferred proposals stay in `docs/specs/proposals/`.
+- **Archive** (`archive/`) is frozen pre-v0.6 material. Do not add new files there.
+
+### Handoff doc-update step (required)
+
+Every agent session must, before writing the handoff doc:
+1. Update `status` of any plan touched this session (add `shipped:` date if shipped)
+2. Write a decision record in `decisions/` for any non-trivial design choice made
+3. Move accepted proposals to `decisions/` and update their status
 
 ## Aglet Features Database
 

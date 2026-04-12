@@ -1,3 +1,8 @@
+---
+title: Open Project Items by Priority
+updated: 2026-03-21
+---
+
 # Find Open Project Items (Generic Parameter)
 
 Goal:

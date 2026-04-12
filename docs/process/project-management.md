@@ -1,3 +1,8 @@
+---
+title: Project Management Process
+updated: 2026-03-21
+---
+
 # PM & Grooming Process (Aglet)
 
 ## Overview

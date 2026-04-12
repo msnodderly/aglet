@@ -1,3 +1,10 @@
+---
+title: View/Section Assignment Pane (Implementation)
+status: shipped
+created: 2026-03-22
+shipped: 2026-03-22
+---
+
 # Implementation Plan: View/Section Assignment Pane
 
 See `view-assignment-panel.md` for the full proposal with mockups.

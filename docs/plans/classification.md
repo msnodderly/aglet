@@ -1,3 +1,10 @@
+---
+title: Classification Mechanisms
+status: shipped
+created: 2026-02-01
+shipped: 2026-04-02
+---
+
  The Three Classification Mechanisms (from the user's perspective)
 
   1. Text Matching (String Conditions)

@@ -1,3 +1,10 @@
+---
+title: Centralize Dependency-Blocked Evaluation
+status: shipped
+created: 2026-03-15
+shipped: 2026-04-01
+---
+
 # Plan: Centralize Dependency-Blocked Evaluation
 
 ## Summary

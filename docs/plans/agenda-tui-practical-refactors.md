@@ -1,3 +1,10 @@
+---
+title: Agenda-TUI Practical Refactors
+status: shipped
+created: 2026-03-25
+shipped: 2026-03-29
+---
+
 # Agenda-TUI Practical Refactors
 
 ## Summary

@@ -1,3 +1,10 @@
+---
+title: Code Quality Improvement
+status: shipped
+created: 2026-02-10
+shipped: 2026-03-21
+---
+
 # Code Quality Improvement Plan
 
 Status of implemented quick wins is in git log (commit `8ceb7a2`).

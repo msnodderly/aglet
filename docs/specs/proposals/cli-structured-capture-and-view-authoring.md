@@ -1,3 +1,9 @@
+---
+title: CLI Structured Capture and View Authoring
+status: draft
+created: 2026-03-15
+---
+
 # CLI-Only Structured Capture and View Authoring
 
 ## Context

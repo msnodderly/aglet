@@ -1,3 +1,9 @@
+---
+title: Classification Gap Analysis: Aglet vs Lotus Agenda
+status: draft
+created: 2026-03-15
+---
+
 # Classification Gap Analysis: Aglet Implementation vs. Lotus Agenda
 
 This document compares the **actual aglet implementation** (not the proposal doc) against

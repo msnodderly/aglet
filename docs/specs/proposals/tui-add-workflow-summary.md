@@ -1,3 +1,9 @@
+---
+title: TUI Workflow Analysis Summary
+status: draft
+created: 2026-03-15
+---
+
 # TUI Workflow Analysis: Summary
 
 **Date**: 2026-02-20

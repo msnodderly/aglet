@@ -1,3 +1,10 @@
+---
+title: Profile Conditions CLI + TUI Implementation
+status: shipped
+created: 2026-03-18
+shipped: 2026-04-01
+---
+
 # Profile Conditions: CLI + TUI Implementation Plan
 
 ## Context

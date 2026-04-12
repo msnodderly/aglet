@@ -1,3 +1,10 @@
+---
+title: Special Actions Follow-Up
+status: shipped
+created: 2026-04-01
+shipped: 2026-04-02
+---
+
 # Special Actions Follow-Up Plan
 
 Status: Deferred Proposal

@@ -1,3 +1,10 @@
+---
+title: Category-Level Date Conditions
+status: shipped
+created: 2026-03-28
+shipped: 2026-04-04
+---
+
 # Category-Level Date Conditions Replacement Plan
 
 Status: In Progress

@@ -1,3 +1,8 @@
+---
+title: Ollama Model Comparison
+updated: 2026-03-24
+---
+
 # Ollama Model Comparison for Semantic Classification
 
 **Test item**: "another test item: figure out why auto-suggest is flaky."

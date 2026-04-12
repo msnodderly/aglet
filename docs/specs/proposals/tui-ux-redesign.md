@@ -1,3 +1,9 @@
+---
+title: TUI UX Redesign
+status: draft
+created: 2026-03-15
+---
+
 # TUI UX Redesign Proposal
 
 Date: 2026-02-18

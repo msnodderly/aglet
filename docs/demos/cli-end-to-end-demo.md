@@ -1,3 +1,8 @@
+---
+title: CLI End-to-End Demo
+updated: 2026-03-21
+---
+
 # Aglet CLI End-to-End Demo
 
 *2026-03-06T07:10:42Z by Showboat 0.6.1*

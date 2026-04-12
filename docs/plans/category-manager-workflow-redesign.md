@@ -1,3 +1,10 @@
+---
+title: Category Manager Workflow Redesign
+status: shipped
+created: 2026-03-15
+shipped: 2026-03-21
+---
+
 ## Category Manager Workflow Redesign
 
 ### Goal

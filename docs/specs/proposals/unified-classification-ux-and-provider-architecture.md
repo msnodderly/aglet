@@ -1,3 +1,9 @@
+---
+title: Unified Classification UX And Provider Architecture
+status: draft
+created: 2026-03-15
+---
+
 # Unified Classification UX And Provider Architecture
 
 Revision note: this document supersedes earlier discussion with a March 24,
