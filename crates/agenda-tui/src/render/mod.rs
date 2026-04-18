@@ -4603,16 +4603,28 @@ impl App {
                     .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
                 {
                     vec![
-                        ("Tab", "next"),
-                        ("/", "filter"),
                         ("Space", "toggle"),
-                        ("S", "save"),
+                        ("/", "filter"),
+                        ("Tab", "next"),
+                        ("Ctrl-S", "save"),
+                        ("Esc", "cancel"),
+                    ]
+                } else if self
+                    .input_panel
+                    .as_ref()
+                    .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Text)
+                {
+                    vec![
+                        ("Enter", "save"),
+                        ("Tab", "next"),
+                        ("Ctrl-S", "save"),
+                        ("Ctrl-G", "$EDITOR"),
                         ("Esc", "cancel"),
                     ]
                 } else {
                     vec![
+                        ("Ctrl-S", "save"),
                         ("Tab", "next"),
-                        ("S", "save"),
                         ("Ctrl-G", "$EDITOR"),
                         ("Esc", "cancel"),
                     ]
@@ -5462,24 +5474,26 @@ impl App {
             },
             InputPanelFocus::Note => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "Type note  Enter:new line  Tab:actions  S:save  Esc:cancel"
+                    "Type note  Enter:new line  Tab:actions  Ctrl-S:save  Esc:cancel"
                 } else {
-                    "Type note  Enter:new line  Tab:categories  S:save  Esc:cancel"
+                    "Type note  Enter:new line  Tab:categories  Ctrl-S:save  Esc:cancel"
                 }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
                 "Type filter  Enter:keep  Esc:done  Tab:next"
             }
-            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
+            InputPanelFocus::Categories => {
+                "j/k:move  Space:toggle  /:filter  Tab:text  Ctrl-S:save  Esc:cancel"
+            }
             InputPanelFocus::Actions => {
                 if panel.pending_suggestions.is_empty() {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S:save  Esc:cancel"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  Ctrl-S:save  Esc:cancel"
                 } else {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S:save  Esc:cancel"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  Ctrl-S:save  Esc:cancel"
                 }
             }
             InputPanelFocus::Suggestions => {
-                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S:save  Esc:cancel"
+                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  Ctrl-S:save  Esc:cancel"
             }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
             InputPanelFocus::When => {
@@ -7510,10 +7524,15 @@ impl App {
                             | CategoryManagerDetailsFocus::Conditions
                             | CategoryManagerDetailsFocus::Actions
                     );
+                let flags_title_display = if flags_border_focused {
+                    format!("> {flags_title}")
+                } else {
+                    flags_title.to_string()
+                };
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
-                            .title(flags_title)
+                            .title(flags_title_display)
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(if flags_border_focused {
                                 CATEGORY_MANAGER_EDIT_FOCUS
@@ -8224,7 +8243,11 @@ impl App {
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
-            let title = " DETAILS ".to_string();
+            let title = if details_focused {
+                " > DETAILS ".to_string()
+            } else {
+                " DETAILS ".to_string()
+            };
 
             // Context banner: full-width colored bar distinguishing view vs section
             {
@@ -8936,8 +8959,14 @@ impl App {
             );
             let dirty_marker = if state.dirty { " *" } else { "" };
             let view_label = format!("VIEW: {}", state.draft.name);
+            let sections_focus_marker = if state.pane_focus == ViewEditPaneFocus::Sections {
+                "> "
+            } else {
+                ""
+            };
             let sections_title: Line<'_> = if filter_editing {
-                let prefix = format!(" {view_label}{dirty_marker}  /",);
+                let prefix =
+                    format!(" {sections_focus_marker}{view_label}{dirty_marker}  /",);
                 Line::from(inline_edit_spans(
                     &prefix,
                     state.sections_filter_buf.text(),
@@ -8947,11 +8976,11 @@ impl App {
                 ))
             } else if filter_active {
                 Line::from(format!(
-                    " {view_label}{dirty_marker}  /{} ",
+                    " {sections_focus_marker}{view_label}{dirty_marker}  /{} ",
                     state.sections_filter_buf.text()
                 ))
             } else {
-                Line::from(format!(" {view_label}{dirty_marker} "))
+                Line::from(format!(" {sections_focus_marker}{view_label}{dirty_marker} "))
             };
             let block = Block::default()
                 .title(sections_title)
@@ -9215,11 +9244,16 @@ impl App {
             };
             let content_len = preview_items.len();
             let mut list_state = Self::list_state_for(preview_area, selected_preview_row);
+            let preview_title = if preview_focused {
+                " > PREVIEW "
+            } else {
+                " PREVIEW "
+            };
             frame.render_stateful_widget(
                 List::new(preview_items)
                     .block(
                         Block::default()
-                            .title(" PREVIEW ")
+                            .title(preview_title)
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(preview_border)),
                     )

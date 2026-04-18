@@ -6939,11 +6939,22 @@ fn edit_item_panel_footer_shows_save_cancel_hints() {
     let backend = TestBackend::new(220, 24);
     let mut terminal = Terminal::new(backend).expect("test terminal");
     terminal.draw(|frame| app.draw(frame)).expect("render app");
-    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    let lines = terminal_buffer_lines(&terminal);
+    let rendered = lines.join("\n");
+    // The 2-row footer lives in the last 4 rows (top border, status, hints, bottom border).
+    let hint_row = &lines[lines.len() - 2];
 
     assert!(
-        rendered.contains("S:save") && rendered.contains("Esc:cancel"),
-        "edit-item note footer should show S:save and Esc:cancel: {rendered}"
+        hint_row.contains("Ctrl-S:save") && hint_row.contains("Esc:cancel"),
+        "edit-item note footer hint row should show Ctrl-S:save and Esc:cancel: {hint_row}"
+    );
+    assert!(
+        !hint_row.contains(" S:save"),
+        "footer should not advertise bare S:save in text/note focus: {hint_row}"
+    );
+    assert!(
+        rendered.contains("Ctrl-S:save"),
+        "popup internal help should show Ctrl-S:save: {rendered}"
     );
 }
 
@@ -20980,10 +20991,20 @@ fn category_create_panel_shows_enter_save_esc_cancel_hint() {
     let backend = TestBackend::new(160, 40);
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal.draw(|frame| app.draw(frame)).expect("draw");
-    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    let lines = terminal_buffer_lines(&terminal);
+    let rendered = lines.join("\n");
+    let hint_row = &lines[lines.len() - 2];
     assert!(
-        rendered.contains("Enter:save") && rendered.contains("Esc:cancel"),
-        "CategoryCreate panel should advertise `Enter:save` and `Esc:cancel`: {rendered}"
+        hint_row.contains("Enter:save") && hint_row.contains("Esc:cancel"),
+        "CategoryCreate Text-focus footer should advertise `Enter:save` and `Esc:cancel`: {hint_row}"
+    );
+    assert!(
+        hint_row.contains("Ctrl-S:save"),
+        "CategoryCreate Text-focus footer should also advertise Ctrl-S:save: {hint_row}"
+    );
+    assert!(
+        !hint_row.contains(" S:save"),
+        "footer should not advertise bare S:save in text focus: {hint_row}"
     );
     assert!(
         !rendered.contains("Enter/Esc:save"),

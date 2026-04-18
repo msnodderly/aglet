@@ -2,9 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use agenda_core::classification::ClassificationSuggestion;
 use agenda_core::model::{CategoryId, CategoryValueKind, ItemId, RecurrenceRule};
-#[cfg(test)]
-use crossterm::event::KeyModifiers;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
@@ -355,6 +353,15 @@ impl InputPanel {
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
         let code = key.code;
+
+        // Ctrl-S saves from any focus, including text/note fields where
+        // bare S would be typed into the buffer.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            return InputPanelAction::Save;
+        }
+
         if let Some(action) = self.handle_focus_navigation(code, current_row_is_assigned_numeric) {
             return action;
         }
@@ -784,6 +791,46 @@ mod tests {
         let action = p.handle_key(KeyCode::Enter, false);
         assert_eq!(action, InputPanelAction::Handled);
         assert_eq!(p.note.text(), "a\n");
+    }
+
+    #[test]
+    fn ctrl_s_saves_from_note_focus() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Note;
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert_eq!(p.handle_key_event(key, false), InputPanelAction::Save);
+        assert_eq!(
+            p.note.text(),
+            "",
+            "Ctrl-S must not be typed into the note buffer"
+        );
+    }
+
+    #[test]
+    fn ctrl_s_saves_from_text_focus() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Text;
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert_eq!(p.handle_key_event(key, false), InputPanelAction::Save);
+        assert_eq!(p.text.text(), "");
+    }
+
+    #[test]
+    fn ctrl_s_saves_from_numeric_row_in_categories_focus() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Categories;
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        // Even on a numeric row where bare S would be typed, Ctrl-S saves.
+        assert_eq!(p.handle_key_event(key, true), InputPanelAction::Save);
+    }
+
+    #[test]
+    fn bare_s_is_typed_in_note_focus() {
+        let mut p = add_panel();
+        p.focus = InputPanelFocus::Note;
+        let action = p.handle_key(KeyCode::Char('S'), false);
+        assert_eq!(action, InputPanelAction::Handled);
+        assert_eq!(p.note.text(), "S", "bare S must be typed, not save");
     }
 
     // --- Category toggle ---
