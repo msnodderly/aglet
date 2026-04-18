@@ -303,6 +303,11 @@ pub struct Item {
     pub id: ItemId,
     pub text: String,
     pub note: Option<String>,
+    /// When set, the item's note is stored in an external markdown file
+    /// instead of the inline `note` column. The value is a bare filename
+    /// (e.g., `build-auth-a3f8b2c1.md`) resolved relative to the notes directory.
+    #[serde(default)]
+    pub note_file: Option<String>,
     pub created_at: Timestamp,
     pub modified_at: Timestamp,
     pub when_date: Option<jiff::civil::DateTime>,
@@ -1259,6 +1264,7 @@ impl Item {
             id: Uuid::new_v4(),
             text,
             note: None,
+            note_file: None,
             created_at: now,
             modified_at: now,
             when_date: None,

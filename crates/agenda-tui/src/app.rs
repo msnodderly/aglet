@@ -336,7 +336,31 @@ impl App {
             self.rebuild_category_manager_visible_rows();
         }
         self.sync_category_manager_state_from_selection();
-        let items = store.list_items()?;
+        // Load the "new items linked by default" setting. Shared helper
+        // migrates the deprecated `notes_default_linked` key on first access.
+        let resolved = agenda_core::note_file::read_new_items_linked_by_default(store);
+        self.new_items_linked_by_default = resolved.map(|v| v == "true").unwrap_or(false);
+
+        let mut items = store.list_items()?;
+        // Hydrate linked note files: read file content into item.note
+        {
+            let notes_dir_override = store
+                .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+                .ok()
+                .flatten();
+            for item in &mut items {
+                if let Some(ref filename) = item.note_file {
+                    let path = agenda_core::note_file::resolve_note_path(
+                        &self.db_path,
+                        notes_dir_override.as_deref(),
+                        filename,
+                    );
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        item.note = Some(content);
+                    }
+                }
+            }
+        }
         self.all_items = items.clone();
         self.blocked_item_ids = blocked_item_ids(store, &items)?;
         self.category_assignment_counts.clear();

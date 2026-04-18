@@ -21,7 +21,7 @@ use crate::model::{
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 18;
+const SCHEMA_VERSION: i32 = 19;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS items (
     is_done                   INTEGER NOT NULL DEFAULT 0,
     recurrence_rule_json      TEXT,
     recurrence_series_id      TEXT,
-    recurrence_parent_item_id TEXT
+    recurrence_parent_item_id TEXT,
+    note_file                 TEXT
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -217,6 +218,14 @@ impl Store {
             )
             .optional()
             .map_err(AgendaError::from)
+    }
+
+    /// Delete an application-level key/value setting. Returns Ok(()) whether
+    /// or not the key was present.
+    pub fn delete_app_setting(&self, key: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+        Ok(())
     }
 
     pub fn set_workflow_config(&self, config: &WorkflowConfig) -> Result<()> {
@@ -397,8 +406,8 @@ impl Store {
             .as_ref()
             .map(|r| serde_json::to_string(r).expect("RecurrenceRule is always serialisable"));
         self.conn.execute(
-            "INSERT INTO items (id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO items (id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id, note_file)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 item.id.to_string(),
                 item.text,
@@ -412,6 +421,7 @@ impl Store {
                 recurrence_json,
                 item.recurrence_series_id.map(|id| id.to_string()),
                 item.recurrence_parent_item_id.map(|id| id.to_string()),
+                item.note_file,
             ],
         )?;
         Ok(())
@@ -460,7 +470,7 @@ impl Store {
 
     pub fn get_item(&self, id: ItemId) -> Result<Item> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id
+            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id, note_file
              FROM items WHERE id = ?1",
         )?;
         let item = stmt
@@ -480,8 +490,8 @@ impl Store {
             .as_ref()
             .map(|r| serde_json::to_string(r).expect("RecurrenceRule is always serialisable"));
         let rows = self.conn.execute(
-            "UPDATE items SET text = ?1, note = ?2, modified_at = ?3, when_date = ?4, done_date = ?5, is_done = ?6, recurrence_rule_json = ?7, recurrence_series_id = ?8, recurrence_parent_item_id = ?9
-             WHERE id = ?10",
+            "UPDATE items SET text = ?1, note = ?2, modified_at = ?3, when_date = ?4, done_date = ?5, is_done = ?6, recurrence_rule_json = ?7, recurrence_series_id = ?8, recurrence_parent_item_id = ?9, note_file = ?10
+             WHERE id = ?11",
             params![
                 item.text,
                 item.note,
@@ -492,6 +502,7 @@ impl Store {
                 recurrence_json,
                 item.recurrence_series_id.map(|id| id.to_string()),
                 item.recurrence_parent_item_id.map(|id| id.to_string()),
+                item.note_file,
                 item.id.to_string(),
             ],
         )?;
@@ -546,7 +557,7 @@ impl Store {
 
     pub fn list_items(&self) -> Result<Vec<Item>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id
+            "SELECT id, text, note, created_at, modified_at, entry_date, when_date, done_date, is_done, recurrence_rule_json, recurrence_series_id, recurrence_parent_item_id, note_file
              FROM items ORDER BY created_at DESC",
         )?;
         let rows = stmt
@@ -599,6 +610,7 @@ impl Store {
             id: entry.item_id,
             text: entry.text,
             note: entry.note,
+            note_file: None,
             created_at: now,
             modified_at: now,
             when_date: entry.when_date,
@@ -1213,11 +1225,13 @@ impl Store {
         let recurrence_json: Option<String> = row.get(9)?;
         let series_id_str: Option<String> = row.get(10)?;
         let parent_id_str: Option<String> = row.get(11)?;
+        let note_file: Option<String> = row.get(12)?;
 
         Ok(Item {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
             text: row.get(1)?,
             note: row.get(2)?,
+            note_file,
             created_at: created_str.parse::<Timestamp>().unwrap_or_default(),
             modified_at: modified_str.parse::<Timestamp>().unwrap_or_default(),
             when_date: when_str.and_then(|s| s.parse::<jiff::civil::DateTime>().ok()),
@@ -2363,6 +2377,13 @@ impl Store {
         if !self.column_exists("views", "datebook_config_json")? {
             self.conn.execute_batch(
                 "ALTER TABLE views ADD COLUMN datebook_config_json TEXT;",
+            )?;
+        }
+
+        // v18 → v19: linked note files
+        if !self.column_exists("items", "note_file")? {
+            self.conn.execute_batch(
+                "ALTER TABLE items ADD COLUMN note_file TEXT;",
             )?;
         }
 
@@ -4738,5 +4759,74 @@ mod tests {
         let dt: jiff::civil::DateTime = migrated.parse().unwrap();
         assert_eq!(dt.year(), 2026);
         assert_eq!(dt.hour(), 14);
+    }
+
+    #[test]
+    fn test_item_note_file_defaults_to_none() {
+        let store = Store::open_memory().unwrap();
+        let item = Item::new("Test item".to_string());
+        store.create_item(&item).unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert!(loaded.note_file.is_none());
+    }
+
+    #[test]
+    fn test_create_item_with_note_file() {
+        let store = Store::open_memory().unwrap();
+        let mut item = Item::new("Linked note item".to_string());
+        item.note_file = Some("linked-note-item-a3f8b2c1.md".to_string());
+        // When note_file is set, note should be None (file replaces inline)
+        item.note = None;
+        store.create_item(&item).unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(
+            loaded.note_file.as_deref(),
+            Some("linked-note-item-a3f8b2c1.md")
+        );
+        assert!(loaded.note.is_none());
+    }
+
+    #[test]
+    fn test_update_item_sets_note_file() {
+        let store = Store::open_memory().unwrap();
+        let mut item = Item::new("Start inline".to_string());
+        item.note = Some("inline content".to_string());
+        store.create_item(&item).unwrap();
+
+        // Link to file: set note_file, clear inline note
+        item.note_file = Some("start-inline-abcd1234.md".to_string());
+        item.note = None;
+        item.modified_at = Timestamp::now();
+        store.update_item(&item).unwrap();
+
+        let loaded = store.get_item(item.id).unwrap();
+        assert_eq!(
+            loaded.note_file.as_deref(),
+            Some("start-inline-abcd1234.md")
+        );
+        assert!(loaded.note.is_none());
+    }
+
+    #[test]
+    fn test_list_items_includes_note_file() {
+        let store = Store::open_memory().unwrap();
+        let mut item = Item::new("With file".to_string());
+        item.note_file = Some("with-file-12345678.md".to_string());
+        store.create_item(&item).unwrap();
+        store
+            .create_item(&Item::new("Without file".to_string()))
+            .unwrap();
+
+        let items = store.list_items().unwrap();
+        let linked: Vec<&Item> = items.iter().filter(|i| i.note_file.is_some()).collect();
+        let inline: Vec<&Item> = items.iter().filter(|i| i.note_file.is_none()).collect();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(
+            linked[0].note_file.as_deref(),
+            Some("with-file-12345678.md")
+        );
+        assert_eq!(inline.len(), 1);
     }
 }

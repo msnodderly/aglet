@@ -6942,9 +6942,138 @@ fn edit_item_panel_footer_shows_esc_save_and_close() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("Esc:save and close"),
-        "edit-item footer/help should indicate Esc auto-saves: {rendered}"
+        rendered.contains("Ctrl-S:save") && rendered.contains("Esc:close"),
+        "edit-item footer/help should show Ctrl-S:save and Esc:close: {rendered}"
     );
+}
+
+#[test]
+fn edit_item_panel_link_toggle_creates_note_file_on_save() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("agenda-tui-edit-link-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut item = Item::new("Linkable item".to_string());
+    item.note = Some("Inline body".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App {
+        db_path: db_path.clone(),
+        ..Default::default()
+    };
+    app.refresh(&store).expect("refresh");
+
+    let mut panel = input_panel::InputPanel::new_edit_item(
+        item.id,
+        "Linkable item".to_string(),
+        "Inline body".to_string(),
+        String::new(),
+        HashSet::new(),
+        HashMap::new(),
+        HashMap::new(),
+    );
+    panel.link_note = true;
+    app.mode = Mode::InputPanel;
+    app.input_panel = Some(panel);
+
+    app.save_input_panel_edit(&agenda)
+        .expect("save edit panel");
+
+    assert_eq!(app.mode, Mode::Normal);
+    let saved = store.get_item(item.id).expect("reload item");
+    let filename = saved
+        .note_file
+        .as_deref()
+        .expect("note_file should be set after link toggle");
+    assert!(saved.note.is_none(), "inline note should move to file");
+
+    let notes_dir =
+        agenda_core::note_file::resolve_notes_dir(&db_path, None);
+    let file_path = notes_dir.join(filename);
+    let contents = std::fs::read_to_string(&file_path).expect("read note file");
+    assert_eq!(contents, "Inline body");
+
+    let _ = std::fs::remove_file(&file_path);
+    let _ = std::fs::remove_dir(&notes_dir);
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn edit_item_panel_l_on_linked_shows_unlink_confirm_and_y_unlinks() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("agenda-tui-unlink-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    // Set up an already-linked item with a file on disk.
+    let notes_dir = agenda_core::note_file::resolve_notes_dir(&db_path, None);
+    std::fs::create_dir_all(&notes_dir).expect("create notes dir");
+    let filename = "unlink-smoke-abcd1234.md";
+    let file_path = notes_dir.join(filename);
+    std::fs::write(&file_path, "File contents").expect("write note");
+
+    let mut item = Item::new("Linked item".to_string());
+    item.note_file = Some(filename.to_string());
+    item.note = None;
+    store.create_item(&item).expect("create item");
+
+    let mut app = App {
+        db_path: db_path.clone(),
+        ..Default::default()
+    };
+    app.refresh(&store).expect("refresh");
+
+    let mut panel = input_panel::InputPanel::new_edit_item(
+        item.id,
+        "Linked item".to_string(),
+        String::new(),
+        String::new(),
+        HashSet::new(),
+        HashMap::new(),
+        HashMap::new(),
+    );
+    panel.is_already_linked = true;
+    panel.linked_note_filename = Some(filename.to_string());
+    panel.focus = input_panel::InputPanelFocus::Actions;
+    panel.action_cursor = 2;
+    app.mode = Mode::InputPanel;
+    app.input_panel = Some(panel);
+
+    // Press 'l' from the already-linked row → unlink_confirm becomes true.
+    app.handle_key(KeyCode::Char('l'), &agenda)
+        .expect("l on linked");
+    assert!(
+        app.input_panel.as_ref().map(|p| p.unlink_confirm).unwrap_or(false),
+        "l on already-linked should set unlink_confirm"
+    );
+
+    // Press 'y' → unlinks, clears confirm, keeps file on disk.
+    app.handle_key(KeyCode::Char('y'), &agenda)
+        .expect("y confirm unlink");
+    let panel = app.input_panel.as_ref().expect("panel still open");
+    assert!(!panel.unlink_confirm);
+    assert!(!panel.is_already_linked);
+    assert!(panel.linked_note_filename.is_none());
+
+    let reloaded = store.get_item(item.id).expect("reload item");
+    assert!(reloaded.note_file.is_none());
+    assert_eq!(reloaded.note.as_deref(), Some("File contents"));
+    assert!(file_path.exists(), "note file should still exist on disk");
+
+    let _ = std::fs::remove_file(&file_path);
+    let _ = std::fs::remove_dir(&notes_dir);
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
 }
 
 #[test]

@@ -307,6 +307,52 @@ impl App {
         Ok(false)
     }
 
+    fn handle_input_panel_unlink_confirm_key(
+        &mut self,
+        code: KeyCode,
+        agenda: &Agenda<'_>,
+    ) -> TuiResult<bool> {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let item_id = self.input_panel.as_ref().and_then(|p| p.item_id);
+                let Some(item_id) = item_id else {
+                    if let Some(panel) = &mut self.input_panel {
+                        panel.unlink_confirm = false;
+                    }
+                    return Ok(false);
+                };
+                match agenda.unlink_note_file(item_id, &self.db_path) {
+                    Ok(filename) => {
+                        let note_text = agenda
+                            .store()
+                            .get_item(item_id)
+                            .ok()
+                            .and_then(|i| i.note)
+                            .unwrap_or_default();
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.mark_unlinked(note_text);
+                        }
+                        self.status = format!("Unlinked. File kept on disk: {filename}");
+                    }
+                    Err(err) => {
+                        if let Some(panel) = &mut self.input_panel {
+                            panel.unlink_confirm = false;
+                        }
+                        self.status = format!("Unlink failed: {err}");
+                    }
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                if let Some(panel) = &mut self.input_panel {
+                    panel.unlink_confirm = false;
+                }
+                self.status = "Unlink canceled".to_string();
+            }
+            _ => {}
+        }
+        Ok(false)
+    }
+
     pub(crate) fn category_column_picker_state(&self) -> Option<&CategoryColumnPickerState> {
         self.category_column_picker.as_ref()
     }
@@ -3878,6 +3924,8 @@ impl App {
             .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
 
         let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
+        // Honor the "new items linked by default" app setting.
+        panel.link_note = self.new_items_linked_by_default;
 
         // For datebook views, pre-fill the when date from the current section's
         // date range so items are created in the focused time slot.
@@ -4172,6 +4220,8 @@ impl App {
                 .when_date
                 .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_default();
+            let has_linked_note = item.note_file.is_some();
+            let linked_filename = item.note_file.clone();
             let mut panel = input_panel::InputPanel::new_edit_item(
                 item_id,
                 text,
@@ -4181,6 +4231,10 @@ impl App {
                 numeric_buffers,
                 numeric_originals,
             );
+            if has_linked_note {
+                panel.is_already_linked = true;
+                panel.linked_note_filename = linked_filename;
+            }
             panel.parsed_recurrence_rule = existing_recurrence;
             // Populate pending classification suggestions for inline review.
             if let Some(review_item) = self
@@ -4386,6 +4440,38 @@ impl App {
             }
         }
 
+        // Ctrl+S: save InputPanel (universal — works from any focus including text fields).
+        if self.transient.key_modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(code, KeyCode::Char('s') | KeyCode::Char('S'))
+            && self
+                .input_panel
+                .as_ref()
+                .is_some_and(|p| !p.discard_confirm)
+        {
+                let kind = self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| p.kind)
+                    .unwrap_or(input_panel::InputPanelKind::AddItem);
+                match kind {
+                    input_panel::InputPanelKind::AddItem => {
+                        self.save_input_panel_add(agenda)?;
+                    }
+                    input_panel::InputPanelKind::EditItem => {
+                        self.save_input_panel_edit(agenda)?;
+                    }
+                    input_panel::InputPanelKind::NameInput
+                    | input_panel::InputPanelKind::WhenDate
+                    | input_panel::InputPanelKind::NumericValue => {
+                        self.save_input_panel_name(agenda)?;
+                    }
+                    input_panel::InputPanelKind::CategoryCreate => {
+                        self.save_input_panel_category_create(agenda)?;
+                    }
+                }
+                return Ok(false);
+        }
+
         if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
             && self.input_panel.as_ref().is_some_and(|panel| {
                 panel.kind == input_panel::InputPanelKind::EditItem
@@ -4447,6 +4533,40 @@ impl App {
             return Ok(false);
         }
 
+        // 'l': toggle link-note from Actions (EditItem) or Categories (AddItem).
+        // For already-linked items, 'l' from Actions triggers the unlink confirm overlay.
+        if matches!(code, KeyCode::Char('l') | KeyCode::Char('L'))
+            && self.input_panel.as_ref().is_some_and(|panel| {
+                !panel.details_popup_open
+                    && !panel.category_filter_editing
+                    && match panel.kind {
+                        input_panel::InputPanelKind::EditItem => matches!(
+                            panel.focus,
+                            input_panel::InputPanelFocus::Actions
+                                | input_panel::InputPanelFocus::Suggestions
+                        ),
+                        input_panel::InputPanelKind::AddItem => {
+                            !panel.is_already_linked
+                                && panel.focus == input_panel::InputPanelFocus::Categories
+                        }
+                        _ => false,
+                    }
+            })
+        {
+            if let Some(panel) = &mut self.input_panel {
+                if panel.is_already_linked {
+                    panel.unlink_confirm = true;
+                } else {
+                    panel.link_note = !panel.link_note;
+                    if panel.kind == input_panel::InputPanelKind::EditItem {
+                        panel.focus = input_panel::InputPanelFocus::Actions;
+                        panel.action_cursor = 2;
+                    }
+                }
+            }
+            return Ok(false);
+        }
+
         if self.handle_input_panel_category_filter_key(code) {
             return Ok(false);
         }
@@ -4481,6 +4601,11 @@ impl App {
                 }
                 _ => {}
             }
+        }
+
+        // Handle unlink-confirm prompt before normal key routing.
+        if self.input_panel.as_ref().is_some_and(|p| p.unlink_confirm) {
+            return self.handle_input_panel_unlink_confirm_key(code, agenda);
         }
 
         // Handle discard-confirm prompt before normal key routing.
@@ -4585,7 +4710,7 @@ impl App {
                     let action_index = self
                         .input_panel
                         .as_ref()
-                        .map(|p| p.action_cursor.min(1))
+                        .map(|p| p.action_cursor.min(2))
                         .unwrap_or(0);
                     match action_index {
                         0 => self.open_item_assign_from_edit_panel(agenda),
@@ -4595,6 +4720,13 @@ impl App {
                                 panel.details_scroll = 0;
                             }
                             self.status = "Inspect item details: Esc or i closes".to_string();
+                        }
+                        2 => {
+                            if let Some(panel) = &mut self.input_panel {
+                                if !panel.is_already_linked {
+                                    panel.link_note = !panel.link_note;
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -4736,7 +4868,7 @@ impl App {
                     if panel.kind == input_panel::InputPanelKind::EditItem {
                         match panel.focus {
                             input_panel::InputPanelFocus::Actions => {
-                                let len = 2i64;
+                                let len = 3i64;
                                 let current = panel.action_cursor as i64;
                                 panel.action_cursor =
                                     ((current + delta as i64).rem_euclid(len)) as usize;
@@ -4828,6 +4960,7 @@ impl App {
         } else {
             Some(note_raw)
         };
+        let link_note = panel.link_note;
         let categories_to_assign: Vec<_> = panel.categories.iter().copied().collect();
         let when_text = panel.when_buffer.trimmed().to_string();
         let panel_recurrence_rule = panel.parsed_recurrence_rule.clone();
@@ -4910,6 +5043,33 @@ impl App {
             }
         }
 
+        // Create linked note file if the user checked the link-note checkbox.
+        let mut created_link: Option<String> = None;
+        if link_note {
+            let note_content = agenda
+                .store()
+                .get_item(item.id)?
+                .note
+                .unwrap_or_else(|| agenda_core::note_file::note_template(&text));
+            let filename = agenda_core::note_file::note_filename(&text, item.id);
+            let notes_dir_override = agenda
+                .store()
+                .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+                .ok()
+                .flatten();
+            let notes_dir =
+                agenda_core::note_file::resolve_notes_dir(&self.db_path, notes_dir_override.as_deref());
+            let _ = std::fs::create_dir_all(&notes_dir);
+            let file_path = notes_dir.join(&filename);
+            let _ = std::fs::write(&file_path, &note_content);
+            let mut loaded = agenda.store().get_item(item.id)?;
+            loaded.note_file = Some(filename.clone());
+            loaded.note = None;
+            loaded.modified_at = Timestamp::now();
+            agenda.store().update_item(&loaded)?;
+            created_link = Some(filename);
+        }
+
         // Insert into section context (applies on_insert_assign rules).
         // Skip for datebook views: items land in sections by when_date, not
         // category assignment, and datebook views have no manual sections.
@@ -4944,6 +5104,9 @@ impl App {
             } else {
                 format!("{} | {suffix}.", self.status)
             };
+        }
+        if let Some(fname) = created_link {
+            self.status = format!("{} | linked to {fname}", self.status);
         }
         // Submit background classification (Ollama) if enabled.
         let _ = self.submit_background_classification(agenda, item.id);
@@ -4986,8 +5149,14 @@ impl App {
             .iter()
             .any(|(_, d)| *d != SuggestionDecision::Pending);
         let pending_suggestions = panel.pending_suggestions.clone();
+        let wants_to_link = !panel.is_already_linked && panel.link_note;
 
-        if no_text_change && no_note_change && no_when_change && !has_suggestion_decisions {
+        if no_text_change
+            && no_note_change
+            && no_when_change
+            && !has_suggestion_decisions
+            && !wants_to_link
+        {
             self.input_panel = None;
             self.mode = Mode::Normal;
             self.status = "Edit canceled: no changes".to_string();
@@ -5023,8 +5192,46 @@ impl App {
         };
 
         // Update text and note.
+        let mut created_link: Option<String> = None;
         item.text = updated_text;
-        item.note = updated_note;
+        if item.note_file.is_some() {
+            // Write note content to the linked file; keep DB note NULL.
+            let notes_dir_override = agenda
+                .store()
+                .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+                .ok()
+                .flatten();
+            let filename = item.note_file.as_deref().unwrap();
+            let path = agenda_core::note_file::resolve_note_path(
+                &self.db_path,
+                notes_dir_override.as_deref(),
+                filename,
+            );
+            let content = updated_note.as_deref().unwrap_or("");
+            let _ = std::fs::write(&path, content);
+            item.note = None;
+        } else if wants_to_link {
+            let notes_dir_override = agenda
+                .store()
+                .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+                .ok()
+                .flatten();
+            let filename = agenda_core::note_file::note_filename(&item.text, item.id);
+            let notes_dir = agenda_core::note_file::resolve_notes_dir(
+                &self.db_path,
+                notes_dir_override.as_deref(),
+            );
+            let _ = std::fs::create_dir_all(&notes_dir);
+            let content = updated_note
+                .clone()
+                .unwrap_or_else(|| agenda_core::note_file::note_template(&item.text));
+            let _ = std::fs::write(notes_dir.join(&filename), &content);
+            created_link = Some(filename.clone());
+            item.note_file = Some(filename);
+            item.note = None;
+        } else {
+            item.note = updated_note;
+        }
         item.modified_at = Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
         let process_result = agenda.update_item_cheap(&item, reference_date)?;
@@ -5086,6 +5293,9 @@ impl App {
             } else {
                 format!("{status} | {suffix}.")
             };
+        }
+        if let Some(fname) = created_link {
+            status = format!("{status} | linked to {fname}");
         }
         self.status = status;
         // Submit background classification (Ollama) if enabled.

@@ -171,7 +171,10 @@ pub fn run_with_options(db_path: &Path, debug: bool) -> TuiResult<()> {
 
     let mut terminal = TerminalSession::enter()?;
 
-    let mut app = App::default();
+    let mut app = App {
+        db_path: db_path.to_path_buf(),
+        ..Default::default()
+    };
     let result = app.run(terminal.terminal_mut(), &agenda);
 
     terminal.exit()?;
@@ -452,6 +455,8 @@ struct App {
     category_assignment_counts: HashMap<CategoryId, usize>,
     classification: ClassificationAppState,
     undo: UndoState,
+    db_path: std::path::PathBuf,
+    new_items_linked_by_default: bool,
 }
 
 impl Default for App {
@@ -531,6 +536,8 @@ impl Default for App {
             category_assignment_counts: HashMap::new(),
             classification: ClassificationAppState::default(),
             undo: UndoState::default(),
+            db_path: std::path::PathBuf::new(),
+            new_items_linked_by_default: false,
         }
     }
 }

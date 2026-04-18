@@ -4198,7 +4198,15 @@ impl App {
             Mode::InspectUnassign => "Select assignment".to_string(),
             Mode::InputPanel => {
                 if let Some(panel) = &self.input_panel {
-                    if panel.discard_confirm {
+                    if panel.unlink_confirm {
+                        let fname = panel
+                            .linked_note_filename
+                            .as_deref()
+                            .unwrap_or("note");
+                        format!(
+                            "Unlink note from file? {fname} will be kept on disk.  y:confirm  n:cancel"
+                        )
+                    } else if panel.discard_confirm {
                         // Show the confirm prompt as status text
                         "Save changes? y:save  n:discard  Esc:keep editing".to_string()
                     } else {
@@ -4525,8 +4533,10 @@ impl App {
             }
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
             Mode::InputPanel => {
-                // Discard-confirm prompt takes priority
-                if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
+                // Unlink-confirm and discard-confirm prompts take priority
+                if self.input_panel.as_ref().is_some_and(|p| p.unlink_confirm) {
+                    vec![("y", "confirm"), ("n", "cancel"), ("Esc", "cancel")]
+                } else if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
                     vec![
                         ("y", "save & close"),
                         ("n", "discard"),
@@ -4560,13 +4570,13 @@ impl App {
                         ("Tab", "next"),
                         ("/", "filter"),
                         ("Space", "toggle"),
-                        ("S", "save"),
+                        ("Ctrl-S", "save"),
                         ("Esc", "cancel"),
                     ]
                 } else {
                     vec![
                         ("Tab", "next"),
-                        ("S", "save"),
+                        ("Ctrl-S", "save"),
                         ("Ctrl-G", "$EDITOR"),
                         ("Esc", "cancel"),
                     ]
@@ -4595,6 +4605,7 @@ impl App {
                         ("e", "edit"),
                         ("a", "assign"),
                         ("d", "done"),
+                        ("x", "delete"),
                         ("/", "search"),
                         ("v", "views"),
                         ("m", "lanes"),
@@ -4912,9 +4923,22 @@ impl App {
             } else {
                 note_widget.set_cursor_style(Style::default());
             }
+            let note_title = if panel.is_already_linked {
+                let fname = panel
+                    .linked_note_filename
+                    .as_deref()
+                    .unwrap_or("linked");
+                if note_focused {
+                    format!("> Note (\u{2192} {fname})")
+                } else {
+                    format!("Note (\u{2192} {fname})")
+                }
+            } else {
+                if note_focused { "> Note" } else { "Note" }.to_string()
+            };
             note_widget.set_block(
                 Block::default()
-                    .title(if note_focused { "> Note" } else { "Note" })
+                    .title(note_title)
                     .borders(Borders::ALL)
                     .border_style(note_border_style),
             );
@@ -4942,10 +4966,103 @@ impl App {
                 Style::default().fg(Color::Cyan)
             };
             let visible_indices = self.input_panel_visible_category_row_indices_for(panel);
-            let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
-            let cat_filter_rect = regions.categories_filter.unwrap_or(cat_inner);
+
+            // For AddItem, render a small Options row above the categories
+            // area to hold the link-to-file toggle.
+            let cat_rect = if panel.kind == InputPanelKind::AddItem {
+                let options_height = 3u16;
+                let split = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(options_height), Constraint::Min(0)])
+                    .split(cat_rect);
+                let options_rect = split[0];
+                let options_border_style = Style::default().fg(Color::Cyan);
+                frame.render_widget(
+                    Block::default()
+                        .title("Options")
+                        .borders(Borders::ALL)
+                        .border_style(options_border_style),
+                    options_rect,
+                );
+                if options_rect.height >= 3 && options_rect.width >= 4 {
+                    let inner = Rect {
+                        x: options_rect.x.saturating_add(1),
+                        y: options_rect.y.saturating_add(1),
+                        width: options_rect.width.saturating_sub(2),
+                        height: 1,
+                    };
+                    let spans: Vec<Span<'_>> = if panel.is_already_linked {
+                        let fname = panel
+                            .linked_note_filename
+                            .as_deref()
+                            .unwrap_or("linked")
+                            .to_string();
+                        let dim = Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC);
+                        vec![Span::styled("\u{2192} ", dim), Span::styled(fname, dim)]
+                    } else {
+                        let check = if panel.link_note { "[x]" } else { "[ ]" };
+                        let l_active =
+                            panel.focus == InputPanelFocus::Categories
+                                && !panel.category_filter_editing;
+                        let l_style = if l_active {
+                            Style::default().fg(Color::Yellow)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        vec![
+                            Span::styled(check, Style::default().fg(Color::Yellow)),
+                            Span::styled(" Link to file ", Style::default().fg(Color::Gray)),
+                            Span::styled("(l)", l_style),
+                        ]
+                    };
+                    frame.render_widget(
+                        Paragraph::new(Line::from(spans)),
+                        inner,
+                    );
+                }
+                split[1]
+            } else {
+                cat_rect
+            };
+
+            let cat_inner = regions.categories_inner.map_or(
+                Rect {
+                    x: cat_rect.x.saturating_add(1),
+                    y: cat_rect.y.saturating_add(1),
+                    width: cat_rect.width.saturating_sub(2),
+                    height: cat_rect.height.saturating_sub(2),
+                },
+                |r| {
+                    // If the original inner was provided, adjust it to the new cat_rect
+                    if panel.kind == InputPanelKind::AddItem {
+                        Rect {
+                            x: cat_rect.x.saturating_add(1),
+                            y: cat_rect.y.saturating_add(1),
+                            width: cat_rect.width.saturating_sub(2),
+                            height: cat_rect.height.saturating_sub(2),
+                        }
+                    } else {
+                        r
+                    }
+                },
+            );
+            let cat_filter_rect = if panel.kind == InputPanelKind::AddItem {
+                cat_inner
+            } else {
+                regions.categories_filter.unwrap_or(cat_inner)
+            };
             let cat_list_rect = if panel.category_filter_editing {
-                regions.categories_list.unwrap_or(cat_inner)
+                if panel.kind == InputPanelKind::AddItem {
+                    Rect {
+                        y: cat_inner.y.saturating_add(1),
+                        height: cat_inner.height.saturating_sub(1),
+                        ..cat_inner
+                    }
+                } else {
+                    regions.categories_list.unwrap_or(cat_inner)
+                }
             } else {
                 cat_inner
             };
@@ -4954,7 +5071,7 @@ impl App {
             if panel.kind == InputPanelKind::EditItem {
                 let sidebar = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(4), Constraint::Min(0)])
+                    .constraints([Constraint::Length(5), Constraint::Min(0)])
                     .split(cat_rect);
                 let actions_rect = sidebar[0];
                 let suggestions_rect = sidebar[1];
@@ -5023,11 +5140,41 @@ impl App {
                     height: suggestions_rect.height.saturating_sub(2),
                 };
 
-                let action_rows = [("a", "Assign categories"), ("i", "Inspect item details")];
+                let mut action_rows: Vec<(String, String)> = vec![
+                    ("a".into(), "Assign categories".into()),
+                    ("i".into(), "Inspect item details".into()),
+                ];
+                if panel.is_already_linked {
+                    let fname = panel
+                        .linked_note_filename
+                        .as_deref()
+                        .unwrap_or("linked");
+                    action_rows.push(("\u{2192}".into(), fname.into()));
+                } else {
+                    let check = if panel.link_note { "[x]" } else { "[ ]" };
+                    action_rows
+                        .push(("l".into(), format!("{check} Link note to file")));
+                }
+                let keys_active = matches!(
+                    panel.focus,
+                    InputPanelFocus::Actions | InputPanelFocus::Suggestions
+                );
                 let action_lines: Vec<Line<'_>> = action_rows
                     .iter()
                     .enumerate()
                     .map(|(idx, (key, label))| {
+                        let is_readonly_linked = panel.is_already_linked && idx == 2;
+                        if is_readonly_linked {
+                            let dim = Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::ITALIC);
+                            return Line::from(vec![
+                                Span::styled("  ", dim),
+                                Span::styled(key.as_str(), dim),
+                                Span::styled("  ", dim),
+                                Span::styled(label.as_str(), dim),
+                            ]);
+                        }
                         let selected = actions_focused && panel.action_cursor == idx;
                         let line_style = if selected {
                             Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -5036,14 +5183,16 @@ impl App {
                         };
                         let key_style = if selected {
                             line_style
-                        } else {
+                        } else if keys_active {
                             Style::default().fg(Color::Yellow)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
                         };
                         Line::from(vec![
                             Span::styled(if selected { "> " } else { "  " }, line_style),
-                            Span::styled(*key, key_style),
+                            Span::styled(key.as_str(), key_style),
                             Span::styled("  ", line_style),
-                            Span::styled(*label, line_style),
+                            Span::styled(label.as_str(), line_style),
                         ])
                     })
                     .collect();
@@ -5416,20 +5565,26 @@ impl App {
             },
             InputPanelFocus::Note => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "Type note  Enter:new line  Tab:actions  Esc:save and close"
+                    "Type note  Enter:new line  Ctrl-S:save  Tab:actions  Esc:close"
                 } else {
-                    "Type note  Enter:new line  Tab:categories  Esc:save and close"
+                    "Type note  Enter:new line  Ctrl-S:save  Tab:categories  Esc:close"
                 }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
                 "Type filter  Enter:keep  Esc:done  Tab:next"
             }
-            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
+            InputPanelFocus::Categories => {
+                if panel.kind == InputPanelKind::AddItem && !panel.is_already_linked {
+                    "j/k:move  Space:toggle  l:link  /:filter  Tab:text  Esc:close"
+                } else {
+                    "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close"
+                }
+            }
             InputPanelFocus::Actions => {
                 if panel.pending_suggestions.is_empty() {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i/l:shortcut  Tab:text  Shift-Tab:note  Esc:close"
                 } else {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i/l:shortcut  Tab:suggestions  Shift-Tab:note  Esc:close"
                 }
             }
             InputPanelFocus::Suggestions => {

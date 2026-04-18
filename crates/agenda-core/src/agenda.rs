@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -253,6 +254,40 @@ impl<'a> Agenda<'a> {
         self.sync_when_assignment(item_id, when_date, when_assignment)?;
 
         self.reprocess_existing_item(item_id)
+    }
+
+    /// Detach a linked note file from an item. The file is NOT deleted from
+    /// disk — its current contents are read back into `item.note` so the
+    /// inline representation is preserved. The caller keeps ownership of the
+    /// file if they want to keep it.
+    pub fn unlink_note_file(&self, item_id: ItemId, db_path: &Path) -> Result<String> {
+        let mut item = self.store.get_item(item_id)?;
+        let filename = item
+            .note_file
+            .clone()
+            .ok_or_else(|| AgendaError::InvalidOperation {
+                message: format!("item {item_id} is not linked to a note file"),
+            })?;
+        let notes_dir_override = self
+            .store
+            .get_app_setting(crate::note_file::NOTES_DIR_SETTING_KEY)
+            .ok()
+            .flatten();
+        let path = crate::note_file::resolve_note_path(
+            db_path,
+            notes_dir_override.as_deref(),
+            &filename,
+        );
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        item.note = if contents.trim().is_empty() {
+            None
+        } else {
+            Some(contents)
+        };
+        item.note_file = None;
+        item.modified_at = Timestamp::now();
+        self.store.update_item(&item)?;
+        Ok(filename)
     }
 
     pub fn set_item_recurrence_rule(
@@ -800,6 +835,7 @@ impl<'a> Agenda<'a> {
             id: Uuid::new_v4(),
             text: completed.text.clone(),
             note: completed.note.clone(),
+            note_file: completed.note_file.clone(),
             created_at: now,
             modified_at: now,
             when_date: Some(next_when),
@@ -5775,5 +5811,87 @@ mod tests {
         let result = agenda.mark_item_done(item.id).unwrap();
         let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
         assert_eq!(successor.note, Some("Discuss blockers".to_string()));
+    }
+
+    #[test]
+    fn successor_inherits_note_file() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let work = category("Work", false);
+        agenda.create_category(&work).unwrap();
+        let mut item = recurring_item("Weekly report");
+        item.note_file = Some("weekly-report-abcd1234.md".to_string());
+        // When linked, inline note is None (content hydrated at boundary)
+        item.note = None;
+        agenda.create_item(&item).unwrap();
+        agenda
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let result = agenda.mark_item_done(item.id).unwrap();
+        let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
+        assert_eq!(
+            successor.note_file.as_deref(),
+            Some("weekly-report-abcd1234.md")
+        );
+        // Inline note should be None — file content hydrated at boundary, not in core
+        assert!(successor.note.is_none());
+    }
+
+    fn unique_tmp_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("aglet-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unlink_note_file_preserves_file_and_inlines_content() {
+        let tmp = unique_tmp_dir("unlink");
+        let db_path = tmp.join("unlink.ag");
+        let store = Store::open(&db_path).unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let notes_dir = tmp.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        store
+            .set_app_setting(crate::note_file::NOTES_DIR_SETTING_KEY, "notes")
+            .unwrap();
+
+        let mut item = Item::new("Unlink target".to_string());
+        item.note_file = Some("unlink-target-deadbeef.md".to_string());
+        item.note = None;
+        agenda.create_item(&item).unwrap();
+
+        let file_path = notes_dir.join("unlink-target-deadbeef.md");
+        std::fs::write(&file_path, "Custom content\n").unwrap();
+
+        let filename = agenda.unlink_note_file(item.id, &db_path).unwrap();
+        assert_eq!(filename, "unlink-target-deadbeef.md");
+
+        let reloaded = store.get_item(item.id).unwrap();
+        assert!(reloaded.note_file.is_none());
+        assert_eq!(reloaded.note.as_deref(), Some("Custom content\n"));
+        assert!(file_path.exists(), "note file should still exist on disk");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn unlink_note_file_fails_when_not_linked() {
+        let tmp = unique_tmp_dir("unlink-nolink");
+        let db_path = tmp.join("unlink.ag");
+        let store = Store::open(&db_path).unwrap();
+        let classifier = SubstringClassifier;
+        let agenda = Agenda::new(&store, &classifier);
+
+        let item = Item::new("Not linked".to_string());
+        agenda.create_item(&item).unwrap();
+        let err = agenda.unlink_note_file(item.id, &db_path).unwrap_err();
+        assert!(matches!(err, AgendaError::InvalidOperation { .. }));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

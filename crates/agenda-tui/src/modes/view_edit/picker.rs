@@ -279,6 +279,11 @@ impl App {
                             captured_items.push(item);
                         }
                     }
+                    // Collect linked note files before deletion
+                    let linked_files: Vec<_> = captured_items
+                        .iter()
+                        .filter_map(|item| item.note_file.clone())
+                        .collect();
                     let mut deleted = 0usize;
                     let mut failed = 0usize;
                     let mut first_error = None;
@@ -299,6 +304,22 @@ impl App {
                         self.push_undo(UndoEntry::ItemDeleted {
                             item: Box::new(item),
                         });
+                    }
+                    // Delete linked note files from disk
+                    if !linked_files.is_empty() {
+                        let notes_dir_override = agenda
+                            .store()
+                            .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+                            .ok()
+                            .flatten();
+                        for filename in &linked_files {
+                            let path = agenda_core::note_file::resolve_note_path(
+                                &self.db_path,
+                                notes_dir_override.as_deref(),
+                                filename,
+                            );
+                            let _ = std::fs::remove_file(&path);
+                        }
                     }
                     self.batch_delete_item_ids = None;
                     self.clear_selected_items();
@@ -329,12 +350,28 @@ impl App {
             KeyCode::Char('y') => {
                 if let Some(item_id) = self.selected_item_id() {
                     // Capture item state for undo before deletion
+                    let mut note_file_to_delete = None;
                     if let Ok(item) = agenda.store().get_item(item_id) {
+                        note_file_to_delete = item.note_file.clone();
                         self.push_undo(UndoEntry::ItemDeleted {
                             item: Box::new(item),
                         });
                     }
                     agenda.delete_item(item_id, "user:tui")?;
+                    // Delete linked note file from disk
+                    if let Some(filename) = &note_file_to_delete {
+                        let notes_dir_override = agenda
+                            .store()
+                            .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+                            .ok()
+                            .flatten();
+                        let path = agenda_core::note_file::resolve_note_path(
+                            &self.db_path,
+                            notes_dir_override.as_deref(),
+                            filename,
+                        );
+                        let _ = std::fs::remove_file(&path);
+                    }
                     self.refresh(agenda.store())?;
                     self.status = "Item deleted".to_string();
                 }

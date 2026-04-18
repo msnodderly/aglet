@@ -292,9 +292,65 @@ enum Command {
         command: UnlinkCommand,
     },
 
+    /// Manage linked note files
+    Note {
+        #[command(subcommand)]
+        command: NoteCommand,
+    },
+
+    /// Application settings
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+
     /// Item commands (alternative noun-verb syntax)
     #[command(subcommand)]
     Item(ItemCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum NoteCommand {
+    /// Create a linked markdown note file for an item
+    Link {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+        /// Attach an existing file instead of creating a new one.
+        /// The file must be inside the notes directory.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Print the resolved path to an item's linked note file
+    Path {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
+    /// Open an item's linked note file in $VISUAL / $EDITOR
+    Edit {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
+    /// Detach a linked note file from an item (keeps the file on disk)
+    Unlink {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommand {
+    /// Set an application setting
+    Set {
+        /// Setting key.
+        key: String,
+        /// Setting value.
+        value: String,
+    },
+    /// Get an application setting
+    Get {
+        /// Setting key.
+        key: String,
+    },
 }
 
 /// Noun-verb aliases for item operations: `agenda item add`, `agenda item list`, etc.
@@ -1264,7 +1320,7 @@ fn run() -> Result<(), String> {
             view,
             include_links,
         } => cmd_export(&store, view, include_links),
-        Command::Delete { item_id } => cmd_delete(&agenda, item_id),
+        Command::Delete { item_id } => cmd_delete(&agenda, &store, &db_path, item_id),
         Command::Deleted => cmd_deleted(&store),
         Command::Restore { log_id } => cmd_restore(&store, log_id),
         Command::Category { command } => cmd_category(&agenda, &store, command),
@@ -1272,6 +1328,8 @@ fn run() -> Result<(), String> {
         Command::Import { command } => cmd_import(&agenda, &store, command),
         Command::Link { command } => cmd_link(&agenda, command),
         Command::Unlink { command } => cmd_unlink(&agenda, command),
+        Command::Note { command } => cmd_note(&agenda, &store, &db_path, command),
+        Command::Config { command } => cmd_config(&store, command),
         Command::Item(item_cmd) => match item_cmd {
             ItemCommand::Add {
                 text,
@@ -1347,7 +1405,7 @@ fn run() -> Result<(), String> {
                     clear_recurrence,
                 )
             }
-            ItemCommand::Delete { item_id } => cmd_delete(&agenda, item_id),
+            ItemCommand::Delete { item_id } => cmd_delete(&agenda, &store, &db_path, item_id),
         },
         Command::Tui => Ok(()),
     }
@@ -1700,6 +1758,9 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     }
     if let Some(parent_id) = item.recurrence_parent_item_id {
         println!("parent_id:  {}", parent_id);
+    }
+    if let Some(note_file) = &item.note_file {
+        println!("note_file:  {}", note_file);
     }
     if let Some(note) = &item.note {
         println!("note:       {}", note);
@@ -2168,13 +2229,181 @@ fn write_output_allow_broken_pipe<W: Write>(writer: &mut W, body: &str) -> Resul
     }
 }
 
-fn cmd_delete(agenda: &Agenda<'_>, item_id_str: String) -> Result<(), String> {
+fn cmd_delete(agenda: &Agenda<'_>, store: &Store, db_path: &std::path::Path, item_id_str: String) -> Result<(), String> {
     let item_id = resolve_item_id(&item_id_str, agenda.store())?;
+    // Capture note_file before deletion so we can clean up the file
+    let item = store.get_item(item_id).map_err(|e| e.to_string())?;
+    let note_file = item.note_file.clone();
+
     agenda
         .delete_item(item_id, "user:cli")
         .map_err(|e| e.to_string())?;
+
+    // Delete the linked note file from disk
+    if let Some(filename) = &note_file {
+        let notes_dir_override = store
+            .get_app_setting(agenda_core::note_file::NOTES_DIR_SETTING_KEY)
+            .ok()
+            .flatten();
+        let path = agenda_core::note_file::resolve_note_path(
+            db_path,
+            notes_dir_override.as_deref(),
+            filename,
+        );
+        if path.exists() {
+            let _ = fs::remove_file(&path);
+        }
+    }
+
     println!("deleted {}", item_id);
     Ok(())
+}
+
+fn cmd_note(
+    agenda: &Agenda<'_>,
+    store: &Store,
+    db_path: &std::path::Path,
+    command: NoteCommand,
+) -> Result<(), String> {
+    use agenda_core::note_file;
+
+    let notes_dir_override = store
+        .get_app_setting(note_file::NOTES_DIR_SETTING_KEY)
+        .ok()
+        .flatten();
+
+    match command {
+        NoteCommand::Link { item_id, file } => {
+            let id = resolve_item_id(&item_id, store)?;
+            let mut item = store.get_item(id).map_err(|e| e.to_string())?;
+            if item.note_file.is_some() {
+                return Err(format!(
+                    "item {} already has a linked note file: {}",
+                    id,
+                    item.note_file.as_deref().unwrap()
+                ));
+            }
+
+            let notes_dir = note_file::resolve_notes_dir(db_path, notes_dir_override.as_deref());
+            fs::create_dir_all(&notes_dir).map_err(|e| format!("create notes dir: {e}"))?;
+
+            let filename = if let Some(existing) = file {
+                // Attach an existing file — it must be inside the notes directory
+                let canonical_dir = notes_dir
+                    .canonicalize()
+                    .map_err(|e| format!("canonicalize notes dir: {e}"))?;
+                let canonical_file = existing
+                    .canonicalize()
+                    .map_err(|e| format!("canonicalize file: {e}"))?;
+                if !canonical_file.starts_with(&canonical_dir) {
+                    return Err(format!(
+                        "file must be inside notes directory: {}",
+                        notes_dir.display()
+                    ));
+                }
+                canonical_file
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| "invalid filename".to_string())?
+                    .to_string()
+            } else {
+                // Create a new file
+                let filename = note_file::note_filename(&item.text, item.id);
+                let file_path = notes_dir.join(&filename);
+                let content = if let Some(ref inline_note) = item.note {
+                    inline_note.clone()
+                } else {
+                    note_file::note_template(&item.text)
+                };
+                fs::write(&file_path, &content)
+                    .map_err(|e| format!("write note file: {e}"))?;
+                filename
+            };
+
+            item.note_file = Some(filename.clone());
+            item.note = None;
+            item.modified_at = jiff::Timestamp::now();
+            store.update_item(&item).map_err(|e| e.to_string())?;
+            let full_path = notes_dir.join(&filename);
+            println!("{}", full_path.display());
+            Ok(())
+        }
+        NoteCommand::Path { item_id } => {
+            let id = resolve_item_id(&item_id, store)?;
+            let item = store.get_item(id).map_err(|e| e.to_string())?;
+            let filename = item
+                .note_file
+                .as_deref()
+                .ok_or_else(|| format!("item {} has no linked note file", id))?;
+            let path = note_file::resolve_note_path(
+                db_path,
+                notes_dir_override.as_deref(),
+                filename,
+            );
+            println!("{}", path.display());
+            Ok(())
+        }
+        NoteCommand::Edit { item_id } => {
+            let id = resolve_item_id(&item_id, store)?;
+            let item = store.get_item(id).map_err(|e| e.to_string())?;
+            let filename = item
+                .note_file
+                .as_deref()
+                .ok_or_else(|| format!("item {} has no linked note file", id))?;
+            let path = note_file::resolve_note_path(
+                db_path,
+                notes_dir_override.as_deref(),
+                filename,
+            );
+            let editor = env::var("VISUAL")
+                .or_else(|_| env::var("EDITOR"))
+                .unwrap_or_else(|_| "vi".to_string());
+            std::process::Command::new(&editor)
+                .arg(&path)
+                .status()
+                .map_err(|e| format!("launch editor: {e}"))?;
+            Ok(())
+        }
+        NoteCommand::Unlink { item_id } => {
+            let id = resolve_item_id(&item_id, store)?;
+            let filename = agenda
+                .unlink_note_file(id, db_path)
+                .map_err(|e| e.to_string())?;
+            let path = note_file::resolve_note_path(
+                db_path,
+                notes_dir_override.as_deref(),
+                &filename,
+            );
+            println!("unlinked {} (kept {})", id, path.display());
+            Ok(())
+        }
+    }
+}
+
+fn cmd_config(store: &Store, command: ConfigCommand) -> Result<(), String> {
+    match command {
+        ConfigCommand::Set { key, value } => {
+            store
+                .set_app_setting(&key, &value)
+                .map_err(|e| e.to_string())?;
+            println!("{}={}", key, value);
+            Ok(())
+        }
+        ConfigCommand::Get { key } => {
+            // Special-case the deprecated/renamed notes-link setting so the
+            // one-time migration runs on CLI access too.
+            let value = if key == agenda_core::note_file::NEW_ITEMS_LINKED_BY_DEFAULT_KEY {
+                agenda_core::note_file::read_new_items_linked_by_default(store)
+            } else {
+                store.get_app_setting(&key).map_err(|e| e.to_string())?
+            };
+            match value {
+                Some(value) => println!("{}", value),
+                None => println!("(not set)"),
+            }
+            Ok(())
+        }
+    }
 }
 
 fn cmd_deleted(store: &Store) -> Result<(), String> {

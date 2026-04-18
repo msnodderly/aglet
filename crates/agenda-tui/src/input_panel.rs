@@ -106,6 +106,15 @@ pub(crate) struct InputPanel {
     pub(crate) details_popup_open: bool,
     /// Whether a discard-confirm prompt is active (AddItem/EditItem only).
     pub(crate) discard_confirm: bool,
+    /// Whether an unlink-confirm prompt is active (EditItem on already-linked items).
+    pub(crate) unlink_confirm: bool,
+    // --- Linked note state ---
+    /// When true, saving will create/write a linked note file.
+    pub(crate) link_note: bool,
+    /// True when the item already has a linked note file (read-only indicator).
+    pub(crate) is_already_linked: bool,
+    /// The filename of the existing linked note (for display in the UI).
+    pub(crate) linked_note_filename: Option<String>,
     // --- Original values for dirty tracking ---
     original_text: String,
     original_note: String,
@@ -140,7 +149,11 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            link_note: false,
+            is_already_linked: false,
+            linked_note_filename: None,
             discard_confirm: false,
+            unlink_confirm: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: on_insert_assign.clone(),
@@ -183,7 +196,11 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            link_note: false,
+            is_already_linked: false,
+            linked_note_filename: None,
             discard_confirm: false,
+            unlink_confirm: false,
             original_text,
             original_note,
             original_categories,
@@ -214,7 +231,11 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            link_note: false,
+            is_already_linked: false,
+            linked_note_filename: None,
             discard_confirm: false,
+            unlink_confirm: false,
             original_text: current_name.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -245,7 +266,11 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            link_note: false,
+            is_already_linked: false,
+            linked_note_filename: None,
             discard_confirm: false,
+            unlink_confirm: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -276,7 +301,11 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            link_note: false,
+            is_already_linked: false,
+            linked_note_filename: None,
             discard_confirm: false,
+            unlink_confirm: false,
             original_text: current_value.to_string(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -307,7 +336,11 @@ impl InputPanel {
             parsed_recurrence_rule: None,
             details_scroll: 0,
             details_popup_open: false,
+            link_note: false,
+            is_already_linked: false,
+            linked_note_filename: None,
             discard_confirm: false,
+            unlink_confirm: false,
             original_text: String::new(),
             original_note: String::new(),
             original_categories: HashSet::new(),
@@ -335,6 +368,17 @@ impl InputPanel {
             }
         }
         false
+    }
+
+    /// Clears the "already linked" state and reloads the inline note buffer.
+    /// Called after an in-panel unlink so the panel reflects the now-inline note.
+    pub(crate) fn mark_unlinked(&mut self, new_note: String) {
+        self.is_already_linked = false;
+        self.linked_note_filename = None;
+        self.link_note = false;
+        self.unlink_confirm = false;
+        self.original_note = new_note.clone();
+        self.note = TextBuffer::new(new_note);
     }
 
     /// Toggles `category_id` in the panel's category set.
