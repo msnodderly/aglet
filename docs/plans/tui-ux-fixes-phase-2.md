@@ -5,6 +5,17 @@ created: 2026-04-15
 updated: 2026-04-17
 ---
 
+> **Phase 1 status**: shipped as commit `12265e0` on branch
+> `feat/tui-ux-phase-2-focus`, followed by a hotfix that (a) wired
+> **Ctrl-S** save across InputPanel focuses (bare `S` is typed as a
+> character in note/text fields and cannot be the advertised save key),
+> (b) corrected the canonical hint surface to the bottom footer
+> (`footer_hint_pairs()` at `crates/agenda-tui/src/render/mod.rs:4573`),
+> and (c) added `> ` title markers to the ViewEdit Sections / Details /
+> Preview panes, which were previously color-only and invisible in
+> plain `tmux capture-pane -p` output. Phase 2 and Phase 3a/3b remain
+> pending.
+
 # TUI UX Fixes: Focus, Navigation, Polish
 
 ## Context
@@ -40,6 +51,10 @@ Addresses observations #2, #9, #12, #17, #18.
 
 - Focused row: visible `> ` gutter prefix **plus** bold/reverse style.
 - Focused pane: stronger title marker (`> Details`) and border style.
+  Marker is a text prefix, not color — must be visible under plain
+  `tmux capture-pane -p`. Applies to ViewEdit Sections, Details,
+  Preview; Category Manager Tree / Details / Flags / Note / Also Match /
+  Conditions / Actions.
 - Inactive panes **must not** render row-level `>` markers.
 - Editable fields preserve explicit terminal cursor placement.
 
@@ -71,30 +86,66 @@ contextual help render regardless of focus (#18). Fix:
 
 ### InputPanel copy audit
 
-Current strings in `crates/agenda-tui/src/render/mod.rs:5413-5436` are
-stale relative to Esc-cancel semantics:
+**There are two hint surfaces in the InputPanel popup and they render
+simultaneously.** The canonical, user-visible one is the two-row
+footer at the bottom of the screen, produced by `footer_hint_pairs()`
+(`crates/agenda-tui/src/render/mod.rs:4573` for the `Mode::InputPanel`
+arm). A second, popup-internal help row renders inside the popup body
+(`render/mod.rs:5413-5436`). Every copy change below applies to
+**both** — audits that only touch the popup-internal row leave the
+stale text visible in the footer and do not land the fix.
 
-| Line | Current | Replace with |
-|---|---|---|
-| 5413 | `Type name  Enter/Esc:save  Tab:next` | `Type name  Enter:save  Esc:cancel  Tab:next` |
-| 5414 | `Type title  Enter/Esc:save and close  Tab:when` | `Type title  Enter:save  Esc:cancel  Tab:when` |
-| 5415 | `Type title  Enter/Esc:save  Tab:when` | `Type title  Enter:save  Esc:cancel  Tab:when` |
-| 5419 | `Type note  Enter:new line  Tab:actions  Esc:save and close` | `Type note  Enter:new line  Tab:actions  S:save  Esc:cancel` |
-| 5421 | `Type note  Enter:new line  Tab:categories  Esc:save and close` | `Type note  Enter:new line  Tab:categories  S:save  Esc:cancel` |
-| 5430, 5432, 5436 | `Esc:save and close` variants | `S:save  Esc:cancel` |
+**Save key: Ctrl-S in any field that accepts typed characters
+(Text, Note, When).** Bare `S` is a letter keystroke in those focuses
+and is consumed by the TextBuffer — advertising `S:save` there is
+actively misleading. Bare `S` is reserved for non-typing modal
+contexts elsewhere (e.g. ViewEdit Sections/Details list navigation
+when no inline edit is active). See
+`.claude/projects/-Users-mds-src-aglet/memory/feedback_ctrl_s_in_text_fields.md`.
 
-Matches the capital-S save convention noted in project memory.
+Target copy (footer and popup-internal must match):
+
+| Focus / state | Hint |
+|---|---|
+| Text (item title / view name / category name) | `Enter:save  Tab:next  Ctrl-S:save  Ctrl-G:$EDITOR  Esc:cancel` |
+| Note | `Enter:new line  Tab:next  Ctrl-S:save  Ctrl-G:$EDITOR  Esc:cancel` |
+| When | `Ctrl-S:save  Tab:next  Ctrl-G:$EDITOR  Esc:cancel` |
+| Categories | `Space:toggle  /:filter  Tab:next  Ctrl-S:save  Esc:cancel` |
+| Actions / Suggestions | `Ctrl-S:save  Tab:next  Esc:cancel` |
+| NameInput (single-line name) | `Enter:save  Tab:next  Esc:cancel` |
+| WhenDate / NumericValue (single-line override) | `Enter:save  Esc:cancel` |
+
+Popup-internal help row strings (`render/mod.rs:5413-5436`) must use
+`Ctrl-S:save` wherever the corresponding footer entry above does. In
+particular, the rows previously written as `Esc:save and close` or
+`S:save  Esc:cancel` in multi-line contexts must read `Ctrl-S:save
+Esc:cancel`.
+
+Ctrl-S is handled at the top of `InputPanel::handle_key_event` before
+any focus routing (`crates/agenda-tui/src/input_panel.rs`), so it
+works from every focus including fields that consume letter keys.
 
 ### Tests (Phase 1)
 
-Render tests via `TestBackend`:
+Render tests via `TestBackend`. Copy assertions must target the
+footer hint row — extract it explicitly (`&lines[lines.len() - 2]`)
+and assert on that slice. Substring-on-the-whole-frame assertions
+match both `S:save` and `Ctrl-S:save` and will miss regressions.
 
 - ViewEdit section details show `> Filter`, `> Columns`, and related rows
   as focus moves; footer shows active field name.
+- ViewEdit pane titles include `>` prefix when focused (Sections /
+  Details / Preview).
 - Category Manager Tree-active: no flag-row `>`.
 - Category Manager Details-active: flag-row `>` present; Note / Also
-  Match focused pane titles render with `>`.
-- CategoryCreate panel copy says `Enter:save  Esc:cancel`.
+  Match / Conditions / Actions / Numeric Format focused pane titles
+  render with `>`.
+- CategoryCreate panel footer shows `Enter:save` and `Ctrl-S:save`;
+  forbid bare ` S:save`.
+- AddItem / EditItem footer in Note focus shows `Ctrl-S:save`; forbid
+  bare ` S:save`. Ctrl-S from Note focus returns
+  `InputPanelAction::Save`; bare `S` in Note focus inserts an `S`
+  character into the buffer.
 
 ## Phase 2 — Navigation and section-move feedback
 
@@ -249,8 +300,11 @@ Smoke flow:
    details focus visible in `capture-pane -p` output (Phase 1).
 3. Open Category Manager; switch focus Tree → Filter → Details and
    confirm focus markers move with focus (Phase 1).
-4. Open CategoryCreate; confirm `Enter:save  Esc:cancel` copy (Phase 1).
-5. Add/edit an item note; verify explicit text cursor (Phase 1).
+4. Open CategoryCreate; confirm footer shows `Enter:save` and
+   `Ctrl-S:save`, not bare ` S:save` (Phase 1).
+5. Add/edit an item; in Note focus, confirm footer shows `Ctrl-S:save`
+   and that pressing `S` inserts the letter while `Ctrl-S` saves and
+   closes. Verify explicit text cursor (Phase 1).
 6. Press `J` / `K` on the board and confirm section-focus jumps without
    moving the item; press `[` / `]` and confirm item move still works
    (Phase 2).
