@@ -6011,6 +6011,32 @@ fn normal_mode_tab_and_backtab_switch_sections_without_wrapping() {
         .expect("backtab clamps at first section");
     assert_eq!(app.slot_index, 0);
 
+    app.handle_normal_key(KeyCode::Char('J'), &agenda)
+        .expect("J jumps to next section");
+    assert_eq!(app.slot_index, 1);
+    let alpha_assignments = store
+        .get_assignments_for_item(item_alpha.id)
+        .expect("load alpha assignments");
+    assert!(
+        alpha_assignments.contains_key(&alpha.id),
+        "J should not move the selected item out of its section"
+    );
+    assert!(
+        !alpha_assignments.contains_key(&beta.id),
+        "J should not assign the next section category"
+    );
+
+    app.handle_normal_key(KeyCode::Char('J'), &agenda)
+        .expect("J clamps at last section");
+    assert_eq!(app.slot_index, 1);
+
+    app.handle_normal_key(KeyCode::Char('K'), &agenda)
+        .expect("K jumps to previous section");
+    assert_eq!(app.slot_index, 0);
+    app.handle_normal_key(KeyCode::Char('K'), &agenda)
+        .expect("K clamps at first section");
+    assert_eq!(app.slot_index, 0);
+
     drop(store);
     let _ = std::fs::remove_file(&db_path);
 }
@@ -18769,6 +18795,41 @@ fn normal_mode_shift_down_moves_item_to_next_section_like_right_bracket() {
 }
 
 #[test]
+fn normal_mode_right_bracket_moves_item_and_reports_category_delta() {
+    let (store, db_path) = make_two_section_store("right-bracket-status");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("TestView");
+    app.refresh(&store).expect("refresh with TestView selected");
+
+    let moved_item_id = app.slots[0].items[0].id;
+    app.slot_index = 0;
+    app.item_index = 0;
+
+    app.handle_normal_key(KeyCode::Char(']'), &agenda)
+        .expect("right bracket moves item to next section");
+
+    assert_eq!(app.slot_index, 1);
+    assert!(
+        app.slots[1]
+            .items
+            .iter()
+            .any(|item| item.id == moved_item_id),
+        "right bracket should still move the item into the next section"
+    );
+    assert!(
+        app.status.contains("-Work") && app.status.contains("+Personal"),
+        "status should report category changes from the section move: {}",
+        app.status
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn normal_mode_shift_up_moves_item_to_previous_section_like_left_bracket() {
     let (store, db_path) = make_two_section_store("shift-up-move");
     let classifier = SubstringClassifier;
@@ -20975,6 +21036,87 @@ fn moving_from_unmatched_to_section_preserves_view_remove_side_effect_categories
     assert!(
         assignments.contains_key(&ready.id),
         "moving into the section should assign its structural category"
+    );
+}
+
+#[test]
+fn moving_between_sections_reports_on_remove_unassigned_categories() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let ready = Category::new("Ready".to_string());
+    let in_progress = Category::new("In Progress".to_string());
+    let needs_review = Category::new("Needs Review".to_string());
+    store.create_category(&ready).expect("create ready");
+    store
+        .create_category(&in_progress)
+        .expect("create in progress");
+    store
+        .create_category(&needs_review)
+        .expect("create needs review");
+
+    let item = Item::new("Task".to_string());
+    store.create_item(&item).expect("create item");
+    agenda
+        .assign_item_manual(item.id, ready.id, Some("manual:test".to_string()))
+        .expect("assign ready");
+    agenda
+        .assign_item_manual(item.id, needs_review.id, Some("manual:test".to_string()))
+        .expect("assign needs review");
+
+    let mut ready_section = Section {
+        title: "Ready".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::from([needs_review.id]),
+        show_children: false,
+        board_display_mode_override: None,
+    };
+    ready_section
+        .criteria
+        .set_criterion(CriterionMode::And, ready.id);
+
+    let mut in_progress_section = Section {
+        title: "In Progress".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    };
+    in_progress_section
+        .criteria
+        .set_criterion(CriterionMode::And, in_progress.id);
+
+    let mut view = View::new("Board".to_string());
+    view.sections.push(ready_section);
+    view.sections.push(in_progress_section);
+    store.create_view(&view).expect("create view");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Board");
+    app.refresh(&store).expect("refresh board");
+
+    app.slot_index = 0;
+    app.item_index = 0;
+    app.move_selected_item_between_slots(1, &agenda)
+        .expect("move to in progress");
+
+    assert!(
+        app.status.contains("-Needs Review"),
+        "status should report on_remove_unassign category removal: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("-Ready") && app.status.contains("+In Progress"),
+        "status should include structural section category changes: {}",
+        app.status
     );
 }
 

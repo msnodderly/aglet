@@ -2501,10 +2501,10 @@ impl App {
             KeyCode::Char('i') => self.toggle_preview_mode(),
             KeyCode::Char('o') => self.toggle_preview_mode(),
             KeyCode::Char('J') => {
-                self.move_selected_item_between_slots(1, agenda)?;
+                self.move_slot_cursor(1);
             }
             KeyCode::Char('K') => {
-                self.move_selected_item_between_slots(-1, agenda)?;
+                self.move_slot_cursor(-1);
             }
             KeyCode::Char('r') => {
                 if let Some(item_id) = self.selected_item_id() {

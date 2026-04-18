@@ -782,15 +782,22 @@ impl App {
             .get(to_index)
             .map(|slot| slot.context.clone())
             .ok_or("Invalid target slot".to_string())?;
+        let to_title = self
+            .slots
+            .get(to_index)
+            .map(|slot| slot.title.clone())
+            .unwrap_or_else(|| "new section".to_string());
         let view = self
             .current_view()
             .cloned()
             .ok_or("No active view".to_string())?;
 
-        match (
-            Self::section_for_context(&view, &from_context)?,
-            Self::section_for_context(&view, &to_context)?,
-        ) {
+        let from_section = Self::section_for_context(&view, &from_context)?;
+        let to_section = Self::section_for_context(&view, &to_context)?;
+        let preview =
+            Agenda::preview_section_move(&view, from_section.as_ref(), to_section.as_ref());
+
+        match (from_section, to_section) {
             (Some(from_section), Some(to_section)) => {
                 agenda.move_item_between_sections(item_id, &view, &from_section, &to_section)?;
             }
@@ -810,8 +817,41 @@ impl App {
             .get(to_index)
             .and_then(|slot| slot.items.iter().position(|i| i.id == item_id))
             .unwrap_or(0);
-        self.status = "Moved item to new section".to_string();
+        self.status = self.section_move_status(&to_title, &preview);
         Ok(())
+    }
+
+    fn section_move_status(
+        &self,
+        target_title: &str,
+        preview: &agenda_core::agenda::SectionMovePreview,
+    ) -> String {
+        let mut removed = self.category_names_for_status(&preview.to_unassign);
+        let mut added = self.category_names_for_status(&preview.to_assign);
+        if removed.is_empty() && added.is_empty() {
+            return format!("Moved to {target_title}");
+        }
+
+        removed.iter_mut().for_each(|name| name.insert(0, '-'));
+        added.iter_mut().for_each(|name| name.insert(0, '+'));
+        let mut changes = removed;
+        changes.extend(added);
+        format!("Moved to {target_title} ({})", changes.join(" "))
+    }
+
+    fn category_names_for_status(&self, category_ids: &HashSet<CategoryId>) -> Vec<String> {
+        let mut names: Vec<String> = category_ids
+            .iter()
+            .map(|id| {
+                self.categories
+                    .iter()
+                    .find(|category| category.id == *id)
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| "(deleted)".to_string())
+            })
+            .collect();
+        names.sort_by_key(|name| name.to_ascii_lowercase());
+        names
     }
 
     pub(crate) fn insert_into_context(
