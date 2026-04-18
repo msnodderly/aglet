@@ -195,27 +195,23 @@ impl RecurrenceRule {
                 ),
                 None => format!("every {} weeks", self.interval),
             },
-            RecurrenceFrequency::Monthly if self.interval == 1 => {
-                match self.day_of_month {
-                    Some(d) => format!("monthly on the {}", ordinal(d)),
-                    None => "monthly".to_string(),
-                }
-            }
-            RecurrenceFrequency::Monthly
-                if self.interval == 3 && self.day_of_month == Some(1) =>
-            {
+            RecurrenceFrequency::Monthly if self.interval == 1 => match self.day_of_month {
+                Some(d) => format!("monthly on the {}", ordinal(d)),
+                None => "monthly".to_string(),
+            },
+            RecurrenceFrequency::Monthly if self.interval == 3 && self.day_of_month == Some(1) => {
                 "quarterly".to_string()
             }
-            RecurrenceFrequency::Monthly => {
-                match self.day_of_month {
-                    Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
-                    None => format!("every {} months", self.interval),
+            RecurrenceFrequency::Monthly => match self.day_of_month {
+                Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
+                None => format!("every {} months", self.interval),
+            },
+            RecurrenceFrequency::Yearly if self.interval == 1 => {
+                match (self.month, self.day_of_month) {
+                    (Some(m), Some(d)) => format!("every {} {}", month_name(m), d),
+                    _ => "yearly".to_string(),
                 }
             }
-            RecurrenceFrequency::Yearly if self.interval == 1 => match (self.month, self.day_of_month) {
-                (Some(m), Some(d)) => format!("every {} {}", month_name(m), d),
-                _ => "yearly".to_string(),
-            },
             RecurrenceFrequency::Yearly => format!("every {} years", self.interval),
         }
     }
@@ -532,14 +528,16 @@ impl AssignmentExplanation {
             Self::Action {
                 trigger_category_name,
                 kind,
-            } => match kind {
-                AssignmentActionKind::Assign => {
-                    format!("Removed after action-triggered assignment from {trigger_category_name}")
+            } => {
+                match kind {
+                    AssignmentActionKind::Assign => {
+                        format!("Removed after action-triggered assignment from {trigger_category_name}")
+                    }
+                    AssignmentActionKind::Remove => {
+                        format!("Removed by action on {trigger_category_name}")
+                    }
                 }
-                AssignmentActionKind::Remove => {
-                    format!("Removed by action on {trigger_category_name}")
-                }
-            },
+            }
             Self::Subsumption {
                 via_child_category_name,
                 ..
@@ -663,7 +661,9 @@ impl Default for NumericFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
     ImplicitString,
-    Profile { criteria: Box<Query> },
+    Profile {
+        criteria: Box<Query>,
+    },
     Date {
         source: DateSource,
         matcher: DateMatcher,
@@ -765,6 +765,8 @@ pub struct View {
     pub board_display_mode: BoardDisplayMode,
     #[serde(default)]
     pub section_flow: SectionFlow,
+    #[serde(default)]
+    pub empty_sections: EmptySections,
     #[serde(default)]
     pub hide_dependent_items: bool,
     #[serde(default)]
@@ -1312,6 +1314,7 @@ impl View {
             item_column_label: None,
             board_display_mode: BoardDisplayMode::SingleLine,
             section_flow: SectionFlow::Vertical,
+            empty_sections: EmptySections::Show,
             hide_dependent_items: false,
             datebook_config: None,
         }
@@ -1321,7 +1324,8 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::{
-        Column, ItemLinkKind, RecurrenceFrequency, RecurrenceRule, SectionFlow, SummaryFn, View,
+        Column, EmptySections, ItemLinkKind, RecurrenceFrequency, RecurrenceRule, SectionFlow,
+        SummaryFn, View,
     };
     use serde_json::Value;
     use uuid::Uuid;
@@ -1622,6 +1626,9 @@ mod tests {
         json.as_object_mut()
             .expect("view object")
             .remove("section_flow");
+        json.as_object_mut()
+            .expect("view object")
+            .remove("empty_sections");
 
         let parsed: View = serde_json::from_value(json).expect("deserialize view");
         assert!(
@@ -1636,6 +1643,11 @@ mod tests {
             parsed.section_flow,
             SectionFlow::Vertical,
             "missing section_flow should default to vertical"
+        );
+        assert_eq!(
+            parsed.empty_sections,
+            EmptySections::Show,
+            "missing empty_sections should default to show"
         );
     }
 

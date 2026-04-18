@@ -391,9 +391,13 @@ impl App {
                 self.set_view_selection_by_name(&view_name);
                 self.reset_section_filters();
                 self.view_edit_state = None;
-                self.mode = Mode::ViewPicker;
+                self.mode = if is_new_view {
+                    Mode::Normal
+                } else {
+                    Mode::ViewPicker
+                };
                 self.status = if is_new_view {
-                    format!("Created view \"{view_name}\"")
+                    format!("Created and switched to view \"{view_name}\"")
                 } else {
                     format!("Saved view \"{view_name}\"")
                 };

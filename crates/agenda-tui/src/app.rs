@@ -361,7 +361,9 @@ impl App {
         self.clamp_horizontal_slot_item_indices();
         self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
-        self.board_scroll_offset = self.board_scroll_offset.min(self.slots.len().saturating_sub(1));
+        self.board_scroll_offset = self
+            .board_scroll_offset
+            .min(self.slots.len().saturating_sub(1));
         // If Hide mode landed us on an empty slot, advance to the nearest non-empty.
         if self.effective_empty_sections() == EmptySections::Hide {
             self.skip_hidden_slots(1);
@@ -694,7 +696,11 @@ impl App {
         let step = if delta > 0 { 1i32 } else { -1i32 };
         let start = self.slot_index;
         for _ in 0..self.slots.len() {
-            if self.slots.get(self.slot_index).is_none_or(|s| !s.items.is_empty()) {
+            if self
+                .slots
+                .get(self.slot_index)
+                .is_none_or(|s| !s.items.is_empty())
+            {
                 return; // landed on a non-empty slot (or out of range)
             }
             let next = next_index_clamped(self.slot_index, self.slots.len(), step);
@@ -704,7 +710,11 @@ impl App {
             self.slot_index = next;
         }
         // If we couldn't find a non-empty slot, revert.
-        if self.slots.get(self.slot_index).is_none_or(|s| s.items.is_empty()) {
+        if self
+            .slots
+            .get(self.slot_index)
+            .is_none_or(|s| s.items.is_empty())
+        {
             self.slot_index = start;
         }
     }
@@ -782,15 +792,22 @@ impl App {
             .get(to_index)
             .map(|slot| slot.context.clone())
             .ok_or("Invalid target slot".to_string())?;
+        let to_title = self
+            .slots
+            .get(to_index)
+            .map(|slot| slot.title.clone())
+            .unwrap_or_else(|| "new section".to_string());
         let view = self
             .current_view()
             .cloned()
             .ok_or("No active view".to_string())?;
 
-        match (
-            Self::section_for_context(&view, &from_context)?,
-            Self::section_for_context(&view, &to_context)?,
-        ) {
+        let from_section = Self::section_for_context(&view, &from_context)?;
+        let to_section = Self::section_for_context(&view, &to_context)?;
+        let preview =
+            Agenda::preview_section_move(&view, from_section.as_ref(), to_section.as_ref());
+
+        match (from_section, to_section) {
             (Some(from_section), Some(to_section)) => {
                 agenda.move_item_between_sections(item_id, &view, &from_section, &to_section)?;
             }
@@ -810,8 +827,41 @@ impl App {
             .get(to_index)
             .and_then(|slot| slot.items.iter().position(|i| i.id == item_id))
             .unwrap_or(0);
-        self.status = "Moved item to new section".to_string();
+        self.status = self.section_move_status(&to_title, &preview);
         Ok(())
+    }
+
+    fn section_move_status(
+        &self,
+        target_title: &str,
+        preview: &agenda_core::agenda::SectionMovePreview,
+    ) -> String {
+        let mut removed = self.category_names_for_status(&preview.to_unassign);
+        let mut added = self.category_names_for_status(&preview.to_assign);
+        if removed.is_empty() && added.is_empty() {
+            return format!("Moved to {target_title}");
+        }
+
+        removed.iter_mut().for_each(|name| name.insert(0, '-'));
+        added.iter_mut().for_each(|name| name.insert(0, '+'));
+        let mut changes = removed;
+        changes.extend(added);
+        format!("Moved to {target_title} ({})", changes.join(" "))
+    }
+
+    fn category_names_for_status(&self, category_ids: &HashSet<CategoryId>) -> Vec<String> {
+        let mut names: Vec<String> = category_ids
+            .iter()
+            .map(|id| {
+                self.categories
+                    .iter()
+                    .find(|category| category.id == *id)
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| "(deleted)".to_string())
+            })
+            .collect();
+        names.sort_by_key(|name| name.to_ascii_lowercase());
+        names
     }
 
     pub(crate) fn insert_into_context(
@@ -1718,11 +1768,9 @@ impl App {
     }
 
     /// Resolve the effective empty-sections display mode for the current view.
-    /// Returns `Show` for non-datebook views.
     pub(crate) fn effective_empty_sections(&self) -> EmptySections {
         self.current_view()
-            .and_then(|v| v.datebook_config.as_ref())
-            .map(|dc| dc.empty_sections)
+            .map(|view| view.empty_sections)
             .unwrap_or(EmptySections::Show)
     }
 
@@ -2447,7 +2495,12 @@ impl App {
         self.reset_section_filters();
         self.search_buffer.clear();
         self.mode = Mode::SearchBarFocused;
-        self.status = "Global search: All Items (Esc returns to previous view)".to_string();
+        let return_view_name = self
+            .global_search_session
+            .as_ref()
+            .and_then(|session| session.return_view_name.as_deref())
+            .unwrap_or("previous view");
+        self.status = format!("Global search from {return_view_name}: All Items (Esc returns)");
         Ok(())
     }
 

@@ -2,7 +2,9 @@ use crate::*;
 
 use agenda_core::query::matches_text_search;
 use agenda_core::store::DEFAULT_VIEW_NAME;
-use agenda_core::workflow::{build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME};
+use agenda_core::workflow::{
+    build_ready_queue_view, claimable_item_ids, resolve_workflow_config, READY_QUEUE_VIEW_NAME,
+};
 
 pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> TuiResult<Vec<Slot>> {
     let mut slots = Vec::new();
@@ -42,7 +44,9 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
             for section in &mut result.sections {
                 section.items.retain(|item| !app.is_item_blocked(item.id));
                 for subsection in &mut section.subsections {
-                    subsection.items.retain(|item| !app.is_item_blocked(item.id));
+                    subsection
+                        .items
+                        .retain(|item| !app.is_item_blocked(item.id));
                 }
             }
             if let Some(unmatched_items) = &mut result.unmatched {
@@ -77,10 +81,15 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
 
         if let Some(unmatched_items) = result.unmatched {
             if should_render_unmatched_lane(&unmatched_items) {
-                slots.push(Slot {
-                    title: result
+                let title = if view.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME) {
+                    DEFAULT_VIEW_NAME.to_string()
+                } else {
+                    result
                         .unmatched_label
-                        .unwrap_or_else(|| "Unassigned".to_string()),
+                        .unwrap_or_else(|| "Unassigned".to_string())
+                };
+                slots.push(Slot {
+                    title,
                     items: unmatched_items,
                     context: SlotContext::Unmatched,
                 });
@@ -111,19 +120,18 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
         .map(|category| (category.id, category.name.to_ascii_lowercase()))
         .collect();
 
-    for (slot_index, (slot, filter)) in slots
-        .iter_mut()
-        .zip(app.section_filters.iter())
-        .enumerate()
+    for (slot_index, (slot, filter)) in slots.iter_mut().zip(app.section_filters.iter()).enumerate()
     {
         if let Some(needle) = filter {
             let needle = needle.to_ascii_lowercase();
-            slot.items
-                .retain(|item| matches_text_search(item, &needle, Some(&category_names_lower_ascii)));
+            slot.items.retain(|item| {
+                matches_text_search(item, &needle, Some(&category_names_lower_ascii))
+            });
         }
 
         let mut sort_keys = app.slot_sort_keys[slot_index].clone();
-        sort_keys.retain(|key| app.slot_sort_key_is_valid_for_slot(active_view.as_ref(), slot, key));
+        sort_keys
+            .retain(|key| app.slot_sort_key_is_valid_for_slot(active_view.as_ref(), slot, key));
         if sort_keys != app.slot_sort_keys[slot_index] {
             app.slot_sort_keys[slot_index] = sort_keys.clone();
         }

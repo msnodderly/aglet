@@ -238,16 +238,23 @@ Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts
 The project has two binaries: `agenda-cli` and `agenda-tui`. Use
 `cargo run --bin agenda-cli` or `cargo run --bin agenda-tui` to run them.
 
-## Schema Version Drift Can Hide Missing Tables (Surprising)
+## Schema Version Drift Can Hide Missing Tables/Columns (Surprising)
 
 Some existing `.ag` files can already be stamped with `PRAGMA user_version = 11`
 but still be missing the current `classification_suggestions` table and its
 indexes.
 
+Another observed drift case: a local DB stamped with the current schema version
+was missing the `views.empty_sections` column, causing TUI startup to fail when
+the view query selected that column.
+
 Practical implications:
-- `Store::init()` only runs `SCHEMA_SQL` + `apply_migrations()` when
-  `user_version < SCHEMA_VERSION`, so simply opening one of these DBs will not
-  add the missing table.
+- `Store::init()` now runs idempotent migrations on every open to repair
+  missing columns like `views.empty_sections`, even when `user_version` already
+  equals `SCHEMA_VERSION`.
+- `SCHEMA_SQL` still only runs when `user_version < SCHEMA_VERSION`, so simply
+  opening a DB may not recreate a completely missing table if the DB is already
+  stamped current.
 - If a DB reports version 11 but lacks `classification_suggestions`, patch the
   table/indexes idempotently with SQLite (or add a newer migration/version bump
   in code) instead of assuming `agenda-cli` open is sufficient.

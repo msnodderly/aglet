@@ -1769,6 +1769,9 @@ impl App {
         if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
             return None;
         }
+        if self.category_manager_focus() != Some(CategoryManagerFocus::Details) {
+            return None;
+        }
         let input = self.category_manager_details_inline_input()?;
         let inner = Rect {
             x: area.x.saturating_add(1),
@@ -2107,9 +2110,17 @@ impl App {
 
     pub(crate) fn render_header(&self) -> Paragraph<'_> {
         let current_view = self.current_view();
-        let view_name = current_view
-            .map(|view| view.name.as_str())
+        let view_name = self
+            .global_search_session
+            .as_ref()
+            .and_then(|session| session.return_view_name.as_deref())
+            .or_else(|| current_view.map(|view| view.name.as_str()))
             .unwrap_or("(none)");
+        let search = if self.global_search_active() {
+            " search:global"
+        } else {
+            ""
+        };
         let mode = format!("{:?}", self.mode);
         let active_filters = self.section_filters.iter().filter(|f| f.is_some()).count();
         let filter = if active_filters > 0 {
@@ -2129,9 +2140,22 @@ impl App {
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  view:{view_name}{view_flags}{workflow_hint}  mode:{mode}{filter}"
+                "  view:{view_name}{view_flags}{workflow_hint}{search}  mode:{mode}{filter}"
             )),
         ]))
+    }
+
+    fn section_search_has_no_matches(&self) -> bool {
+        if self.global_search_active() || self.search_buffer.trimmed().is_empty() {
+            return false;
+        }
+        self.section_filters
+            .get(self.slot_index)
+            .and_then(|filter| filter.as_deref())
+            .is_some_and(|filter| !filter.trim().is_empty())
+            && self
+                .current_slot()
+                .is_some_and(|slot| slot.items.is_empty())
     }
 
     fn render_search_bar(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2171,10 +2195,17 @@ impl App {
             }
         };
 
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::styled(label.clone(), label_style),
             Span::styled(text_content, text_style),
-        ]);
+        ];
+        if self.section_search_has_no_matches() {
+            spans.push(Span::styled(
+                "  g/:search all sections",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+        }
+        let line = Line::from(spans);
         frame.render_widget(Paragraph::new(line), area);
 
         // Position cursor when focused
@@ -2223,10 +2254,15 @@ impl App {
             self.render_board_columns(frame, split[0]);
             match self.preview_mode {
                 PreviewMode::Summary => {
-                    frame.render_widget(self.render_preview_summary_panel(), split[1]);
+                    let summary_width = split[1].width;
+                    frame.render_widget(self.render_preview_summary_panel(summary_width), split[1]);
                     let content_len = self
                         .selected_item()
-                        .map(|item| self.item_details_lines_for_item(item).len())
+                        .map(|item| {
+                            let content_width = summary_width.saturating_sub(2).max(1) as usize;
+                            self.item_details_lines_for_item_wrapped(item, content_width)
+                                .len()
+                        })
                         .unwrap_or(4);
                     Self::render_vertical_scrollbar(
                         frame,
@@ -2271,7 +2307,11 @@ impl App {
 
     /// Estimate the number of terminal rows each slot needs for layout purposes.
     /// Used to determine which slots fit in the visible viewport.
-    fn estimate_slot_heights(&self, empty_mode: EmptySections, has_any_non_empty: bool) -> Vec<u16> {
+    fn estimate_slot_heights(
+        &self,
+        empty_mode: EmptySections,
+        has_any_non_empty: bool,
+    ) -> Vec<u16> {
         let border_rows: u16 = match self.section_border_mode {
             SectionBorderMode::Full => 2,    // top + bottom border
             SectionBorderMode::Compact => 1, // top border only
@@ -2340,7 +2380,8 @@ impl App {
         }
 
         // Check if focused slot is within the current visible window.
-        let visible = Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
+        let visible =
+            Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
         if visible.contains(&self.slot_index) {
             return;
         }
@@ -2435,11 +2476,8 @@ impl App {
 
         // ── Vertical board: windowed slot rendering ──────────────────────
         let slot_heights = self.estimate_slot_heights(empty_sections_mode, has_any_non_empty);
-        let visible_slots = Self::visible_slot_window(
-            &slot_heights,
-            self.board_scroll_offset,
-            area.height,
-        );
+        let visible_slots =
+            Self::visible_slot_window(&slot_heights, self.board_scroll_offset, area.height);
 
         if visible_slots.is_empty() {
             frame.render_widget(
@@ -3571,6 +3609,22 @@ impl App {
     }
 
     pub(crate) fn item_details_lines_for_item(&self, item: &Item) -> Vec<Line<'_>> {
+        self.item_details_lines_for_item_inner(item, None)
+    }
+
+    pub(crate) fn item_details_lines_for_item_wrapped(
+        &self,
+        item: &Item,
+        content_width: usize,
+    ) -> Vec<Line<'_>> {
+        self.item_details_lines_for_item_inner(item, Some(content_width))
+    }
+
+    fn item_details_lines_for_item_inner(
+        &self,
+        item: &Item,
+        content_width: Option<usize>,
+    ) -> Vec<Line<'_>> {
         let category_names = category_name_map(&self.categories);
         let categories = item_assignment_labels(item, &category_names);
         let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
@@ -3594,7 +3648,7 @@ impl App {
         match &item.note {
             Some(note) if !note.is_empty() => {
                 for line in note.lines() {
-                    lines.push(Line::from(format!("  {}", line)));
+                    Self::push_note_preview_line(&mut lines, line, content_width);
                 }
             }
             _ => lines.push(Line::from("  (none)")),
@@ -3607,6 +3661,25 @@ impl App {
             lines.push(Line::from(format!("  {}", categories.join(", "))));
         }
         lines
+    }
+
+    fn push_note_preview_line(lines: &mut Vec<Line<'_>>, line: &str, content_width: Option<usize>) {
+        let raw_indent: String = line.chars().take_while(|ch| ch.is_whitespace()).collect();
+        let prefix = format!("  {raw_indent}");
+        let content = line.trim_start();
+        if content.is_empty() {
+            lines.push(Line::from(prefix));
+            return;
+        }
+
+        let Some(width) = content_width else {
+            lines.push(Line::from(format!("  {line}")));
+            return;
+        };
+        let wrapped_width = width.saturating_sub(prefix.chars().count()).max(1);
+        for wrapped in wrap_text_for_board_cell(content, wrapped_width) {
+            lines.push(Line::from(format!("{prefix}{wrapped}")));
+        }
     }
 
     pub(crate) fn input_panel_edit_details_lines(
@@ -3785,9 +3858,10 @@ impl App {
         rows.into_iter().map(|(_, label)| label).collect()
     }
 
-    pub(crate) fn render_preview_summary_panel(&self) -> Paragraph<'_> {
+    pub(crate) fn render_preview_summary_panel(&self, area_width: u16) -> Paragraph<'_> {
+        let content_width = area_width.saturating_sub(2).max(1) as usize;
         let lines = if let Some(item) = self.selected_item() {
-            self.item_details_lines_for_item(item)
+            self.item_details_lines_for_item_wrapped(item, content_width)
         } else {
             vec![
                 Line::from("Summary"),
@@ -4434,7 +4508,7 @@ impl App {
                         ]
                     } else {
                         // Details pane
-                        if state.sections_view_row_selected {
+                        let mut hints = if state.sections_view_row_selected {
                             vec![
                                 ("S", "save"),
                                 ("Enter", "edit"),
@@ -4452,7 +4526,11 @@ impl App {
                                 ("Tab", "sections"),
                                 ("Esc", "close"),
                             ]
+                        };
+                        if let Some(field) = Self::view_edit_active_field_label(state) {
+                            hints.insert(0, ("field", field));
                         }
+                        hints
                     }
                 } else {
                     vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
@@ -4516,11 +4594,15 @@ impl App {
                         ("Esc", "return"),
                     ]
                 } else {
-                    vec![
+                    let mut hints = vec![
                         ("Enter", "jump/create"),
                         ("\u{2193}/Tab", "browse"),
                         ("Esc", "clear"),
-                    ]
+                    ];
+                    if self.section_search_has_no_matches() {
+                        hints.push(("g/", "search all sections"));
+                    }
+                    hints
                 }
             }
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
@@ -4563,6 +4645,15 @@ impl App {
                         ("S", "save"),
                         ("Esc", "cancel"),
                     ]
+                } else if self.input_panel.as_ref().is_some_and(|p| {
+                    matches!(
+                        p.focus,
+                        input_panel::InputPanelFocus::Text
+                            | input_panel::InputPanelFocus::Note
+                            | input_panel::InputPanelFocus::When
+                    )
+                }) {
+                    vec![("Tab", "next"), ("Ctrl-G", "$EDITOR"), ("Esc", "cancel")]
                 } else {
                     vec![
                         ("Tab", "next"),
@@ -4582,6 +4673,8 @@ impl App {
                         ("x", "delete"),
                         ("Esc", "clear sel"),
                         ("/", "search"),
+                        ("J/K", "jump"),
+                        ("[/]", "move"),
                         ("=", "classify"),
                         ("C", "review"),
                         ("g/", "global"),
@@ -4596,6 +4689,8 @@ impl App {
                         ("a", "assign"),
                         ("d", "done"),
                         ("/", "search"),
+                        ("J/K", "jump"),
+                        ("[/]", "move"),
                         ("v", "views"),
                         ("m", "lanes"),
                         ("s", "sort"),
@@ -4643,6 +4738,65 @@ impl App {
         }
     }
 
+    fn view_edit_active_field_label(state: &ViewEditState) -> Option<&'static str> {
+        if state.pane_focus != ViewEditPaneFocus::Details {
+            return None;
+        }
+
+        if let Some(inline) = &state.inline_input {
+            return match inline {
+                ViewEditInlineInput::ViewName => Some("Name"),
+                ViewEditInlineInput::SectionTitle { .. } => Some("Title"),
+                ViewEditInlineInput::UnmatchedLabel => Some("Unmatched label"),
+                ViewEditInlineInput::CategoryAlias { .. } => Some("Alias"),
+                ViewEditInlineInput::SectionsFilter => None,
+            };
+        }
+
+        if state.sections_view_row_selected || state.region != ViewEditRegion::Sections {
+            return match state.region {
+                ViewEditRegion::Criteria => {
+                    if state.name_focused {
+                        Some("Name")
+                    } else {
+                        Some("Filter criteria")
+                    }
+                }
+                ViewEditRegion::Datebook => match state.datebook_field_index {
+                    0 => Some("Period"),
+                    1 => Some("Interval"),
+                    2 => Some("Anchor"),
+                    3 => Some("Date source"),
+                    _ => None,
+                },
+                ViewEditRegion::Unmatched => match state.unmatched_field_index {
+                    0 => Some("Date range include"),
+                    1 => Some("Date range exclude"),
+                    2 => Some("Display mode"),
+                    3 => Some("Section flow"),
+                    4 => Some("Empty sections"),
+                    5 => Some("Show unmatched"),
+                    6 => Some("Hide dependent"),
+                    7 => Some("Unmatched label"),
+                    8 => Some("Aliases"),
+                    _ => None,
+                },
+                ViewEditRegion::Sections => None,
+            };
+        }
+
+        match state.section_details_field_index {
+            0 => Some("Title"),
+            1 => Some("Filter"),
+            2 => Some("Columns"),
+            3 => Some("Display mode"),
+            4 => Some("Auto-assign"),
+            5 => Some("Auto-unassign"),
+            6 => Some("Section layout"),
+            _ => None,
+        }
+    }
+
     fn render_help_panel(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         if area.width < 8 || area.height < 8 {
             return;
@@ -4678,6 +4832,7 @@ impl App {
                 "[/] or S-\u{2191}/\u{2193}",
                 "Move item to previous / next section",
             ),
+            help_entry("J / K", "Jump cursor to next / previous section"),
             help_entry("p", "Toggle the preview sidebar"),
             help_entry("i/o", "Cycle preview mode"),
             Line::from(""),
@@ -4690,7 +4845,7 @@ impl App {
             Line::from(Span::styled("NAVIGATION", header)),
             help_entry("\u{2191}/k \u{2193}/j", "Move between items"),
             help_entry("\u{2190}/h \u{2192}/l", "Move between sections (lanes)"),
-            help_entry("J / K", "Move item between sections"),
+            help_entry("J / K", "Jump cursor to next / previous section"),
             help_entry("Tab/S-Tab", "Next / previous section"),
             help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
             help_entry("z", "Cycle card size (compact \u{2194} detail)"),
@@ -5405,20 +5560,20 @@ impl App {
         // Help row
         let base_help = match panel.focus {
             InputPanelFocus::Text => match panel.kind {
-                InputPanelKind::NumericValue => "Type value  Enter:save  Esc:close",
-                InputPanelKind::NameInput => "Type name  Enter:save  Esc:close",
+                InputPanelKind::NumericValue => "Type value  Enter:save  Esc:cancel",
+                InputPanelKind::NameInput => "Type name  Enter:save  Esc:cancel",
                 InputPanelKind::WhenDate => {
-                    "Enter natural language or ISO datetime  Enter:save  Esc:close"
+                    "Enter natural language or ISO datetime  Enter:save  Esc:cancel"
                 }
-                InputPanelKind::CategoryCreate => "Type name  Enter/Esc:save  Tab:next",
-                InputPanelKind::EditItem => "Type title  Enter/Esc:save and close  Tab:when",
-                InputPanelKind::AddItem => "Type title  Enter/Esc:save  Tab:when",
+                InputPanelKind::CategoryCreate => "Type name  Enter:save  Esc:cancel  Tab:next",
+                InputPanelKind::EditItem => "Type title  Enter:save  Esc:cancel  Tab:when",
+                InputPanelKind::AddItem => "Type title  Enter:save  Esc:cancel  Tab:when",
             },
             InputPanelFocus::Note => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "Type note  Enter:new line  Tab:actions  Esc:save and close"
+                    "Type note  Enter:new line  Tab:actions  Esc:cancel"
                 } else {
-                    "Type note  Enter:new line  Tab:categories  Esc:save and close"
+                    "Type note  Enter:new line  Tab:categories  Esc:cancel"
                 }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
@@ -5427,17 +5582,17 @@ impl App {
             InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
             InputPanelFocus::Actions => {
                 if panel.pending_suggestions.is_empty() {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S:save  Esc:cancel"
                 } else {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S:save  Esc:cancel"
                 }
             }
             InputPanelFocus::Suggestions => {
-                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  Esc:save and close"
+                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S:save  Esc:cancel"
             }
-            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
+            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:cancel",
             InputPanelFocus::When => {
-                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:save"
+                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:cancel"
             }
         };
         let mut help_style = Style::default();
@@ -5524,7 +5679,7 @@ impl App {
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
         );
-        if area.width < 6 || area.height < 7 {
+        if area.width < 6 || area.height < 8 {
             return;
         }
 
@@ -5540,6 +5695,7 @@ impl App {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
                 Constraint::Min(1),
             ])
             .split(inner);
@@ -5552,6 +5708,11 @@ impl App {
                 "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: close)",
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
+        frame.render_widget(
+            Paragraph::new("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned")
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
 
         let item_context = self
             .item_assign_anchor_id()
@@ -5564,7 +5725,7 @@ impl App {
         } else {
             String::new()
         };
-        let item_label_width = chunks[1]
+        let item_label_width = chunks[2]
             .width
             .saturating_sub((format!("Target: {batch_suffix}").chars().count() as u16) + 1)
             as usize;
@@ -5574,12 +5735,12 @@ impl App {
             Span::styled(item_context, Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(batch_suffix, Style::default().fg(MUTED_TEXT_COLOR)),
         ]);
-        frame.render_widget(Paragraph::new(context_line), chunks[1]);
+        frame.render_widget(Paragraph::new(context_line), chunks[2]);
 
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[2]);
+            .split(chunks[3]);
 
         // ── Left: category pane ────────────────────────────────────────────
         let cat_active = self.item_assign_pane == ItemAssignPane::Categories;
@@ -6887,6 +7048,7 @@ impl App {
             .as_ref()
             .map(|state| state.focus)
             .unwrap_or(CategoryManagerFocus::Tree);
+        let details_active = manager_focus == CategoryManagerFocus::Details;
         let filter_text = self
             .category_manager
             .as_ref()
@@ -7260,13 +7422,14 @@ impl App {
                     details_chunks[0],
                 );
 
-                let focus_prefix = |active: bool| if active { "> " } else { "  " };
+                let focus_prefix =
+                    |active: bool| if active && details_active { "> " } else { "  " };
                 let flag_line = |active: bool, label: &str, on: bool| {
                     let style = if is_reserved_category {
                         Style::default()
                             .fg(MUTED_TEXT_COLOR)
                             .add_modifier(Modifier::DIM)
-                    } else if active {
+                    } else if active && details_active {
                         focused_cell_style()
                     } else {
                         Style::default()
@@ -7284,13 +7447,14 @@ impl App {
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
                     let inline_input = self.category_manager_details_inline_input();
-                    let integer_focused = details_focus == CategoryManagerDetailsFocus::Integer;
-                    let decimal_focused =
-                        details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
-                    let currency_focused =
-                        details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
-                    let thousands_focused =
-                        details_focus == CategoryManagerDetailsFocus::ThousandsSeparator;
+                    let integer_focused =
+                        details_active && details_focus == CategoryManagerDetailsFocus::Integer;
+                    let decimal_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let currency_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
+                    let thousands_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::ThousandsSeparator;
                     let decimal_value = inline_input
                         .filter(|input| {
                             input.field == CategoryManagerDetailsInlineField::DecimalPlaces
@@ -7392,27 +7556,32 @@ impl App {
                 } else {
                     let mut lines = vec![
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::Exclusive,
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::Exclusive,
                             "Exclusive",
                             row.is_exclusive,
                         ),
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::AutoMatch,
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::AutoMatch,
                             "Auto-match",
                             row.enable_implicit_string,
                         ),
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::SemanticMatch,
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::SemanticMatch,
                             "Semantic Match",
                             row.enable_semantic_classification,
                         ),
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::MatchCategoryName,
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::MatchCategoryName,
                             "Match category name",
                             row.match_category_name,
                         ),
                         flag_line(
-                            details_focus == CategoryManagerDetailsFocus::Actionable,
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::Actionable,
                             "Actionable",
                             row.is_actionable,
                         ),
@@ -7452,7 +7621,8 @@ impl App {
                 } else {
                     "Flags"
                 };
-                let flags_border_focused = !is_reserved_category
+                let flags_border_focused = details_active
+                    && !is_reserved_category
                     && !matches!(
                         details_focus,
                         CategoryManagerDetailsFocus::Note
@@ -7463,7 +7633,11 @@ impl App {
                 frame.render_widget(
                     Paragraph::new(flag_lines).block(
                         Block::default()
-                            .title(flags_title)
+                            .title(if flags_border_focused {
+                                format!("> {flags_title}")
+                            } else {
+                                flags_title.to_string()
+                            })
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(if flags_border_focused {
                                 CATEGORY_MANAGER_EDIT_FOCUS
@@ -7475,7 +7649,8 @@ impl App {
                 );
 
                 if !is_numeric_category {
-                    let also_match_block_focus = !is_reserved_category
+                    let also_match_block_focus = details_active
+                        && !is_reserved_category
                         && details_focus == CategoryManagerDetailsFocus::AlsoMatch;
                     let also_match_title = if is_reserved_category {
                         "Also Match (read-only)"
@@ -7544,7 +7719,8 @@ impl App {
 
                 // Conditions subpane (non-numeric only)
                 if !is_numeric_category {
-                    let conditions_focused = !is_reserved_category
+                    let conditions_focused = details_active
+                        && !is_reserved_category
                         && details_focus == CategoryManagerDetailsFocus::Conditions;
                     let conditions_count = self
                         .categories
@@ -7660,7 +7836,8 @@ impl App {
                 }
 
                 if !is_numeric_category {
-                    let actions_focused = !is_reserved_category
+                    let actions_focused = details_active
+                        && !is_reserved_category
                         && details_focus == CategoryManagerDetailsFocus::Actions;
                     let actions_summary = self
                         .categories
@@ -7711,8 +7888,9 @@ impl App {
                     );
                 }
 
-                let note_block_focus =
-                    !is_reserved_category && details_focus == CategoryManagerDetailsFocus::Note;
+                let note_block_focus = details_active
+                    && !is_reserved_category
+                    && details_focus == CategoryManagerDetailsFocus::Note;
                 let note_title = if is_reserved_category {
                     "Note (read-only)"
                 } else if note_editing {
@@ -7796,7 +7974,9 @@ impl App {
                     );
                 }
 
-                let details_hint = if is_reserved_category {
+                let details_hint = if !details_active {
+                    "Enter/Tab moves focus into Details; selected category metadata is shown here."
+                } else if is_reserved_category {
                     "Reserved categories are built-in and read-only here."
                 } else if note_editing {
                     "Type to edit  Esc:stop editing  Tab:leave (warn if unsaved)"
@@ -7805,7 +7985,7 @@ impl App {
                 } else {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive => {
-                            "Only one child can be assigned to an item at a time"
+                            "If enabled, only one child can be assigned to an item at a time"
                         }
                         CategoryManagerDetailsFocus::AutoMatch => {
                             "Enable fallback text matching for this category"
@@ -8168,7 +8348,11 @@ impl App {
 
             let mut items: Vec<ListItem<'_>> = Vec::new();
             let mut selected_line: Option<usize> = None;
-            let title = " DETAILS ".to_string();
+            let title = if details_focused {
+                "> DETAILS ".to_string()
+            } else {
+                " DETAILS ".to_string()
+            };
 
             // Context banner: full-width colored bar distinguishing view vs section
             {
@@ -8202,6 +8386,7 @@ impl App {
                     SectionFlow::Vertical => "vertical (stacked lanes)",
                     SectionFlow::Horizontal => "horizontal (kanban lanes)",
                 };
+                let empty_sections_label = state.draft.empty_sections.label();
 
                 let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
@@ -8210,6 +8395,7 @@ impl App {
                     .fg(Color::Black)
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
+                let row_marker = |active: bool| if active { "> " } else { "  " };
                 // Helper: style + track selected_line for unmatched-region fields
                 let style_for_unmatched_field =
                     |field_index: usize,
@@ -8225,6 +8411,11 @@ impl App {
                             Style::default()
                         }
                     };
+                let unmatched_field_selected = |field_index: usize| {
+                    details_focused
+                        && state.region == ViewEditRegion::Unmatched
+                        && state.unmatched_field_index == field_index
+                };
 
                 // ── Name ──
                 let editing_view_name =
@@ -8238,7 +8429,12 @@ impl App {
                     Style::default()
                 };
                 let name_line = if editing_view_name {
-                    let label = format!("  {:<width$}◀ ", "Name", width = pad);
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        row_marker(editing_view_name || name_row_focused),
+                        "Name",
+                        width = pad
+                    );
                     Line::from(inline_edit_spans(
                         &label,
                         state.inline_buf.text(),
@@ -8248,7 +8444,8 @@ impl App {
                     ))
                 } else {
                     Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(name_row_focused),
                         "Name",
                         state.draft.name,
                         width = pad
@@ -8275,8 +8472,11 @@ impl App {
                         Style::default()
                     };
                     items.push(
-                        ListItem::new(Line::from("    (no criteria — matches all items)"))
-                            .style(style),
+                        ListItem::new(Line::from(format!(
+                            "{}  (no criteria — matches all items)",
+                            row_marker(details_focused && state.region == ViewEditRegion::Criteria)
+                        )))
+                        .style(style),
                     );
                 } else {
                     for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
@@ -8292,7 +8492,7 @@ impl App {
                             criterion_mode_color(*mode)
                         };
                         let line = Line::from(vec![
-                            Span::raw("    "),
+                            Span::raw(format!("{}  ", row_marker(is_selected))),
                             Span::styled(criterion.clone(), Style::default().fg(text_color)),
                         ]);
                         let style = if is_selected {
@@ -8317,7 +8517,6 @@ impl App {
                         ("Interval", config.interval.label().to_string()),
                         ("Anchor", config.anchor.label().to_string()),
                         ("Date source", config.date_source.label().to_string()),
-                        ("Empty sections", config.empty_sections.label().to_string()),
                     ];
                     for (fi, (label, value)) in datebook_fields.iter().enumerate() {
                         let is_selected = details_focused
@@ -8333,10 +8532,11 @@ impl App {
                         };
                         items.push(
                             ListItem::new(Line::from(format!(
-                                "    {:<width$}{}",
+                                "{}{:<width$}{}",
+                                row_marker(is_selected),
                                 label,
                                 value,
-                                width = pad - 2
+                                width = pad
                             )))
                             .style(style),
                         );
@@ -8373,7 +8573,8 @@ impl App {
 
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(0)),
                         "Date range (include)",
                         when_include,
                         width = pad
@@ -8386,7 +8587,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(1)),
                         "Date range (exclude)",
                         when_exclude,
                         width = pad
@@ -8407,7 +8609,8 @@ impl App {
                 // ── Display ──
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(2)),
                         "Display mode",
                         display_mode_label,
                         width = pad
@@ -8420,13 +8623,28 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(3)),
                         "Section flow",
                         section_flow_label,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
                         3,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(4)),
+                        "Empty sections",
+                        empty_sections_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        4,
                         &items,
                         &mut selected_line,
                     )),
@@ -8454,13 +8672,14 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(8)),
                         "Aliases",
                         alias_summary,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        7,
+                        8,
                         &items,
                         &mut selected_line,
                     )),
@@ -8487,13 +8706,14 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(5)),
                         "Show unmatched",
                         unmatched_value,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -8506,13 +8726,14 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(6)),
                         "Hide dependent",
                         hide_dependent_value,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
@@ -8523,9 +8744,14 @@ impl App {
                     Some(ViewEditInlineInput::UnmatchedLabel)
                 );
                 let unmatched_label_style =
-                    style_for_unmatched_field(6, &items, &mut selected_line);
+                    style_for_unmatched_field(7, &items, &mut selected_line);
                 let unmatched_label_line = if editing_unmatched_label {
-                    let label = format!("  {:<width$}◀ ", "Unmatched label", width = pad);
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        row_marker(unmatched_field_selected(7) || editing_unmatched_label),
+                        "Unmatched label",
+                        width = pad
+                    );
                     Line::from(inline_edit_spans(
                         &label,
                         state.inline_buf.text(),
@@ -8535,7 +8761,8 @@ impl App {
                     ))
                 } else {
                     Line::from(format!(
-                        "  {:<width$}\"{}\"",
+                        "{}{:<width$}\"{}\"",
+                        row_marker(unmatched_field_selected(7)),
                         "Unmatched label",
                         state.draft.unmatched_label,
                         width = pad
@@ -8561,6 +8788,7 @@ impl App {
                     .fg(Color::Black)
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
+                let row_marker = |active: bool| if active { "> " } else { "  " };
 
                 // Helper: style + track selected_line for a given field index
                 let style_for_section_field =
@@ -8577,11 +8805,21 @@ impl App {
                             Style::default()
                         }
                     };
+                let section_field_selected = |field_index: usize| {
+                    details_focused
+                        && state.region == ViewEditRegion::Sections
+                        && state.section_details_field_index == field_index
+                };
 
                 // ── Group 1: Identity ──
                 let title_field_style = style_for_section_field(0, &items, &mut selected_line);
                 let title_line = if editing_title {
-                    let label = format!("  {:<width$}◀ ", "Title", width = pad);
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        row_marker(section_field_selected(0) || editing_title),
+                        "Title",
+                        width = pad
+                    );
                     Line::from(inline_edit_spans(
                         &label,
                         state.inline_buf.text(),
@@ -8590,7 +8828,13 @@ impl App {
                         title_field_style,
                     ))
                 } else {
-                    Line::from(format!("  {:<width$}{}", "Title", title_text, width = pad))
+                    Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(0)),
+                        "Title",
+                        title_text,
+                        width = pad
+                    ))
                 };
                 items.push(ListItem::new(title_line).style(title_field_style));
 
@@ -8601,7 +8845,8 @@ impl App {
                 if criteria_lines.is_empty() {
                     items.push(
                         ListItem::new(Line::from(format!(
-                            "  {:<width$}(none)",
+                            "{}{:<width$}(none)",
+                            row_marker(section_field_selected(1)),
                             "Filter",
                             width = pad
                         )))
@@ -8612,7 +8857,12 @@ impl App {
                         )),
                     );
                 } else {
-                    let mut spans = vec![Span::raw(format!("  {:<width$}", "Filter", width = pad))];
+                    let mut spans = vec![Span::raw(format!(
+                        "{}{:<width$}",
+                        row_marker(is_filter_selected),
+                        "Filter",
+                        width = pad
+                    ))];
                     for (idx, (mode, text)) in criteria_lines.iter().enumerate() {
                         if idx > 0 {
                             spans.push(Span::raw("; "));
@@ -8658,7 +8908,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(2)),
                         "Columns",
                         columns_summary,
                         width = pad
@@ -8676,7 +8927,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(3)),
                         "Display mode",
                         mode_label,
                         width = pad
@@ -8697,7 +8949,8 @@ impl App {
                 // ── Group 3: Automation / Behavior ──
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(4)),
                         "Auto-assign on add",
                         summarize_category_set(&section.on_insert_assign),
                         width = pad
@@ -8710,7 +8963,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(5)),
                         "Auto-unassign on remove",
                         summarize_category_set(&section.on_remove_unassign),
                         width = pad
@@ -8723,7 +8977,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(6)),
                         "Section layout",
                         self.view_edit_section_layout_value(section),
                         width = pad

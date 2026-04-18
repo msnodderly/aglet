@@ -397,7 +397,10 @@ fn evaluate_category_match(
                                 explanation: AssignmentExplanation::ProfileCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
-                                    rendered_rule: render_condition_rule(condition, categories_by_id),
+                                    rendered_rule: render_condition_rule(
+                                        condition,
+                                        categories_by_id,
+                                    ),
                                 },
                             });
                         }
@@ -414,7 +417,10 @@ fn evaluate_category_match(
                                 explanation: AssignmentExplanation::DateCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
-                                    rendered_rule: render_condition_rule(condition, categories_by_id),
+                                    rendered_rule: render_condition_rule(
+                                        condition,
+                                        categories_by_id,
+                                    ),
                                 },
                             });
                         }
@@ -431,13 +437,7 @@ fn evaluate_category_match(
                 .collect();
             if !explicit_conditions.is_empty()
                 && explicit_conditions.iter().all(|condition| {
-                    condition_matches(
-                        condition,
-                        item,
-                        assignments,
-                        categories_by_id,
-                        options,
-                    )
+                    condition_matches(condition, item, assignments, categories_by_id, options)
                 })
             {
                 let rendered_rules = explicit_conditions
@@ -687,18 +687,22 @@ fn has_blocking_exclusive_sibling(
         .position(|child_id| *child_id == category_id)
         .unwrap_or(parent.children.len());
 
-    parent.children.iter().enumerate().any(|(sibling_index, sibling_id)| {
-        if *sibling_id == category_id {
-            return false;
-        }
-        let Some(assignment) = assignments.get(sibling_id) else {
-            return false;
-        };
-        matches!(
-            assignment.source,
-            AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
-        ) || sibling_index < current_index
-    })
+    parent
+        .children
+        .iter()
+        .enumerate()
+        .any(|(sibling_index, sibling_id)| {
+            if *sibling_id == category_id {
+                return false;
+            }
+            let Some(assignment) = assignments.get(sibling_id) else {
+                return false;
+            };
+            matches!(
+                assignment.source,
+                AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
+            ) || sibling_index < current_index
+        })
 }
 
 fn assign_subsumption_ancestors(
@@ -986,7 +990,9 @@ mod tests {
 
     fn category_with_date(name: &str, source: DateSource, matcher: DateMatcher) -> Category {
         let mut category = category(name, false);
-        category.conditions.push(Condition::Date { source, matcher });
+        category
+            .conditions
+            .push(Condition::Date { source, matcher });
         category
     }
 
@@ -2583,7 +2589,9 @@ mod tests {
         assert!(result.new_assignments.contains(&target.id));
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert!(matches!(
-            assignments.get(&target.id).and_then(|assignment| assignment.explanation.as_ref()),
+            assignments
+                .get(&target.id)
+                .and_then(|assignment| assignment.explanation.as_ref()),
             Some(AssignmentExplanation::ConditionGroup {
                 match_mode: ConditionMatchMode::All,
                 ..

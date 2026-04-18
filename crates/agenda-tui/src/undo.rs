@@ -1,9 +1,7 @@
 use std::time::{Duration, Instant};
 
 use agenda_core::agenda::Agenda;
-use agenda_core::model::{
-    Assignment, AssignmentSource, CategoryId, Item, ItemId, ItemLinkKind,
-};
+use agenda_core::model::{Assignment, AssignmentSource, CategoryId, Item, ItemId, ItemLinkKind};
 use jiff::Timestamp;
 use rust_decimal::Decimal;
 

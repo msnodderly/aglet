@@ -3,9 +3,7 @@ use jiff::tz::TimeZone;
 use jiff::{Span, Zoned};
 
 use crate::dates::{BasicDateParser, DateParser};
-use crate::model::{
-    DateCompareOp, DateMatcher, DateSource, DateValueExpr, Item,
-};
+use crate::model::{DateCompareOp, DateMatcher, DateSource, DateValueExpr, Item};
 
 #[derive(Debug, Clone)]
 pub struct EvaluationContext {
@@ -110,7 +108,9 @@ pub fn render_date_condition(source: DateSource, matcher: &DateMatcher) -> Strin
             render_date_value_expr(value)
         ),
         DateMatcher::Range { from, through } => match (from, through) {
-            (DateValueExpr::TimeToday(time), DateValueExpr::Today) if *time == default_afternoon_start() => {
+            (DateValueExpr::TimeToday(time), DateValueExpr::Today)
+                if *time == default_afternoon_start() =>
+            {
                 format!("{} this afternoon", render_date_source(source))
             }
             (DateValueExpr::TimeToday(time), DateValueExpr::Today) => format!(
@@ -251,10 +251,9 @@ fn resolve_value(value: &DateValueExpr, ctx: &EvaluationContext) -> ResolvedValu
         ),
         DateValueExpr::AbsoluteDate(date) => ResolvedValue::Date(*date),
         DateValueExpr::AbsoluteDateTime(datetime) => ResolvedValue::DateTime(*datetime),
-        DateValueExpr::TimeToday(time) => ResolvedValue::DateTime(datetime_from_date_time(
-            ctx.today(),
-            *time,
-        )),
+        DateValueExpr::TimeToday(time) => {
+            ResolvedValue::DateTime(datetime_from_date_time(ctx.today(), *time))
+        }
     }
 }
 
@@ -357,7 +356,11 @@ mod tests {
 
     #[test]
     fn compare_before_today_uses_start_of_day() {
-        let ctx = EvaluationContext::from_zoned("2026-02-16T09:30:00-08:00[America/Los_Angeles]".parse().unwrap());
+        let ctx = EvaluationContext::from_zoned(
+            "2026-02-16T09:30:00-08:00[America/Los_Angeles]"
+                .parse()
+                .unwrap(),
+        );
         let mut item = Item::new("demo".to_string());
         item.when_date = Some(DateTime::new(2026, 2, 15, 23, 59, 0, 0).unwrap());
         assert!(item_matches_date_condition(

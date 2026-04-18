@@ -6,7 +6,7 @@ impl App {
     }
 
     pub(crate) fn view_details_aux_field_count() -> usize {
-        8
+        9
     }
 
     pub(crate) fn view_edit_showing_view_details(state: &ViewEditState) -> bool {
@@ -135,7 +135,7 @@ impl App {
         }
     }
 
-    pub(crate) const DATEBOOK_FIELD_COUNT: usize = 5; // Period, Interval, Anchor, DateSource, EmptySections
+    pub(crate) const DATEBOOK_FIELD_COUNT: usize = 4; // Period, Interval, Anchor, DateSource
 
     /// The Name row sits at flat index 0 before the criteria rows.
     const NAME_ROW_COUNT: usize = 1;
@@ -163,7 +163,9 @@ impl App {
             ViewEditRegion::Datebook => {
                 name_rows
                     + criteria_rows
-                    + state.datebook_field_index.min(datebook_rows.saturating_sub(1))
+                    + state
+                        .datebook_field_index
+                        .min(datebook_rows.saturating_sub(1))
             }
             ViewEditRegion::Unmatched => {
                 name_rows
@@ -382,7 +384,6 @@ impl App {
                             1 => config.interval = config.interval.next(),
                             2 => config.anchor = config.anchor.next(),
                             3 => config.date_source = config.date_source.next(),
-                            4 => config.empty_sections = config.empty_sections.next(),
                             _ => {}
                         }
                         // Auto-fix invalid combos
@@ -412,15 +413,14 @@ impl App {
             state.picker_index = first;
         }
         self.status =
-            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
-                .to_string();
+            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done".to_string();
     }
 
     fn open_view_edit_alias_picker(&mut self) {
         let first = first_non_reserved_category_index(&self.category_rows);
         if let Some(state) = &mut self.view_edit_state {
             state.region = ViewEditRegion::Unmatched;
-            state.unmatched_field_index = 7;
+            state.unmatched_field_index = 8;
             state.overlay = Some(ViewEditOverlay::CategoryPicker {
                 target: CategoryEditTarget::ViewAliases,
             });
@@ -479,7 +479,7 @@ impl App {
             }
             KeyCode::Char('t') => {
                 if let Some(state) = &mut self.view_edit_state {
-                    state.unmatched_field_index = 4;
+                    state.unmatched_field_index = 5;
                     state.draft.show_unmatched = !state.draft.show_unmatched;
                     state.dirty = true;
                     state.discard_confirm = false;
@@ -488,7 +488,7 @@ impl App {
             KeyCode::Char('l') => {
                 if let Some(state) = &mut self.view_edit_state {
                     let current = state.draft.unmatched_label.clone();
-                    state.unmatched_field_index = 6;
+                    state.unmatched_field_index = 7;
                     state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                     state.inline_buf = text_buffer::TextBuffer::new(current);
                 }
@@ -496,7 +496,7 @@ impl App {
             }
             KeyCode::Char('d') => {
                 if let Some(state) = &mut self.view_edit_state {
-                    state.unmatched_field_index = 5;
+                    state.unmatched_field_index = 6;
                     state.draft.hide_dependent_items = !state.draft.hide_dependent_items;
                     state.dirty = true;
                     state.discard_confirm = false;
@@ -507,6 +507,14 @@ impl App {
                     state.unmatched_field_index = 3;
                     state.draft.section_flow =
                         Self::cycle_view_section_flow(state.draft.section_flow);
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.unmatched_field_index = 4;
+                    state.draft.empty_sections = state.draft.empty_sections.next();
                     state.dirty = true;
                     state.discard_confirm = false;
                 }
@@ -585,12 +593,19 @@ impl App {
                     }
                     4 => {
                         if let Some(state) = &mut self.view_edit_state {
-                            state.draft.show_unmatched = !state.draft.show_unmatched;
+                            state.draft.empty_sections = state.draft.empty_sections.next();
                             state.dirty = true;
                             state.discard_confirm = false;
                         }
                     }
                     5 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.show_unmatched = !state.draft.show_unmatched;
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                    6 => {
                         if let Some(state) = &mut self.view_edit_state {
                             state.draft.hide_dependent_items = !state.draft.hide_dependent_items;
                             state.dirty = true;
@@ -598,10 +613,10 @@ impl App {
                         }
                     }
                     _ => {
-                        if target == 6 {
+                        if target == 7 {
                             if let Some(state) = &mut self.view_edit_state {
                                 let current = state.draft.unmatched_label.clone();
-                                state.unmatched_field_index = 6;
+                                state.unmatched_field_index = 7;
                                 state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
                                 state.inline_buf = text_buffer::TextBuffer::new(current);
                             }

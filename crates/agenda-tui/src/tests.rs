@@ -24,8 +24,8 @@ use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
     CategoryId, CategoryValueKind, Column, ColumnKind, Condition, ConditionMatchMode,
-    CriterionMode, Item, ItemId, NumericFormat, Query, Section, SectionFlow, SummaryFn,
-    TextMatchSource, View, WhenBucket,
+    CriterionMode, EmptySections, Item, ItemId, NumericFormat, Query, Section, SectionFlow,
+    SummaryFn, TextMatchSource, View, WhenBucket,
 };
 use agenda_core::store::Store;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -5140,8 +5140,18 @@ fn view_create_wizard_s_save_persists_view() {
     // Save the new view
     app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
         .expect("save new view");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert_eq!(app.mode, Mode::Normal);
     assert!(app.view_edit_state.is_none());
+    assert_eq!(
+        app.current_view().map(|view| view.name.as_str()),
+        Some("Roadmap")
+    );
+    assert!(
+        app.status
+            .contains("Created and switched to view \"Roadmap\""),
+        "new-view save should switch and report it, got: {}",
+        app.status
+    );
 
     let created = store
         .list_views()
@@ -6009,6 +6019,32 @@ fn normal_mode_tab_and_backtab_switch_sections_without_wrapping() {
     assert_eq!(app.slot_index, 0);
     app.handle_normal_key(KeyCode::BackTab, &agenda)
         .expect("backtab clamps at first section");
+    assert_eq!(app.slot_index, 0);
+
+    app.handle_normal_key(KeyCode::Char('J'), &agenda)
+        .expect("J jumps to next section");
+    assert_eq!(app.slot_index, 1);
+    let alpha_assignments = store
+        .get_assignments_for_item(item_alpha.id)
+        .expect("load alpha assignments");
+    assert!(
+        alpha_assignments.contains_key(&alpha.id),
+        "J should not move the selected item out of its section"
+    );
+    assert!(
+        !alpha_assignments.contains_key(&beta.id),
+        "J should not assign the next section category"
+    );
+
+    app.handle_normal_key(KeyCode::Char('J'), &agenda)
+        .expect("J clamps at last section");
+    assert_eq!(app.slot_index, 1);
+
+    app.handle_normal_key(KeyCode::Char('K'), &agenda)
+        .expect("K jumps to previous section");
+    assert_eq!(app.slot_index, 0);
+    app.handle_normal_key(KeyCode::Char('K'), &agenda)
+        .expect("K clamps at first section");
     assert_eq!(app.slot_index, 0);
 
     drop(store);
@@ -6918,7 +6954,7 @@ fn normal_mode_footer_hints_hide_numeric_shortcuts_for_non_numeric_column_focus(
 }
 
 #[test]
-fn edit_item_panel_footer_shows_esc_save_and_close() {
+fn edit_item_panel_footer_shows_esc_cancel() {
     let mut panel = input_panel::InputPanel::new_edit_item(
         agenda_core::model::ItemId::new_v4(),
         "Title".to_string(),
@@ -6942,8 +6978,47 @@ fn edit_item_panel_footer_shows_esc_save_and_close() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("Esc:save and close"),
-        "edit-item footer/help should indicate Esc auto-saves: {rendered}"
+        rendered.contains("Type note  Enter:new line  Tab:actions  Esc:cancel"),
+        "edit-item note help should not advertise save while the note owns text input: {rendered}"
+    );
+    assert!(
+        rendered.contains("Esc:cancel"),
+        "edit-item help should show Esc cancel semantics: {rendered}"
+    );
+    assert!(
+        !rendered.contains("S:save"),
+        "edit-item note focus should require tabbing out before capital-S save is shown: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Esc:save"),
+        "edit-item help should not imply Esc saves: {rendered}"
+    );
+}
+
+#[test]
+fn add_item_panel_note_focus_hides_capital_s_save_hint() {
+    let mut panel =
+        input_panel::InputPanel::new_add_item("Title", &std::collections::HashSet::new());
+    panel.focus = input_panel::InputPanelFocus::Note;
+    let mut app = App {
+        mode: Mode::InputPanel,
+        status: "Adding".to_string(),
+        input_panel: Some(panel),
+        ..App::default()
+    };
+
+    let backend = TestBackend::new(220, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Type note  Enter:new line  Tab:categories  Esc:cancel"),
+        "add-item note help should describe note editing without direct save: {rendered}"
+    );
+    assert!(
+        !rendered.contains("S:save"),
+        "add-item note focus should not show capital-S save until focus leaves text input: {rendered}"
     );
 }
 
@@ -9264,6 +9339,10 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         "assign picker header should describe close semantics: {rendered}"
     );
     assert!(
+        rendered.contains("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned"),
+        "assign picker should explain checkbox and preview markers: {rendered}"
+    );
+    assert!(
         rendered.contains("Target: Plain  Batch: 2 items"),
         "assign picker should show focused target context inside the modal: {rendered}"
     );
@@ -10484,6 +10563,37 @@ fn item_details_summary_prioritizes_note_and_categories() {
 }
 
 #[test]
+fn preview_summary_wrapped_note_lines_preserve_indent() {
+    let mut item = Item::new("demo".to_string());
+    item.note = Some("  indented alpha beta gamma delta".to_string());
+    let app = App::default();
+
+    let lines = app.item_details_lines_for_item_wrapped(&item, 18);
+    let plain: Vec<String> = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let note_lines: Vec<&String> = plain
+        .iter()
+        .filter(|line| line.starts_with("    "))
+        .collect();
+
+    assert!(
+        note_lines.len() >= 2,
+        "test note should wrap into multiple indented lines: {plain:?}"
+    );
+    assert!(
+        note_lines.iter().all(|line| line.starts_with("    ")),
+        "wrapped note continuation lines should keep note indentation: {plain:?}"
+    );
+}
+
+#[test]
 fn item_info_contains_link_sections_while_summary_stays_primary() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -10842,6 +10952,113 @@ fn category_manager_reserved_details_render_as_read_only() {
 }
 
 #[test]
+fn category_manager_tree_focus_does_not_render_details_row_cursor() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_category_selection_by_id(category.id);
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.sync_category_manager_state_from_selection();
+    app.set_category_manager_focus(CategoryManagerFocus::Tree);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
+
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("> Work"),
+        "tree focus should keep the tree row cursor visible: {rendered}"
+    );
+    assert!(
+        !rendered.contains("> [ ] Exclusive"),
+        "tree focus should not leave a details flag cursor behind: {rendered}"
+    );
+    assert!(
+        rendered.contains("Enter/Tab moves focus into Details"),
+        "inactive details pane should explain how to focus it: {rendered}"
+    );
+
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("> [ ] Exclusive"),
+        "details focus should show the active flag row cursor: {rendered}"
+    );
+    assert!(
+        rendered.contains("If enabled, only one child"),
+        "exclusive hint should be conditional, not state-implying: {rendered}"
+    );
+}
+
+#[test]
+fn category_manager_details_titles_show_focus_for_note_and_also_match() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_category_selection_by_id(category.id);
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.sync_category_manager_state_from_selection();
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render note");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Note"),
+        "note pane title should expose details focus: {rendered}"
+    );
+
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render also-match");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Also Match"),
+        "also-match pane title should expose details focus: {rendered}"
+    );
+
+    app.set_category_manager_focus(CategoryManagerFocus::Tree);
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render inactive details");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !rendered.contains("> Also Match"),
+        "inactive details pane should not render a focused also-match title: {rendered}"
+    );
+}
+
+#[test]
 fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -11170,6 +11387,18 @@ fn category_create_panel_render_uses_category_manager_backdrop() {
     assert!(
         text.contains("Category Manager"),
         "category manager should remain visible behind the create panel"
+    );
+    assert!(
+        text.contains("Enter:save"),
+        "category-create help should show Enter save: {text}"
+    );
+    assert!(
+        text.contains("Esc:cancel"),
+        "category-create help should show Esc cancel: {text}"
+    );
+    assert!(
+        !text.contains("Enter/Esc:save"),
+        "category-create help should not say Esc saves: {text}"
     );
 
     drop(store);
@@ -14116,7 +14345,43 @@ fn normal_mode_g_slash_opens_global_search_session() {
         "status should indicate global search mode"
     );
 
+    let backend = TestBackend::new(120, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("view:TestView search:global"),
+        "header should keep the return view visible during global search: {rendered}"
+    );
+
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn all_items_view_unmatched_lane_uses_all_items_label() {
+    let store = Store::open_memory().expect("memory store");
+    let item = Item::new("Default lane task".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+
+    assert_eq!(
+        app.current_view().map(|view| view.name.as_str()),
+        Some("All Items")
+    );
+    assert!(
+        app.slots.iter().any(|slot| slot.title == "All Items"),
+        "system view should render its default lane as All Items: {:?}",
+        app.slots
+            .iter()
+            .map(|slot| slot.title.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !app.slots.iter().any(|slot| slot.title == "Unassigned"),
+        "system All Items view should not expose the generic unmatched label"
+    );
 }
 
 #[test]
@@ -15937,6 +16202,67 @@ fn terminal_buffer_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
 }
 
 #[test]
+fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
+    let (store, db_path) = make_test_store_with_view("section-detail-focus-render");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    view.sections.push(Section {
+        title: "Focused".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    app.open_view_edit(view);
+    if let Some(state) = &mut app.view_edit_state {
+        state.pane_focus = ViewEditPaneFocus::Details;
+        state.region = ViewEditRegion::Sections;
+        state.section_index = 0;
+        state.sections_view_row_selected = false;
+        state.section_details_field_index = 1;
+    }
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Filter"),
+        "section filter row should expose focus with a plain prefix: {rendered}"
+    );
+    assert!(
+        rendered.contains("field:Filter"),
+        "footer should expose focused field context: {rendered}"
+    );
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.section_details_field_index = 2;
+    }
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render columns");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Columns"),
+        "section columns row should expose focus with a plain prefix: {rendered}"
+    );
+    assert!(
+        rendered.contains("field:Columns"),
+        "footer should update as the focused field changes: {rendered}"
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn view_picker_e_opens_view_edit() {
     let (store, db_path) = make_test_store_with_view("e-opens");
     let classifier = SubstringClassifier;
@@ -16597,28 +16923,56 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("display mode -> unmatched visible");
+        .expect("display mode -> section flow");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         3
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("unmatched visible -> hide dependent");
+        .expect("section flow -> empty sections");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         4
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("empty sections -> unmatched visible");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        5
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("unmatched visible -> hide dependent");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        6
     );
 
     app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
         .expect("hide dependent -> unmatched visible");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        5
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("unmatched visible -> empty sections");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        4
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("empty sections -> section flow");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         3
     );
 
     app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("unmatched visible -> display mode");
+        .expect("section flow -> display mode");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         2
@@ -16677,10 +17031,12 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to empty sections row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to unmatched visible row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        4
+        5
     );
 
     let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
@@ -16697,7 +17053,7 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
         .expect("move past hide dependent to unmatched label row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        6
+        7
     );
 
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -16706,6 +17062,53 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
         app.view_edit_state.as_ref().unwrap().inline_input,
         Some(super::ViewEditInlineInput::UnmatchedLabel)
     ));
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_empty_sections_row_enter_cycles_view_setting() {
+    let (store, db_path) = make_test_store_with_view("view-edit-empty-sections-toggle");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to when include row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to when exclude row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to display mode row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to section flow row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to empty sections row");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        4
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.empty_sections,
+        EmptySections::Show
+    );
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle empty sections to collapse");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.empty_sections,
+        EmptySections::Collapse
+    );
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle empty sections to hide");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.empty_sections,
+        EmptySections::Hide
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -16770,13 +17173,13 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     app.open_view_edit(view);
 
     // Move focus to Aliases row in view details.
-    for _ in 0..8 {
+    for _ in 0..9 {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("move details selection");
     }
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        7
+        8
     );
 
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -18581,6 +18984,41 @@ fn normal_mode_shift_down_moves_item_to_next_section_like_right_bracket() {
 }
 
 #[test]
+fn normal_mode_right_bracket_moves_item_and_reports_category_delta() {
+    let (store, db_path) = make_two_section_store("right-bracket-status");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("TestView");
+    app.refresh(&store).expect("refresh with TestView selected");
+
+    let moved_item_id = app.slots[0].items[0].id;
+    app.slot_index = 0;
+    app.item_index = 0;
+
+    app.handle_normal_key(KeyCode::Char(']'), &agenda)
+        .expect("right bracket moves item to next section");
+
+    assert_eq!(app.slot_index, 1);
+    assert!(
+        app.slots[1]
+            .items
+            .iter()
+            .any(|item| item.id == moved_item_id),
+        "right bracket should still move the item into the next section"
+    );
+    assert!(
+        app.status.contains("-Work") && app.status.contains("+Personal"),
+        "status should report category changes from the section move: {}",
+        app.status
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn normal_mode_shift_up_moves_item_to_previous_section_like_left_bracket() {
     let (store, db_path) = make_two_section_store("shift-up-move");
     let classifier = SubstringClassifier;
@@ -18954,6 +19392,102 @@ fn horizontal_multiline_cards_wrap_titles_and_use_label_metadata() {
     );
 
     let _ = std::fs::remove_file(&db_path);
+}
+
+fn render_non_datebook_empty_sections_mode(mode: EmptySections) -> String {
+    let mut view = View::new("Board".to_string());
+    view.empty_sections = mode;
+    view.sections.push(Section {
+        title: "Filled".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    view.sections.push(Section {
+        title: "Empty".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+
+    let app_item = Item::new("visible item".to_string());
+    let mut app = App {
+        views: vec![view],
+        slots: vec![
+            super::Slot {
+                title: "Filled".to_string(),
+                items: vec![app_item],
+                context: super::SlotContext::Section { section_index: 0 },
+            },
+            super::Slot {
+                title: "Empty".to_string(),
+                items: Vec::new(),
+                context: super::SlotContext::Section { section_index: 1 },
+            },
+        ],
+        view_index: 0,
+        ..App::default()
+    };
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render board");
+    terminal_buffer_lines(&terminal).join("\n")
+}
+
+#[test]
+fn non_datebook_view_empty_sections_show_keeps_empty_section_body() {
+    let rendered = render_non_datebook_empty_sections_mode(EmptySections::Show);
+
+    assert!(
+        rendered.contains("Empty"),
+        "empty section title should render in show mode: {rendered}"
+    );
+    assert!(
+        rendered.contains("No items in this section."),
+        "show mode should keep the empty section body: {rendered}"
+    );
+}
+
+#[test]
+fn non_datebook_view_empty_sections_collapse_renders_one_line_header() {
+    let rendered = render_non_datebook_empty_sections_mode(EmptySections::Collapse);
+
+    assert!(
+        rendered.contains("Empty (0)"),
+        "collapse mode should render the empty section as a compact header: {rendered}"
+    );
+    assert!(
+        !rendered.contains("No items in this section."),
+        "collapse mode should not render the full empty body: {rendered}"
+    );
+}
+
+#[test]
+fn non_datebook_view_empty_sections_hide_elides_empty_section() {
+    let rendered = render_non_datebook_empty_sections_mode(EmptySections::Hide);
+
+    assert!(
+        rendered.contains("visible item"),
+        "non-empty section should remain visible: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Empty"),
+        "hide mode should elide the empty section: {rendered}"
+    );
+    assert!(
+        !rendered.contains("No items in this section."),
+        "hide mode should not render the empty section body: {rendered}"
+    );
 }
 
 #[test]
@@ -19435,6 +19969,15 @@ fn search_bar_enter_with_no_match_does_not_create_item() {
     assert!(
         app.status.contains("No items match"),
         "status should explain that no item was opened"
+    );
+
+    let backend = TestBackend::new(160, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("g/:search all sections"),
+        "section search zero-match state should suggest global search: {rendered}"
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -20787,6 +21330,87 @@ fn moving_from_unmatched_to_section_preserves_view_remove_side_effect_categories
     assert!(
         assignments.contains_key(&ready.id),
         "moving into the section should assign its structural category"
+    );
+}
+
+#[test]
+fn moving_between_sections_reports_on_remove_unassigned_categories() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let ready = Category::new("Ready".to_string());
+    let in_progress = Category::new("In Progress".to_string());
+    let needs_review = Category::new("Needs Review".to_string());
+    store.create_category(&ready).expect("create ready");
+    store
+        .create_category(&in_progress)
+        .expect("create in progress");
+    store
+        .create_category(&needs_review)
+        .expect("create needs review");
+
+    let item = Item::new("Task".to_string());
+    store.create_item(&item).expect("create item");
+    agenda
+        .assign_item_manual(item.id, ready.id, Some("manual:test".to_string()))
+        .expect("assign ready");
+    agenda
+        .assign_item_manual(item.id, needs_review.id, Some("manual:test".to_string()))
+        .expect("assign needs review");
+
+    let mut ready_section = Section {
+        title: "Ready".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::from([needs_review.id]),
+        show_children: false,
+        board_display_mode_override: None,
+    };
+    ready_section
+        .criteria
+        .set_criterion(CriterionMode::And, ready.id);
+
+    let mut in_progress_section = Section {
+        title: "In Progress".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    };
+    in_progress_section
+        .criteria
+        .set_criterion(CriterionMode::And, in_progress.id);
+
+    let mut view = View::new("Board".to_string());
+    view.sections.push(ready_section);
+    view.sections.push(in_progress_section);
+    store.create_view(&view).expect("create view");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Board");
+    app.refresh(&store).expect("refresh board");
+
+    app.slot_index = 0;
+    app.item_index = 0;
+    app.move_selected_item_between_slots(1, &agenda)
+        .expect("move to in progress");
+
+    assert!(
+        app.status.contains("-Needs Review"),
+        "status should report on_remove_unassign category removal: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("-Ready") && app.status.contains("+In Progress"),
+        "status should include structural section category changes: {}",
+        app.status
     );
 }
 
