@@ -4694,7 +4694,6 @@ impl App {
                     1 => Some("Interval"),
                     2 => Some("Anchor"),
                     3 => Some("Date source"),
-                    4 => Some("Empty sections"),
                     _ => None,
                 },
                 ViewEditRegion::Unmatched => match state.unmatched_field_index {
@@ -4702,10 +4701,11 @@ impl App {
                     1 => Some("Date range exclude"),
                     2 => Some("Display mode"),
                     3 => Some("Section flow"),
-                    4 => Some("Show unmatched"),
-                    5 => Some("Hide dependent"),
-                    6 => Some("Unmatched label"),
-                    7 => Some("Aliases"),
+                    4 => Some("Empty sections"),
+                    5 => Some("Show unmatched"),
+                    6 => Some("Hide dependent"),
+                    7 => Some("Unmatched label"),
+                    8 => Some("Aliases"),
                     _ => None,
                 },
                 ViewEditRegion::Sections => None,
@@ -8307,6 +8307,7 @@ impl App {
                     SectionFlow::Vertical => "vertical (stacked lanes)",
                     SectionFlow::Horizontal => "horizontal (kanban lanes)",
                 };
+                let empty_sections_label = state.draft.empty_sections.label();
 
                 let separator_style = Style::default().fg(dim);
                 let pad = 26; // column alignment width
@@ -8437,7 +8438,6 @@ impl App {
                         ("Interval", config.interval.label().to_string()),
                         ("Anchor", config.anchor.label().to_string()),
                         ("Date source", config.date_source.label().to_string()),
-                        ("Empty sections", config.empty_sections.label().to_string()),
                     ];
                     for (fi, (label, value)) in datebook_fields.iter().enumerate() {
                         let is_selected = details_focused
@@ -8556,6 +8556,20 @@ impl App {
                         &mut selected_line,
                     )),
                 );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(4)),
+                        "Empty sections",
+                        empty_sections_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
 
                 let configured_aliases: Vec<_> = state
                     .draft
@@ -8580,13 +8594,13 @@ impl App {
                 items.push(
                     ListItem::new(Line::from(format!(
                         "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(7)),
+                        row_marker(unmatched_field_selected(8)),
                         "Aliases",
                         alias_summary,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        7,
+                        8,
                         &items,
                         &mut selected_line,
                     )),
@@ -8614,13 +8628,13 @@ impl App {
                 items.push(
                     ListItem::new(Line::from(format!(
                         "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(4)),
+                        row_marker(unmatched_field_selected(5)),
                         "Show unmatched",
                         unmatched_value,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        4,
+                        5,
                         &items,
                         &mut selected_line,
                     )),
@@ -8634,13 +8648,13 @@ impl App {
                 items.push(
                     ListItem::new(Line::from(format!(
                         "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(5)),
+                        row_marker(unmatched_field_selected(6)),
                         "Hide dependent",
                         hide_dependent_value,
                         width = pad
                     )))
                     .style(style_for_unmatched_field(
-                        5,
+                        6,
                         &items,
                         &mut selected_line,
                     )),
@@ -8651,11 +8665,11 @@ impl App {
                     Some(ViewEditInlineInput::UnmatchedLabel)
                 );
                 let unmatched_label_style =
-                    style_for_unmatched_field(6, &items, &mut selected_line);
+                    style_for_unmatched_field(7, &items, &mut selected_line);
                 let unmatched_label_line = if editing_unmatched_label {
                     let label = format!(
                         "{}{:<width$}◀ ",
-                        row_marker(unmatched_field_selected(6) || editing_unmatched_label),
+                        row_marker(unmatched_field_selected(7) || editing_unmatched_label),
                         "Unmatched label",
                         width = pad
                     );
@@ -8669,7 +8683,7 @@ impl App {
                 } else {
                     Line::from(format!(
                         "{}{:<width$}\"{}\"",
-                        row_marker(unmatched_field_selected(6)),
+                        row_marker(unmatched_field_selected(7)),
                         "Unmatched label",
                         state.draft.unmatched_label,
                         width = pad

@@ -1768,11 +1768,9 @@ impl App {
     }
 
     /// Resolve the effective empty-sections display mode for the current view.
-    /// Returns `Show` for non-datebook views.
     pub(crate) fn effective_empty_sections(&self) -> EmptySections {
         self.current_view()
-            .and_then(|v| v.datebook_config.as_ref())
-            .map(|dc| dc.empty_sections)
+            .map(|view| view.empty_sections)
             .unwrap_or(EmptySections::Show)
     }
 

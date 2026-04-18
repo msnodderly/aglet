@@ -766,6 +766,8 @@ pub struct View {
     #[serde(default)]
     pub section_flow: SectionFlow,
     #[serde(default)]
+    pub empty_sections: EmptySections,
+    #[serde(default)]
     pub hide_dependent_items: bool,
     #[serde(default)]
     pub datebook_config: Option<DatebookConfig>,
@@ -1312,6 +1314,7 @@ impl View {
             item_column_label: None,
             board_display_mode: BoardDisplayMode::SingleLine,
             section_flow: SectionFlow::Vertical,
+            empty_sections: EmptySections::Show,
             hide_dependent_items: false,
             datebook_config: None,
         }
@@ -1321,7 +1324,8 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::{
-        Column, ItemLinkKind, RecurrenceFrequency, RecurrenceRule, SectionFlow, SummaryFn, View,
+        Column, EmptySections, ItemLinkKind, RecurrenceFrequency, RecurrenceRule, SectionFlow,
+        SummaryFn, View,
     };
     use serde_json::Value;
     use uuid::Uuid;
@@ -1622,6 +1626,9 @@ mod tests {
         json.as_object_mut()
             .expect("view object")
             .remove("section_flow");
+        json.as_object_mut()
+            .expect("view object")
+            .remove("empty_sections");
 
         let parsed: View = serde_json::from_value(json).expect("deserialize view");
         assert!(
@@ -1636,6 +1643,11 @@ mod tests {
             parsed.section_flow,
             SectionFlow::Vertical,
             "missing section_flow should default to vertical"
+        );
+        assert_eq!(
+            parsed.empty_sections,
+            EmptySections::Show,
+            "missing empty_sections should default to show"
         );
     }
 

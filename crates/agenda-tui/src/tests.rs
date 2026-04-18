@@ -24,8 +24,8 @@ use agenda_core::matcher::SubstringClassifier;
 use agenda_core::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
     CategoryId, CategoryValueKind, Column, ColumnKind, Condition, ConditionMatchMode,
-    CriterionMode, Item, ItemId, NumericFormat, Query, Section, SectionFlow, SummaryFn,
-    TextMatchSource, View, WhenBucket,
+    CriterionMode, EmptySections, Item, ItemId, NumericFormat, Query, Section, SectionFlow,
+    SummaryFn, TextMatchSource, View, WhenBucket,
 };
 use agenda_core::store::Store;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -5140,8 +5140,18 @@ fn view_create_wizard_s_save_persists_view() {
     // Save the new view
     app.handle_view_edit_key(KeyCode::Char('S'), &agenda)
         .expect("save new view");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert_eq!(app.mode, Mode::Normal);
     assert!(app.view_edit_state.is_none());
+    assert_eq!(
+        app.current_view().map(|view| view.name.as_str()),
+        Some("Roadmap")
+    );
+    assert!(
+        app.status
+            .contains("Created and switched to view \"Roadmap\""),
+        "new-view save should switch and report it, got: {}",
+        app.status
+    );
 
     let created = store
         .list_views()
@@ -16842,28 +16852,56 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("display mode -> unmatched visible");
+        .expect("display mode -> section flow");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         3
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("unmatched visible -> hide dependent");
+        .expect("section flow -> empty sections");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         4
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("empty sections -> unmatched visible");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        5
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("unmatched visible -> hide dependent");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        6
     );
 
     app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
         .expect("hide dependent -> unmatched visible");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        5
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("unmatched visible -> empty sections");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        4
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("empty sections -> section flow");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         3
     );
 
     app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("unmatched visible -> display mode");
+        .expect("section flow -> display mode");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         2
@@ -16922,10 +16960,12 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to empty sections row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to unmatched visible row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        4
+        5
     );
 
     let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
@@ -16942,7 +16982,7 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
         .expect("move past hide dependent to unmatched label row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        6
+        7
     );
 
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -16951,6 +16991,53 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
         app.view_edit_state.as_ref().unwrap().inline_input,
         Some(super::ViewEditInlineInput::UnmatchedLabel)
     ));
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_empty_sections_row_enter_cycles_view_setting() {
+    let (store, db_path) = make_test_store_with_view("view-edit-empty-sections-toggle");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to when include row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to when exclude row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to display mode row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to section flow row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to empty sections row");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        4
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.empty_sections,
+        EmptySections::Show
+    );
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle empty sections to collapse");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.empty_sections,
+        EmptySections::Collapse
+    );
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle empty sections to hide");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.empty_sections,
+        EmptySections::Hide
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -17015,13 +17102,13 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     app.open_view_edit(view);
 
     // Move focus to Aliases row in view details.
-    for _ in 0..8 {
+    for _ in 0..9 {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("move details selection");
     }
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        7
+        8
     );
 
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -19234,6 +19321,102 @@ fn horizontal_multiline_cards_wrap_titles_and_use_label_metadata() {
     );
 
     let _ = std::fs::remove_file(&db_path);
+}
+
+fn render_non_datebook_empty_sections_mode(mode: EmptySections) -> String {
+    let mut view = View::new("Board".to_string());
+    view.empty_sections = mode;
+    view.sections.push(Section {
+        title: "Filled".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    view.sections.push(Section {
+        title: "Empty".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: HashSet::new(),
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+
+    let app_item = Item::new("visible item".to_string());
+    let mut app = App {
+        views: vec![view],
+        slots: vec![
+            super::Slot {
+                title: "Filled".to_string(),
+                items: vec![app_item],
+                context: super::SlotContext::Section { section_index: 0 },
+            },
+            super::Slot {
+                title: "Empty".to_string(),
+                items: Vec::new(),
+                context: super::SlotContext::Section { section_index: 1 },
+            },
+        ],
+        view_index: 0,
+        ..App::default()
+    };
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render board");
+    terminal_buffer_lines(&terminal).join("\n")
+}
+
+#[test]
+fn non_datebook_view_empty_sections_show_keeps_empty_section_body() {
+    let rendered = render_non_datebook_empty_sections_mode(EmptySections::Show);
+
+    assert!(
+        rendered.contains("Empty"),
+        "empty section title should render in show mode: {rendered}"
+    );
+    assert!(
+        rendered.contains("No items in this section."),
+        "show mode should keep the empty section body: {rendered}"
+    );
+}
+
+#[test]
+fn non_datebook_view_empty_sections_collapse_renders_one_line_header() {
+    let rendered = render_non_datebook_empty_sections_mode(EmptySections::Collapse);
+
+    assert!(
+        rendered.contains("Empty (0)"),
+        "collapse mode should render the empty section as a compact header: {rendered}"
+    );
+    assert!(
+        !rendered.contains("No items in this section."),
+        "collapse mode should not render the full empty body: {rendered}"
+    );
+}
+
+#[test]
+fn non_datebook_view_empty_sections_hide_elides_empty_section() {
+    let rendered = render_non_datebook_empty_sections_mode(EmptySections::Hide);
+
+    assert!(
+        rendered.contains("visible item"),
+        "non-empty section should remain visible: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Empty"),
+        "hide mode should elide the empty section: {rendered}"
+    );
+    assert!(
+        !rendered.contains("No items in this section."),
+        "hide mode should not render the empty section body: {rendered}"
+    );
 }
 
 #[test]

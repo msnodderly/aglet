@@ -15,13 +15,13 @@ use crate::classification::{
 use crate::error::{AgendaError, Result};
 use crate::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
-    CategoryId, CategoryValueKind, Condition, ConditionMatchMode, DeletionLogEntry, Item, ItemId,
-    ItemLink, ItemLinkKind, NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View,
-    RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
+    CategoryId, CategoryValueKind, Condition, ConditionMatchMode, DatebookConfig, DeletionLogEntry,
+    EmptySections, Item, ItemId, ItemLink, ItemLinkKind, NumericFormat, Query, RecurrenceRule,
+    Section, SectionFlow, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 18;
+const SCHEMA_VERSION: i32 = 19;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS views (
     item_column_label           TEXT,
     board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
     section_flow                TEXT NOT NULL DEFAULT 'Vertical',
+    empty_sections              TEXT NOT NULL DEFAULT 'Show',
     hide_dependent_items        INTEGER NOT NULL DEFAULT 0,
     datebook_config_json        TEXT
 );
@@ -1038,8 +1039,8 @@ impl Store {
                     id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    section_flow, hide_dependent_items, datebook_config_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    section_flow, empty_sections, hide_dependent_items, datebook_config_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     view.id.to_string(),
                     view.name,
@@ -1055,6 +1056,8 @@ impl Store {
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
                     serde_json::to_string(&view.section_flow)
                         .unwrap_or_else(|_| "\"Vertical\"".to_string()),
+                    serde_json::to_string(&view.empty_sections)
+                        .unwrap_or_else(|_| "\"Show\"".to_string()),
                     view.hide_dependent_items as i32,
                     datebook_config_json,
                 ],
@@ -1069,7 +1072,7 @@ impl Store {
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    section_flow, hide_dependent_items, datebook_config_json
+                    section_flow, empty_sections, hide_dependent_items, datebook_config_json
              FROM views WHERE id = ?1",
         )?;
         stmt.query_row(params![id.to_string()], Self::row_to_view)
@@ -1136,9 +1139,10 @@ impl Store {
                      item_column_label = ?9,
                      board_display_mode = ?10,
                      section_flow = ?11,
-                     hide_dependent_items = ?12,
-                     datebook_config_json = ?13
-                 WHERE id = ?14",
+                     empty_sections = ?12,
+                     hide_dependent_items = ?13,
+                     datebook_config_json = ?14
+                 WHERE id = ?15",
                 params![
                     view.name,
                     criteria_json,
@@ -1153,6 +1157,8 @@ impl Store {
                         .unwrap_or_else(|_| "\"SingleLine\"".to_string()),
                     serde_json::to_string(&view.section_flow)
                         .unwrap_or_else(|_| "\"Vertical\"".to_string()),
+                    serde_json::to_string(&view.empty_sections)
+                        .unwrap_or_else(|_| "\"Show\"".to_string()),
                     view.hide_dependent_items as i32,
                     datebook_config_json,
                     view.id.to_string(),
@@ -1173,7 +1179,7 @@ impl Store {
             "SELECT id, name, criteria_json, sections_json, columns_json,
                     show_unmatched, unmatched_label, remove_from_view_unassign_json,
                     category_aliases_json, item_column_label, board_display_mode,
-                    section_flow, hide_dependent_items, datebook_config_json
+                    section_flow, empty_sections, hide_dependent_items, datebook_config_json
              FROM views
              ORDER BY name COLLATE NOCASE ASC",
         )?;
@@ -1377,8 +1383,9 @@ impl Store {
         let item_column_label: Option<String> = row.get(9)?;
         let board_display_mode_json: Option<String> = row.get(10)?;
         let section_flow_json: Option<String> = row.get(11)?;
-        let hide_dependent_items: Option<i32> = row.get(12)?;
-        let datebook_config_json: Option<String> = row.get(13)?;
+        let empty_sections_json: Option<String> = row.get(12)?;
+        let hide_dependent_items: Option<i32> = row.get(13)?;
+        let datebook_config_json: Option<String> = row.get(14)?;
 
         // Corrupt or legacy view row: fall back to empty defaults so the view
         // still loads rather than failing the entire hierarchy read.
@@ -1395,6 +1402,9 @@ impl Store {
         let section_flow = section_flow_json
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or(SectionFlow::Vertical);
+        let empty_sections = empty_sections_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or(EmptySections::Show);
         let datebook_config =
             datebook_config_json.and_then(|json| serde_json::from_str(&json).ok());
 
@@ -1410,6 +1420,7 @@ impl Store {
             item_column_label,
             board_display_mode,
             section_flow,
+            empty_sections,
             hide_dependent_items: hide_dependent_items.unwrap_or(0) != 0,
             datebook_config,
         })
@@ -2177,6 +2188,20 @@ impl Store {
                 "ALTER TABLE views ADD COLUMN section_flow TEXT NOT NULL DEFAULT 'Vertical';",
             )?;
         }
+        let added_empty_sections_column = if !self.column_exists("views", "empty_sections")? {
+            self.conn.execute_batch(
+                "ALTER TABLE views ADD COLUMN empty_sections TEXT NOT NULL DEFAULT 'Show';",
+            )?;
+            true
+        } else {
+            false
+        };
+        if from_version < 19
+            && added_empty_sections_column
+            && self.column_exists("views", "datebook_config_json")?
+        {
+            self.migrate_datebook_empty_sections_to_view()?;
+        }
         if !self.column_exists("views", "category_aliases_json")? {
             self.conn.execute_batch(
                 "ALTER TABLE views ADD COLUMN category_aliases_json TEXT NOT NULL DEFAULT '{}';",
@@ -2365,6 +2390,34 @@ impl Store {
         Ok(())
     }
 
+    fn migrate_datebook_empty_sections_to_view(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, datebook_config_json FROM views WHERE datebook_config_json IS NOT NULL",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let config_json: String = row.get(1)?;
+                Ok((id, config_json))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        drop(stmt);
+
+        for (id, config_json) in rows {
+            let Ok(config) = serde_json::from_str::<DatebookConfig>(&config_json) else {
+                continue;
+            };
+            let empty_sections_json = serde_json::to_string(&config.empty_sections)
+                .unwrap_or_else(|_| "\"Show\"".to_string());
+            self.conn.execute(
+                "UPDATE views SET empty_sections = ?1 WHERE id = ?2",
+                params![empty_sections_json, id],
+            )?;
+        }
+
+        Ok(())
+    }
+
     fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
         let pragma = format!("PRAGMA table_info({table})");
         let mut stmt = self.conn.prepare(&pragma)?;
@@ -2417,9 +2470,10 @@ mod tests {
     };
     use crate::model::{
         Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
-        CategoryValueKind, Column, ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind,
-        NumericFormat, Query, Section, SectionFlow, TextMatchSource, View, RESERVED_CATEGORY_NAMES,
-        RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
+        CategoryValueKind, Column, ColumnKind, CriterionMode, DateSource, DatebookAnchor,
+        DatebookConfig, DatebookInterval, DatebookPeriod, EmptySections, Item, ItemLink,
+        ItemLinkKind, NumericFormat, Query, Section, SectionFlow, TextMatchSource, View,
+        RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
     };
     use jiff::Timestamp;
     use rusqlite::params;
@@ -2763,6 +2817,64 @@ mod tests {
             section_flow_column_exists,
             "migration should add section_flow column"
         );
+    }
+
+    #[test]
+    fn test_upgrade_from_v18_adds_empty_sections_and_migrates_datebook_value() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE views (
+                id                          TEXT PRIMARY KEY,
+                name                        TEXT NOT NULL UNIQUE,
+                criteria_json               TEXT NOT NULL DEFAULT '{}',
+                sections_json               TEXT NOT NULL DEFAULT '[]',
+                columns_json                TEXT NOT NULL DEFAULT '[]',
+                show_unmatched              INTEGER NOT NULL DEFAULT 1,
+                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
+                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
+                item_column_label           TEXT,
+                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
+                section_flow                TEXT NOT NULL DEFAULT 'Vertical',
+                hide_dependent_items        INTEGER NOT NULL DEFAULT 0,
+                datebook_config_json        TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        let legacy_id = Uuid::new_v4();
+        let config = DatebookConfig {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::Today,
+            date_source: DateSource::When,
+            empty_sections: EmptySections::Collapse,
+            browse_offset: 0,
+        };
+        let config_json = serde_json::to_string(&config).expect("serialize config");
+        conn.execute(
+            "INSERT INTO views (
+                id, name, criteria_json, sections_json, columns_json,
+                show_unmatched, unmatched_label, remove_from_view_unassign_json,
+                category_aliases_json, item_column_label, board_display_mode,
+                section_flow, hide_dependent_items, datebook_config_json
+            ) VALUES (?1, 'Legacy Datebook', '{}', '[]', '[]', 1, 'Unassigned',
+                      '[]', '{}', NULL, '\"SingleLine\"', '\"Vertical\"', 0, ?2)",
+            params![legacy_id.to_string(), config_json],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 18).unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        assert!(
+            store.column_exists("views", "empty_sections").unwrap(),
+            "migration should add empty_sections column"
+        );
+        let legacy = store.get_view(legacy_id).expect("legacy view loads");
+        assert_eq!(legacy.empty_sections, EmptySections::Collapse);
     }
 
     #[test]
@@ -4049,6 +4161,7 @@ mod tests {
         view.remove_from_view_unassign.insert(when_category);
         view.category_aliases = BTreeMap::from([(when_category, "Due".to_string())]);
         view.hide_dependent_items = true;
+        view.empty_sections = EmptySections::Collapse;
 
         store.create_view(&view).unwrap();
 
@@ -4070,6 +4183,7 @@ mod tests {
         );
         assert_eq!(loaded.category_aliases, view.category_aliases);
         assert!(loaded.hide_dependent_items);
+        assert_eq!(loaded.empty_sections, EmptySections::Collapse);
     }
 
     #[test]
@@ -4227,6 +4341,7 @@ mod tests {
         view.remove_from_view_unassign.insert(category_id);
         view.category_aliases = BTreeMap::from([(category_id, "Today".to_string())]);
         view.hide_dependent_items = true;
+        view.empty_sections = EmptySections::Hide;
 
         store.update_view(&view).unwrap();
 
@@ -4248,6 +4363,7 @@ mod tests {
             BTreeMap::from([(category_id, "Today".to_string())])
         );
         assert!(loaded.hide_dependent_items);
+        assert_eq!(loaded.empty_sections, EmptySections::Hide);
     }
 
     #[test]
