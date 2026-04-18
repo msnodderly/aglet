@@ -6918,7 +6918,7 @@ fn normal_mode_footer_hints_hide_numeric_shortcuts_for_non_numeric_column_focus(
 }
 
 #[test]
-fn edit_item_panel_footer_shows_esc_save_and_close() {
+fn edit_item_panel_footer_shows_save_cancel_hints() {
     let mut panel = input_panel::InputPanel::new_edit_item(
         agenda_core::model::ItemId::new_v4(),
         "Title".to_string(),
@@ -6942,8 +6942,8 @@ fn edit_item_panel_footer_shows_esc_save_and_close() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("Esc:save and close"),
-        "edit-item footer/help should indicate Esc auto-saves: {rendered}"
+        rendered.contains("S:save") && rendered.contains("Esc:cancel"),
+        "edit-item note footer should show S:save and Esc:cancel: {rendered}"
     );
 }
 
@@ -20809,5 +20809,184 @@ fn header_shows_hide_dependent_indicator_when_enabled() {
     assert!(
         rendered.contains("dep:hidden"),
         "header should indicate hide-dependent mode: {rendered}"
+    );
+}
+
+#[test]
+fn view_edit_section_details_gutter_moves_with_focus() {
+    let (store, db_path) = make_test_store_with_view("section-details-gutter");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    view.sections.push(Section {
+        title: "Alpha".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Tab, &agenda)
+        .expect("to sections pane");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("select section row");
+    app.handle_view_edit_key(KeyCode::Tab, &agenda)
+        .expect("to details pane");
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Title"),
+        "details pane should render `> Title` gutter on field 0: {rendered}"
+    );
+    assert!(
+        !rendered.contains("> Filter"),
+        "field 1 gutter should be inactive before moving focus: {rendered}"
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("move to Filter field");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Filter"),
+        "details pane should render `> Filter` gutter after focus move: {rendered}"
+    );
+    assert!(
+        !rendered.contains("> Title"),
+        "field 0 gutter should be inactive after moving focus: {rendered}"
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("move to Columns field");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Columns"),
+        "details pane should render `> Columns` gutter after second focus move: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_footer_status_shows_active_field() {
+    let (store, db_path) = make_test_store_with_view("footer-field-context");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    view.sections.push(Section {
+        title: "Alpha".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Tab, &agenda)
+        .expect("to sections");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("pick section row");
+    app.handle_view_edit_key(KeyCode::Tab, &agenda)
+        .expect("to details");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to Filter field");
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("field: Filter"),
+        "footer should show `field: Filter` when details focus is on criteria row: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn category_manager_tree_focus_hides_flag_gutter() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+
+    // Tree focus (default) — details pane must not show focused flag gutter
+    let backend = TestBackend::new(160, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw tree");
+    let rendered_tree = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !rendered_tree.contains("> [ ] Exclusive"),
+        "tree-active should hide flag `> ` prefix on Exclusive: {rendered_tree}"
+    );
+    assert!(
+        !rendered_tree.contains("> [x] Exclusive"),
+        "tree-active should hide flag `> ` prefix on Exclusive: {rendered_tree}"
+    );
+    assert!(
+        !rendered_tree.contains("Only one child"),
+        "tree-active should not show Exclusive contextual help: {rendered_tree}"
+    );
+
+    // Move focus to Details pane — gutter should appear
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+    terminal.draw(|frame| app.draw(frame)).expect("draw details");
+    let rendered_details = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered_details.contains("> [ ] Exclusive")
+            || rendered_details.contains("> [x] Exclusive"),
+        "details-active should show `> ` gutter on the Exclusive flag row: {rendered_details}"
+    );
+}
+
+#[test]
+fn category_create_panel_shows_enter_save_esc_cancel_hint() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.handle_category_manager_key(KeyCode::Char('n'), &agenda)
+        .expect("start create-category flow");
+
+    let backend = TestBackend::new(160, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Enter:save") && rendered.contains("Esc:cancel"),
+        "CategoryCreate panel should advertise `Enter:save` and `Esc:cancel`: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Enter/Esc:save"),
+        "stale `Enter/Esc:save` hint should be gone: {rendered}"
     );
 }

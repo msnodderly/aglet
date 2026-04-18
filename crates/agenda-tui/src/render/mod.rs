@@ -4245,12 +4245,58 @@ impl App {
                     }
                     parts.join(" | ")
                 }),
+            Mode::ViewEdit => {
+                let field = self.view_edit_active_field_label();
+                match (field, self.status.as_str()) {
+                    (Some(f), "") => format!("field: {f}"),
+                    (Some(f), s) => format!("field: {f} | {s}"),
+                    (None, _) => self.status.clone(),
+                }
+            }
             Mode::HelpPanel
             | Mode::ViewPicker
-            | Mode::ViewEdit
             | Mode::CategoryManager
             | Mode::CategoryDirectEdit
             | Mode::CategoryColumnPicker => self.status.clone(),
+        }
+    }
+
+    fn view_edit_active_field_label(&self) -> Option<&'static str> {
+        let state = self.view_edit_state.as_ref()?;
+        if state.pane_focus != ViewEditPaneFocus::Details {
+            return None;
+        }
+        match state.region {
+            ViewEditRegion::Sections => match state.section_details_field_index {
+                0 => Some("Title"),
+                1 => Some("Filter"),
+                2 => Some("Columns"),
+                3 => Some("Display mode"),
+                4 => Some("Auto-assign on add"),
+                5 => Some("Auto-unassign on remove"),
+                6 => Some("Section layout"),
+                _ => None,
+            },
+            ViewEditRegion::Criteria => Some("Filter criteria"),
+            ViewEditRegion::Datebook => match state.datebook_field_index {
+                0 => Some("Period"),
+                1 => Some("Interval"),
+                2 => Some("Anchor"),
+                3 => Some("Date source"),
+                4 => Some("Empty sections"),
+                _ => None,
+            },
+            ViewEditRegion::Unmatched => match state.unmatched_field_index {
+                0 => Some("Date range (include)"),
+                1 => Some("Date range (exclude)"),
+                2 => Some("Display mode"),
+                3 => Some("Section flow"),
+                4 => Some("Show unmatched"),
+                5 => Some("Hide dependent"),
+                6 => Some("Unmatched label"),
+                7 => Some("Aliases"),
+                _ => None,
+            },
         }
     }
 
@@ -5410,15 +5456,15 @@ impl App {
                 InputPanelKind::WhenDate => {
                     "Enter natural language or ISO datetime  Enter:save  Esc:close"
                 }
-                InputPanelKind::CategoryCreate => "Type name  Enter/Esc:save  Tab:next",
-                InputPanelKind::EditItem => "Type title  Enter/Esc:save and close  Tab:when",
-                InputPanelKind::AddItem => "Type title  Enter/Esc:save  Tab:when",
+                InputPanelKind::CategoryCreate => "Type name  Enter:save  Esc:cancel  Tab:next",
+                InputPanelKind::EditItem => "Type title  Enter:save  Esc:cancel  Tab:when",
+                InputPanelKind::AddItem => "Type title  Enter:save  Esc:cancel  Tab:when",
             },
             InputPanelFocus::Note => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "Type note  Enter:new line  Tab:actions  Esc:save and close"
+                    "Type note  Enter:new line  Tab:actions  S:save  Esc:cancel"
                 } else {
-                    "Type note  Enter:new line  Tab:categories  Esc:save and close"
+                    "Type note  Enter:new line  Tab:categories  S:save  Esc:cancel"
                 }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
@@ -5427,17 +5473,17 @@ impl App {
             InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
             InputPanelFocus::Actions => {
                 if panel.pending_suggestions.is_empty() {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S:save  Esc:cancel"
                 } else {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  Esc:save and close"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S:save  Esc:cancel"
                 }
             }
             InputPanelFocus::Suggestions => {
-                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  Esc:save and close"
+                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S:save  Esc:cancel"
             }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:close",
             InputPanelFocus::When => {
-                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:save"
+                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:cancel"
             }
         };
         let mut help_style = Style::default();
@@ -7260,8 +7306,10 @@ impl App {
                     details_chunks[0],
                 );
 
+                let details_active = manager_focus == CategoryManagerFocus::Details;
                 let focus_prefix = |active: bool| if active { "> " } else { "  " };
-                let flag_line = |active: bool, label: &str, on: bool| {
+                let flag_line = |row_active: bool, label: &str, on: bool| {
+                    let active = row_active && details_active;
                     let style = if is_reserved_category {
                         Style::default()
                             .fg(MUTED_TEXT_COLOR)
@@ -7284,13 +7332,14 @@ impl App {
                 let is_numeric = row.value_kind == CategoryValueKind::Numeric;
                 let flag_lines = if is_numeric {
                     let inline_input = self.category_manager_details_inline_input();
-                    let integer_focused = details_focus == CategoryManagerDetailsFocus::Integer;
-                    let decimal_focused =
-                        details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
-                    let currency_focused =
-                        details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
-                    let thousands_focused =
-                        details_focus == CategoryManagerDetailsFocus::ThousandsSeparator;
+                    let integer_focused =
+                        details_active && details_focus == CategoryManagerDetailsFocus::Integer;
+                    let decimal_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let currency_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
+                    let thousands_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::ThousandsSeparator;
                     let decimal_value = inline_input
                         .filter(|input| {
                             input.field == CategoryManagerDetailsInlineField::DecimalPlaces
@@ -7452,7 +7501,8 @@ impl App {
                 } else {
                     "Flags"
                 };
-                let flags_border_focused = !is_reserved_category
+                let flags_border_focused = details_active
+                    && !is_reserved_category
                     && !matches!(
                         details_focus,
                         CategoryManagerDetailsFocus::Note
@@ -7475,7 +7525,8 @@ impl App {
                 );
 
                 if !is_numeric_category {
-                    let also_match_block_focus = !is_reserved_category
+                    let also_match_block_focus = details_active
+                        && !is_reserved_category
                         && details_focus == CategoryManagerDetailsFocus::AlsoMatch;
                     let also_match_title = if is_reserved_category {
                         "Also Match (read-only)"
@@ -7544,7 +7595,8 @@ impl App {
 
                 // Conditions subpane (non-numeric only)
                 if !is_numeric_category {
-                    let conditions_focused = !is_reserved_category
+                    let conditions_focused = details_active
+                        && !is_reserved_category
                         && details_focus == CategoryManagerDetailsFocus::Conditions;
                     let conditions_count = self
                         .categories
@@ -7660,7 +7712,8 @@ impl App {
                 }
 
                 if !is_numeric_category {
-                    let actions_focused = !is_reserved_category
+                    let actions_focused = details_active
+                        && !is_reserved_category
                         && details_focus == CategoryManagerDetailsFocus::Actions;
                     let actions_summary = self
                         .categories
@@ -7711,8 +7764,9 @@ impl App {
                     );
                 }
 
-                let note_block_focus =
-                    !is_reserved_category && details_focus == CategoryManagerDetailsFocus::Note;
+                let note_block_focus = details_active
+                    && !is_reserved_category
+                    && details_focus == CategoryManagerDetailsFocus::Note;
                 let note_title = if is_reserved_category {
                     "Note (read-only)"
                 } else if note_editing {
@@ -7798,6 +7852,8 @@ impl App {
 
                 let details_hint = if is_reserved_category {
                     "Reserved categories are built-in and read-only here."
+                } else if !details_active {
+                    "Tab: focus Details"
                 } else if note_editing {
                     "Type to edit  Esc:stop editing  Tab:leave (warn if unsaved)"
                 } else if also_match_editing {
@@ -7805,16 +7861,16 @@ impl App {
                 } else {
                     match details_focus {
                         CategoryManagerDetailsFocus::Exclusive => {
-                            "Only one child can be assigned to an item at a time"
+                            "If enabled, only one child can be assigned to an item at a time"
                         }
                         CategoryManagerDetailsFocus::AutoMatch => {
-                            "Enable fallback text matching for this category"
+                            "If enabled, falls back to text matching for this category"
                         }
                         CategoryManagerDetailsFocus::SemanticMatch => {
-                            "Enable LLM-backed category suggestions for this category"
+                            "If enabled, requests LLM-backed suggestions for this category"
                         }
                         CategoryManagerDetailsFocus::MatchCategoryName => {
-                            "Include the literal category name alongside also-match terms"
+                            "If enabled, includes the category name alongside also-match terms"
                         }
                         CategoryManagerDetailsFocus::Actionable => {
                             "Items need an actionable category to be marked done"
@@ -8210,15 +8266,26 @@ impl App {
                     .fg(Color::Black)
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
+                // Helper: is this unmatched-region field focused?
+                let is_selected_unmatched_field = |field_index: usize| {
+                    details_focused
+                        && state.region == ViewEditRegion::Unmatched
+                        && state.unmatched_field_index == field_index
+                };
+                // Helper: leading gutter for unmatched-region rows
+                let unmatched_gutter = |field_index: usize| {
+                    if is_selected_unmatched_field(field_index) {
+                        "> "
+                    } else {
+                        "  "
+                    }
+                };
                 // Helper: style + track selected_line for unmatched-region fields
                 let style_for_unmatched_field =
                     |field_index: usize,
                      items: &[ListItem<'_>],
                      selected_line_ref: &mut Option<usize>| {
-                        if details_focused
-                            && state.region == ViewEditRegion::Unmatched
-                            && state.unmatched_field_index == field_index
-                        {
+                        if is_selected_unmatched_field(field_index) {
                             *selected_line_ref = Some(items.len());
                             sel_style
                         } else {
@@ -8237,8 +8304,13 @@ impl App {
                 } else {
                     Style::default()
                 };
+                let name_gutter = if editing_view_name || name_row_focused {
+                    "> "
+                } else {
+                    "  "
+                };
                 let name_line = if editing_view_name {
-                    let label = format!("  {:<width$}◀ ", "Name", width = pad);
+                    let label = format!("{}{:<width$}◀ ", name_gutter, "Name", width = pad);
                     Line::from(inline_edit_spans(
                         &label,
                         state.inline_buf.text(),
@@ -8248,7 +8320,8 @@ impl App {
                     ))
                 } else {
                     Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        name_gutter,
                         "Name",
                         state.draft.name,
                         width = pad
@@ -8268,15 +8341,21 @@ impl App {
                 let criteria_row_start = items.len();
                 let criteria_lines = summarize_query(&state.draft.criteria);
                 if criteria_lines.is_empty() {
-                    let style = if details_focused && state.region == ViewEditRegion::Criteria {
+                    let is_selected =
+                        details_focused && state.region == ViewEditRegion::Criteria;
+                    let style = if is_selected {
                         selected_line = Some(criteria_row_start);
                         sel_style
                     } else {
                         Style::default()
                     };
+                    let gutter = if is_selected { "  > " } else { "    " };
                     items.push(
-                        ListItem::new(Line::from("    (no criteria — matches all items)"))
-                            .style(style),
+                        ListItem::new(Line::from(format!(
+                            "{}(no criteria — matches all items)",
+                            gutter
+                        )))
+                        .style(style),
                     );
                 } else {
                     for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
@@ -8291,8 +8370,9 @@ impl App {
                         } else {
                             criterion_mode_color(*mode)
                         };
+                        let gutter = if is_selected { "  > " } else { "    " };
                         let line = Line::from(vec![
-                            Span::raw("    "),
+                            Span::raw(gutter),
                             Span::styled(criterion.clone(), Style::default().fg(text_color)),
                         ]);
                         let style = if is_selected {
@@ -8331,9 +8411,11 @@ impl App {
                         } else {
                             Style::default()
                         };
+                        let gutter = if is_selected { "  > " } else { "    " };
                         items.push(
                             ListItem::new(Line::from(format!(
-                                "    {:<width$}{}",
+                                "{}{:<width$}{}",
+                                gutter,
                                 label,
                                 value,
                                 width = pad - 2
@@ -8373,7 +8455,8 @@ impl App {
 
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(0),
                         "Date range (include)",
                         when_include,
                         width = pad
@@ -8386,7 +8469,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(1),
                         "Date range (exclude)",
                         when_exclude,
                         width = pad
@@ -8407,7 +8491,8 @@ impl App {
                 // ── Display ──
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(2),
                         "Display mode",
                         display_mode_label,
                         width = pad
@@ -8420,7 +8505,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(3),
                         "Section flow",
                         section_flow_label,
                         width = pad
@@ -8454,7 +8540,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(7),
                         "Aliases",
                         alias_summary,
                         width = pad
@@ -8487,7 +8574,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(4),
                         "Show unmatched",
                         unmatched_value,
                         width = pad
@@ -8506,7 +8594,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        unmatched_gutter(5),
                         "Hide dependent",
                         hide_dependent_value,
                         width = pad
@@ -8525,7 +8614,12 @@ impl App {
                 let unmatched_label_style =
                     style_for_unmatched_field(6, &items, &mut selected_line);
                 let unmatched_label_line = if editing_unmatched_label {
-                    let label = format!("  {:<width$}◀ ", "Unmatched label", width = pad);
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        unmatched_gutter(6),
+                        "Unmatched label",
+                        width = pad
+                    );
                     Line::from(inline_edit_spans(
                         &label,
                         state.inline_buf.text(),
@@ -8535,7 +8629,8 @@ impl App {
                     ))
                 } else {
                     Line::from(format!(
-                        "  {:<width$}\"{}\"",
+                        "{}{:<width$}\"{}\"",
+                        unmatched_gutter(6),
                         "Unmatched label",
                         state.draft.unmatched_label,
                         width = pad
@@ -8562,15 +8657,26 @@ impl App {
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
 
+                // Helper: is this field the currently-focused row?
+                let is_selected_section_field = |field_index: usize| {
+                    details_focused
+                        && state.region == ViewEditRegion::Sections
+                        && state.section_details_field_index == field_index
+                };
+                // Helper: leading gutter ("> " when focused, "  " otherwise)
+                let field_gutter = |field_index: usize| {
+                    if is_selected_section_field(field_index) {
+                        "> "
+                    } else {
+                        "  "
+                    }
+                };
                 // Helper: style + track selected_line for a given field index
                 let style_for_section_field =
                     |field_index: usize,
                      items: &[ListItem<'_>],
                      selected_line_ref: &mut Option<usize>| {
-                        if details_focused
-                            && state.region == ViewEditRegion::Sections
-                            && state.section_details_field_index == field_index
-                        {
+                        if is_selected_section_field(field_index) {
                             *selected_line_ref = Some(items.len());
                             sel_style
                         } else {
@@ -8581,7 +8687,7 @@ impl App {
                 // ── Group 1: Identity ──
                 let title_field_style = style_for_section_field(0, &items, &mut selected_line);
                 let title_line = if editing_title {
-                    let label = format!("  {:<width$}◀ ", "Title", width = pad);
+                    let label = format!("{}{:<width$}◀ ", field_gutter(0), "Title", width = pad);
                     Line::from(inline_edit_spans(
                         &label,
                         state.inline_buf.text(),
@@ -8590,7 +8696,13 @@ impl App {
                         title_field_style,
                     ))
                 } else {
-                    Line::from(format!("  {:<width$}{}", "Title", title_text, width = pad))
+                    Line::from(format!(
+                        "{}{:<width$}{}",
+                        field_gutter(0),
+                        "Title",
+                        title_text,
+                        width = pad
+                    ))
                 };
                 items.push(ListItem::new(title_line).style(title_field_style));
 
@@ -8601,7 +8713,8 @@ impl App {
                 if criteria_lines.is_empty() {
                     items.push(
                         ListItem::new(Line::from(format!(
-                            "  {:<width$}(none)",
+                            "{}{:<width$}(none)",
+                            field_gutter(1),
                             "Filter",
                             width = pad
                         )))
@@ -8612,7 +8725,12 @@ impl App {
                         )),
                     );
                 } else {
-                    let mut spans = vec![Span::raw(format!("  {:<width$}", "Filter", width = pad))];
+                    let mut spans = vec![Span::raw(format!(
+                        "{}{:<width$}",
+                        field_gutter(1),
+                        "Filter",
+                        width = pad
+                    ))];
                     for (idx, (mode, text)) in criteria_lines.iter().enumerate() {
                         if idx > 0 {
                             spans.push(Span::raw("; "));
@@ -8658,7 +8776,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        field_gutter(2),
                         "Columns",
                         columns_summary,
                         width = pad
@@ -8676,7 +8795,8 @@ impl App {
                 };
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        field_gutter(3),
                         "Display mode",
                         mode_label,
                         width = pad
@@ -8697,7 +8817,8 @@ impl App {
                 // ── Group 3: Automation / Behavior ──
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        field_gutter(4),
                         "Auto-assign on add",
                         summarize_category_set(&section.on_insert_assign),
                         width = pad
@@ -8710,7 +8831,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        field_gutter(5),
                         "Auto-unassign on remove",
                         summarize_category_set(&section.on_remove_unassign),
                         width = pad
@@ -8723,7 +8845,8 @@ impl App {
                 );
                 items.push(
                     ListItem::new(Line::from(format!(
-                        "  {:<width$}{}",
+                        "{}{:<width$}{}",
+                        field_gutter(6),
                         "Section layout",
                         self.view_edit_section_layout_value(section),
                         width = pad
