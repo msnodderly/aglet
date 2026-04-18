@@ -6918,7 +6918,7 @@ fn normal_mode_footer_hints_hide_numeric_shortcuts_for_non_numeric_column_focus(
 }
 
 #[test]
-fn edit_item_panel_footer_shows_esc_save_and_close() {
+fn edit_item_panel_footer_shows_esc_cancel() {
     let mut panel = input_panel::InputPanel::new_edit_item(
         agenda_core::model::ItemId::new_v4(),
         "Title".to_string(),
@@ -6942,8 +6942,16 @@ fn edit_item_panel_footer_shows_esc_save_and_close() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("Esc:save and close"),
-        "edit-item footer/help should indicate Esc auto-saves: {rendered}"
+        rendered.contains("S:save"),
+        "edit-item help should keep an explicit save hint: {rendered}"
+    );
+    assert!(
+        rendered.contains("Esc:cancel"),
+        "edit-item help should show Esc cancel semantics: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Esc:save"),
+        "edit-item help should not imply Esc saves: {rendered}"
     );
 }
 
@@ -10842,6 +10850,113 @@ fn category_manager_reserved_details_render_as_read_only() {
 }
 
 #[test]
+fn category_manager_tree_focus_does_not_render_details_row_cursor() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_category_selection_by_id(category.id);
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.sync_category_manager_state_from_selection();
+    app.set_category_manager_focus(CategoryManagerFocus::Tree);
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
+
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("> Work"),
+        "tree focus should keep the tree row cursor visible: {rendered}"
+    );
+    assert!(
+        !rendered.contains("> [ ] Exclusive"),
+        "tree focus should not leave a details flag cursor behind: {rendered}"
+    );
+    assert!(
+        rendered.contains("Enter/Tab moves focus into Details"),
+        "inactive details pane should explain how to focus it: {rendered}"
+    );
+
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("> [ ] Exclusive"),
+        "details focus should show the active flag row cursor: {rendered}"
+    );
+    assert!(
+        rendered.contains("If enabled, only one child"),
+        "exclusive hint should be conditional, not state-implying: {rendered}"
+    );
+}
+
+#[test]
+fn category_manager_details_titles_show_focus_for_note_and_also_match() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Work".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_category_selection_by_id(category.id);
+    app.handle_normal_key(KeyCode::Char('c'), &agenda)
+        .expect("open category manager");
+    app.set_category_selection_by_id(category.id);
+    app.sync_category_manager_state_from_selection();
+    app.set_category_manager_focus(CategoryManagerFocus::Details);
+
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render note");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Note"),
+        "note pane title should expose details focus: {rendered}"
+    );
+
+    app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render also-match");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Also Match"),
+        "also-match pane title should expose details focus: {rendered}"
+    );
+
+    app.set_category_manager_focus(CategoryManagerFocus::Tree);
+    let backend = TestBackend::new(140, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render inactive details");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !rendered.contains("> Also Match"),
+        "inactive details pane should not render a focused also-match title: {rendered}"
+    );
+}
+
+#[test]
 fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -11170,6 +11285,18 @@ fn category_create_panel_render_uses_category_manager_backdrop() {
     assert!(
         text.contains("Category Manager"),
         "category manager should remain visible behind the create panel"
+    );
+    assert!(
+        text.contains("Enter:save"),
+        "category-create help should show Enter save: {text}"
+    );
+    assert!(
+        text.contains("Esc:cancel"),
+        "category-create help should show Esc cancel: {text}"
+    );
+    assert!(
+        !text.contains("Enter/Esc:save"),
+        "category-create help should not say Esc saves: {text}"
     );
 
     drop(store);
@@ -15934,6 +16061,67 @@ fn terminal_buffer_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
             line
         })
         .collect()
+}
+
+#[test]
+fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
+    let (store, db_path) = make_test_store_with_view("section-detail-focus-render");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    view.sections.push(Section {
+        title: "Focused".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    app.open_view_edit(view);
+    if let Some(state) = &mut app.view_edit_state {
+        state.pane_focus = ViewEditPaneFocus::Details;
+        state.region = ViewEditRegion::Sections;
+        state.section_index = 0;
+        state.sections_view_row_selected = false;
+        state.section_details_field_index = 1;
+    }
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Filter"),
+        "section filter row should expose focus with a plain prefix: {rendered}"
+    );
+    assert!(
+        rendered.contains("field:Filter"),
+        "footer should expose focused field context: {rendered}"
+    );
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.section_details_field_index = 2;
+    }
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render columns");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("> Columns"),
+        "section columns row should expose focus with a plain prefix: {rendered}"
+    );
+    assert!(
+        rendered.contains("field:Columns"),
+        "footer should update as the focused field changes: {rendered}"
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
 }
 
 #[test]
