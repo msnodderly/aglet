@@ -9339,6 +9339,10 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         "assign picker header should describe close semantics: {rendered}"
     );
     assert!(
+        rendered.contains("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned"),
+        "assign picker should explain checkbox and preview markers: {rendered}"
+    );
+    assert!(
         rendered.contains("Target: Plain  Batch: 2 items"),
         "assign picker should show focused target context inside the modal: {rendered}"
     );
@@ -10556,6 +10560,37 @@ fn item_details_summary_prioritizes_note_and_categories() {
     assert!(plain
         .iter()
         .any(|line| line == "  Alpha, Beta" || line == "  Beta, Alpha"));
+}
+
+#[test]
+fn preview_summary_wrapped_note_lines_preserve_indent() {
+    let mut item = Item::new("demo".to_string());
+    item.note = Some("  indented alpha beta gamma delta".to_string());
+    let app = App::default();
+
+    let lines = app.item_details_lines_for_item_wrapped(&item, 18);
+    let plain: Vec<String> = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let note_lines: Vec<&String> = plain
+        .iter()
+        .filter(|line| line.starts_with("    "))
+        .collect();
+
+    assert!(
+        note_lines.len() >= 2,
+        "test note should wrap into multiple indented lines: {plain:?}"
+    );
+    assert!(
+        note_lines.iter().all(|line| line.starts_with("    ")),
+        "wrapped note continuation lines should keep note indentation: {plain:?}"
+    );
 }
 
 #[test]
@@ -14310,7 +14345,43 @@ fn normal_mode_g_slash_opens_global_search_session() {
         "status should indicate global search mode"
     );
 
+    let backend = TestBackend::new(120, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("view:TestView search:global"),
+        "header should keep the return view visible during global search: {rendered}"
+    );
+
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn all_items_view_unmatched_lane_uses_all_items_label() {
+    let store = Store::open_memory().expect("memory store");
+    let item = Item::new("Default lane task".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+
+    assert_eq!(
+        app.current_view().map(|view| view.name.as_str()),
+        Some("All Items")
+    );
+    assert!(
+        app.slots.iter().any(|slot| slot.title == "All Items"),
+        "system view should render its default lane as All Items: {:?}",
+        app.slots
+            .iter()
+            .map(|slot| slot.title.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !app.slots.iter().any(|slot| slot.title == "Unassigned"),
+        "system All Items view should not expose the generic unmatched label"
+    );
 }
 
 #[test]
@@ -19898,6 +19969,15 @@ fn search_bar_enter_with_no_match_does_not_create_item() {
     assert!(
         app.status.contains("No items match"),
         "status should explain that no item was opened"
+    );
+
+    let backend = TestBackend::new(160, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("g/:search all sections"),
+        "section search zero-match state should suggest global search: {rendered}"
     );
 
     let _ = std::fs::remove_file(&db_path);

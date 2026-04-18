@@ -2495,7 +2495,12 @@ impl App {
         self.reset_section_filters();
         self.search_buffer.clear();
         self.mode = Mode::SearchBarFocused;
-        self.status = "Global search: All Items (Esc returns to previous view)".to_string();
+        let return_view_name = self
+            .global_search_session
+            .as_ref()
+            .and_then(|session| session.return_view_name.as_deref())
+            .unwrap_or("previous view");
+        self.status = format!("Global search from {return_view_name}: All Items (Esc returns)");
         Ok(())
     }
 

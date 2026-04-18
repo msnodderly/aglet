@@ -2110,9 +2110,17 @@ impl App {
 
     pub(crate) fn render_header(&self) -> Paragraph<'_> {
         let current_view = self.current_view();
-        let view_name = current_view
-            .map(|view| view.name.as_str())
+        let view_name = self
+            .global_search_session
+            .as_ref()
+            .and_then(|session| session.return_view_name.as_deref())
+            .or_else(|| current_view.map(|view| view.name.as_str()))
             .unwrap_or("(none)");
+        let search = if self.global_search_active() {
+            " search:global"
+        } else {
+            ""
+        };
         let mode = format!("{:?}", self.mode);
         let active_filters = self.section_filters.iter().filter(|f| f.is_some()).count();
         let filter = if active_filters > 0 {
@@ -2132,9 +2140,22 @@ impl App {
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  view:{view_name}{view_flags}{workflow_hint}  mode:{mode}{filter}"
+                "  view:{view_name}{view_flags}{workflow_hint}{search}  mode:{mode}{filter}"
             )),
         ]))
+    }
+
+    fn section_search_has_no_matches(&self) -> bool {
+        if self.global_search_active() || self.search_buffer.trimmed().is_empty() {
+            return false;
+        }
+        self.section_filters
+            .get(self.slot_index)
+            .and_then(|filter| filter.as_deref())
+            .is_some_and(|filter| !filter.trim().is_empty())
+            && self
+                .current_slot()
+                .is_some_and(|slot| slot.items.is_empty())
     }
 
     fn render_search_bar(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -2174,10 +2195,17 @@ impl App {
             }
         };
 
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::styled(label.clone(), label_style),
             Span::styled(text_content, text_style),
-        ]);
+        ];
+        if self.section_search_has_no_matches() {
+            spans.push(Span::styled(
+                "  g/:search all sections",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+        }
+        let line = Line::from(spans);
         frame.render_widget(Paragraph::new(line), area);
 
         // Position cursor when focused
@@ -2226,10 +2254,15 @@ impl App {
             self.render_board_columns(frame, split[0]);
             match self.preview_mode {
                 PreviewMode::Summary => {
-                    frame.render_widget(self.render_preview_summary_panel(), split[1]);
+                    let summary_width = split[1].width;
+                    frame.render_widget(self.render_preview_summary_panel(summary_width), split[1]);
                     let content_len = self
                         .selected_item()
-                        .map(|item| self.item_details_lines_for_item(item).len())
+                        .map(|item| {
+                            let content_width = summary_width.saturating_sub(2).max(1) as usize;
+                            self.item_details_lines_for_item_wrapped(item, content_width)
+                                .len()
+                        })
                         .unwrap_or(4);
                     Self::render_vertical_scrollbar(
                         frame,
@@ -3576,6 +3609,22 @@ impl App {
     }
 
     pub(crate) fn item_details_lines_for_item(&self, item: &Item) -> Vec<Line<'_>> {
+        self.item_details_lines_for_item_inner(item, None)
+    }
+
+    pub(crate) fn item_details_lines_for_item_wrapped(
+        &self,
+        item: &Item,
+        content_width: usize,
+    ) -> Vec<Line<'_>> {
+        self.item_details_lines_for_item_inner(item, Some(content_width))
+    }
+
+    fn item_details_lines_for_item_inner(
+        &self,
+        item: &Item,
+        content_width: Option<usize>,
+    ) -> Vec<Line<'_>> {
         let category_names = category_name_map(&self.categories);
         let categories = item_assignment_labels(item, &category_names);
         let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
@@ -3599,7 +3648,7 @@ impl App {
         match &item.note {
             Some(note) if !note.is_empty() => {
                 for line in note.lines() {
-                    lines.push(Line::from(format!("  {}", line)));
+                    Self::push_note_preview_line(&mut lines, line, content_width);
                 }
             }
             _ => lines.push(Line::from("  (none)")),
@@ -3612,6 +3661,25 @@ impl App {
             lines.push(Line::from(format!("  {}", categories.join(", "))));
         }
         lines
+    }
+
+    fn push_note_preview_line(lines: &mut Vec<Line<'_>>, line: &str, content_width: Option<usize>) {
+        let raw_indent: String = line.chars().take_while(|ch| ch.is_whitespace()).collect();
+        let prefix = format!("  {raw_indent}");
+        let content = line.trim_start();
+        if content.is_empty() {
+            lines.push(Line::from(prefix));
+            return;
+        }
+
+        let Some(width) = content_width else {
+            lines.push(Line::from(format!("  {line}")));
+            return;
+        };
+        let wrapped_width = width.saturating_sub(prefix.chars().count()).max(1);
+        for wrapped in wrap_text_for_board_cell(content, wrapped_width) {
+            lines.push(Line::from(format!("{prefix}{wrapped}")));
+        }
     }
 
     pub(crate) fn input_panel_edit_details_lines(
@@ -3790,9 +3858,10 @@ impl App {
         rows.into_iter().map(|(_, label)| label).collect()
     }
 
-    pub(crate) fn render_preview_summary_panel(&self) -> Paragraph<'_> {
+    pub(crate) fn render_preview_summary_panel(&self, area_width: u16) -> Paragraph<'_> {
+        let content_width = area_width.saturating_sub(2).max(1) as usize;
         let lines = if let Some(item) = self.selected_item() {
-            self.item_details_lines_for_item(item)
+            self.item_details_lines_for_item_wrapped(item, content_width)
         } else {
             vec![
                 Line::from("Summary"),
@@ -4525,11 +4594,15 @@ impl App {
                         ("Esc", "return"),
                     ]
                 } else {
-                    vec![
+                    let mut hints = vec![
                         ("Enter", "jump/create"),
                         ("\u{2193}/Tab", "browse"),
                         ("Esc", "clear"),
-                    ]
+                    ];
+                    if self.section_search_has_no_matches() {
+                        hints.push(("g/", "search all sections"));
+                    }
+                    hints
                 }
             }
             Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
@@ -5606,7 +5679,7 @@ impl App {
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
         );
-        if area.width < 6 || area.height < 7 {
+        if area.width < 6 || area.height < 8 {
             return;
         }
 
@@ -5622,6 +5695,7 @@ impl App {
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
                 Constraint::Min(1),
             ])
             .split(inner);
@@ -5634,6 +5708,11 @@ impl App {
                 "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: close)",
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
+        frame.render_widget(
+            Paragraph::new("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned")
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
 
         let item_context = self
             .item_assign_anchor_id()
@@ -5646,7 +5725,7 @@ impl App {
         } else {
             String::new()
         };
-        let item_label_width = chunks[1]
+        let item_label_width = chunks[2]
             .width
             .saturating_sub((format!("Target: {batch_suffix}").chars().count() as u16) + 1)
             as usize;
@@ -5656,12 +5735,12 @@ impl App {
             Span::styled(item_context, Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(batch_suffix, Style::default().fg(MUTED_TEXT_COLOR)),
         ]);
-        frame.render_widget(Paragraph::new(context_line), chunks[1]);
+        frame.render_widget(Paragraph::new(context_line), chunks[2]);
 
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[2]);
+            .split(chunks[3]);
 
         // ── Left: category pane ────────────────────────────────────────────
         let cat_active = self.item_assign_pane == ItemAssignPane::Categories;

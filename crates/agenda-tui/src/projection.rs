@@ -81,10 +81,15 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
 
         if let Some(unmatched_items) = result.unmatched {
             if should_render_unmatched_lane(&unmatched_items) {
-                slots.push(Slot {
-                    title: result
+                let title = if view.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME) {
+                    DEFAULT_VIEW_NAME.to_string()
+                } else {
+                    result
                         .unmatched_label
-                        .unwrap_or_else(|| "Unassigned".to_string()),
+                        .unwrap_or_else(|| "Unassigned".to_string())
+                };
+                slots.push(Slot {
+                    title,
                     items: unmatched_items,
                     context: SlotContext::Unmatched,
                 });
