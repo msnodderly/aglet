@@ -6968,16 +6968,47 @@ fn edit_item_panel_footer_shows_esc_cancel() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("S:save"),
-        "edit-item help should keep an explicit save hint: {rendered}"
+        rendered.contains("Type note  Enter:new line  Tab:actions  Esc:cancel"),
+        "edit-item note help should not advertise save while the note owns text input: {rendered}"
     );
     assert!(
         rendered.contains("Esc:cancel"),
         "edit-item help should show Esc cancel semantics: {rendered}"
     );
     assert!(
+        !rendered.contains("S:save"),
+        "edit-item note focus should require tabbing out before capital-S save is shown: {rendered}"
+    );
+    assert!(
         !rendered.contains("Esc:save"),
         "edit-item help should not imply Esc saves: {rendered}"
+    );
+}
+
+#[test]
+fn add_item_panel_note_focus_hides_capital_s_save_hint() {
+    let mut panel =
+        input_panel::InputPanel::new_add_item("Title", &std::collections::HashSet::new());
+    panel.focus = input_panel::InputPanelFocus::Note;
+    let mut app = App {
+        mode: Mode::InputPanel,
+        status: "Adding".to_string(),
+        input_panel: Some(panel),
+        ..App::default()
+    };
+
+    let backend = TestBackend::new(220, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render app");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Type note  Enter:new line  Tab:categories  Esc:cancel"),
+        "add-item note help should describe note editing without direct save: {rendered}"
+    );
+    assert!(
+        !rendered.contains("S:save"),
+        "add-item note focus should not show capital-S save until focus leaves text input: {rendered}"
     );
 }
 

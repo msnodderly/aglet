@@ -4570,6 +4570,15 @@ impl App {
                         ("S", "save"),
                         ("Esc", "cancel"),
                     ]
+                } else if self.input_panel.as_ref().is_some_and(|p| {
+                    matches!(
+                        p.focus,
+                        input_panel::InputPanelFocus::Text
+                            | input_panel::InputPanelFocus::Note
+                            | input_panel::InputPanelFocus::When
+                    )
+                }) {
+                    vec![("Tab", "next"), ("Ctrl-G", "$EDITOR"), ("Esc", "cancel")]
                 } else {
                     vec![
                         ("Tab", "next"),
@@ -5487,9 +5496,9 @@ impl App {
             },
             InputPanelFocus::Note => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "Type note  Enter:new line  Tab:actions  S:save  Esc:cancel"
+                    "Type note  Enter:new line  Tab:actions  Esc:cancel"
                 } else {
-                    "Type note  Enter:new line  Tab:categories  S:save  Esc:cancel"
+                    "Type note  Enter:new line  Tab:categories  Esc:cancel"
                 }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
@@ -5508,7 +5517,7 @@ impl App {
             }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:cancel",
             InputPanelFocus::When => {
-                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  S:save  Esc:cancel"
+                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:cancel"
             }
         };
         let mut help_style = Style::default();

@@ -79,11 +79,13 @@ stale relative to Esc-cancel semantics:
 | 5413 | `Type name  Enter/Esc:save  Tab:next` | `Type name  Enter:save  Esc:cancel  Tab:next` |
 | 5414 | `Type title  Enter/Esc:save and close  Tab:when` | `Type title  Enter:save  Esc:cancel  Tab:when` |
 | 5415 | `Type title  Enter/Esc:save  Tab:when` | `Type title  Enter:save  Esc:cancel  Tab:when` |
-| 5419 | `Type note  Enter:new line  Tab:actions  Esc:save and close` | `Type note  Enter:new line  Tab:actions  S:save  Esc:cancel` |
-| 5421 | `Type note  Enter:new line  Tab:categories  Esc:save and close` | `Type note  Enter:new line  Tab:categories  S:save  Esc:cancel` |
+| 5419 | `Type note  Enter:new line  Tab:actions  Esc:save and close` | `Type note  Enter:new line  Tab:actions  Esc:cancel` |
+| 5421 | `Type note  Enter:new line  Tab:categories  Esc:save and close` | `Type note  Enter:new line  Tab:categories  Esc:cancel` |
 | 5430, 5432, 5436 | `Esc:save and close` variants | `S:save  Esc:cancel` |
 
-Matches the capital-S save convention noted in project memory.
+Capital-S save is shown only from non-text focus, matching the implementation
+decision that text, note, date, and numeric fields own printable keys until the
+user tabs out.
 
 ### Tests (Phase 1)
 
