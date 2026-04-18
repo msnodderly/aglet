@@ -2274,7 +2274,11 @@ impl App {
 
     /// Estimate the number of terminal rows each slot needs for layout purposes.
     /// Used to determine which slots fit in the visible viewport.
-    fn estimate_slot_heights(&self, empty_mode: EmptySections, has_any_non_empty: bool) -> Vec<u16> {
+    fn estimate_slot_heights(
+        &self,
+        empty_mode: EmptySections,
+        has_any_non_empty: bool,
+    ) -> Vec<u16> {
         let border_rows: u16 = match self.section_border_mode {
             SectionBorderMode::Full => 2,    // top + bottom border
             SectionBorderMode::Compact => 1, // top border only
@@ -2343,7 +2347,8 @@ impl App {
         }
 
         // Check if focused slot is within the current visible window.
-        let visible = Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
+        let visible =
+            Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
         if visible.contains(&self.slot_index) {
             return;
         }
@@ -2438,11 +2443,8 @@ impl App {
 
         // ── Vertical board: windowed slot rendering ──────────────────────
         let slot_heights = self.estimate_slot_heights(empty_sections_mode, has_any_non_empty);
-        let visible_slots = Self::visible_slot_window(
-            &slot_heights,
-            self.board_scroll_offset,
-            area.height,
-        );
+        let visible_slots =
+            Self::visible_slot_window(&slot_heights, self.board_scroll_offset, area.height);
 
         if visible_slots.is_empty() {
             frame.render_widget(

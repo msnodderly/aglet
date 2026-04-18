@@ -163,7 +163,9 @@ impl App {
             ViewEditRegion::Datebook => {
                 name_rows
                     + criteria_rows
-                    + state.datebook_field_index.min(datebook_rows.saturating_sub(1))
+                    + state
+                        .datebook_field_index
+                        .min(datebook_rows.saturating_sub(1))
             }
             ViewEditRegion::Unmatched => {
                 name_rows
@@ -412,8 +414,7 @@ impl App {
             state.picker_index = first;
         }
         self.status =
-            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
-                .to_string();
+            "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done".to_string();
     }
 
     fn open_view_edit_alias_picker(&mut self) {

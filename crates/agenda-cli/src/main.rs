@@ -11,10 +11,10 @@ use agenda_core::dates::{BasicDateParser, DateParser};
 use agenda_core::error::AgendaError;
 use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
-    Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, Criterion,
-    ConditionMatchMode, CriterionMode, DateCompareOp, DateMatcher, DateSource, DatebookAnchor,
-    DatebookConfig, DatebookInterval, DatebookPeriod, Item, ItemId, Query, Section, SummaryFn,
-    View,
+    Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition,
+    ConditionMatchMode, Criterion, CriterionMode, DateCompareOp, DateMatcher, DateSource,
+    DatebookAnchor, DatebookConfig, DatebookInterval, DatebookPeriod, Item, ItemId, Query, Section,
+    SummaryFn, View,
 };
 use agenda_core::query::{evaluate_query, resolve_view};
 use agenda_core::store::{Store, DEFAULT_VIEW_NAME};
@@ -1439,8 +1439,16 @@ fn build_date_matcher_from_args(
         ("on", on.as_ref(), DateCompareOp::On),
         ("before", before.as_ref(), DateCompareOp::Before),
         ("after", after.as_ref(), DateCompareOp::After),
-        ("at-or-before", at_or_before.as_ref(), DateCompareOp::AtOrBefore),
-        ("at-or-after", at_or_after.as_ref(), DateCompareOp::AtOrAfter),
+        (
+            "at-or-before",
+            at_or_before.as_ref(),
+            DateCompareOp::AtOrBefore,
+        ),
+        (
+            "at-or-after",
+            at_or_after.as_ref(),
+            DateCompareOp::AtOrAfter,
+        ),
     ];
 
     let compare_count = compare_inputs
@@ -1544,7 +1552,10 @@ fn cmd_edit(
         if done_value {
             let result = agenda.mark_item_done(item_id).map_err(|e| e.to_string())?;
             if let Some(successor_id) = result.successor_item_id {
-                let successor = agenda.store().get_item(successor_id).map_err(|e| e.to_string())?;
+                let successor = agenda
+                    .store()
+                    .get_item(successor_id)
+                    .map_err(|e| e.to_string())?;
                 let when_str = successor
                     .when_date
                     .map(|dt| dt.to_string())
@@ -1647,10 +1658,16 @@ fn cmd_edit(
         let reference = jiff::Zoned::now().date();
         match parser.parse_with_recurrence(&recurrence_text, reference) {
             Some(agenda_core::dates::DateParseResult::Recurring { rule, .. }) => {
-                let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+                let mut item = agenda
+                    .store()
+                    .get_item(item_id)
+                    .map_err(|e| e.to_string())?;
                 item.recurrence_rule = Some(rule.clone());
                 item.modified_at = jiff::Timestamp::now();
-                agenda.store().update_item(&item).map_err(|e| e.to_string())?;
+                agenda
+                    .store()
+                    .update_item(&item)
+                    .map_err(|e| e.to_string())?;
                 println!("set recurrence: {}", rule.display());
             }
             _ => {
@@ -1661,10 +1678,16 @@ fn cmd_edit(
             }
         }
     } else if clear_recurrence {
-        let mut item = agenda.store().get_item(item_id).map_err(|e| e.to_string())?;
+        let mut item = agenda
+            .store()
+            .get_item(item_id)
+            .map_err(|e| e.to_string())?;
         item.recurrence_rule = None;
         item.modified_at = jiff::Timestamp::now();
-        agenda.store().update_item(&item).map_err(|e| e.to_string())?;
+        agenda
+            .store()
+            .update_item(&item)
+            .map_err(|e| e.to_string())?;
         println!("cleared recurrence");
     }
 
@@ -2467,7 +2490,10 @@ fn cmd_category(
             if !category.actions.is_empty() {
                 println!("actions:");
                 for (index, action) in category.actions.iter().enumerate() {
-                    println!("  {}", indexed_category_action_row(index, action, &category_names));
+                    println!(
+                        "  {}",
+                        indexed_category_action_row(index, action, &category_names)
+                    );
                 }
             }
             println!("created_at:      {}", category.created_at);
@@ -3534,10 +3560,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
             }
             let new_offset = config.browse_offset;
             store.update_view(&view).map_err(|e| e.to_string())?;
-            println!(
-                "browse offset for \"{}\" set to {}",
-                view.name, new_offset
-            );
+            println!("browse offset for \"{}\" set to {}", view.name, new_offset);
             Ok(())
         }
     }
@@ -5031,20 +5054,20 @@ mod tests {
         cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink, cmd_view,
         compare_items_by_sort_keys, describe_category_action, duplicate_category_create_error,
         indexed_category_action_row, item_link_section_lines, parse_csv_decimals,
-        parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
-        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-        retain_items_by_dependency_state, retain_items_matching_numeric_filters,
-        retain_items_with_all_categories, retain_items_with_any_categories,
-        section_summary_entries, section_summary_line, unknown_hashtag_feedback_line, view_by_name,
-        view_category_alias_rows, write_output_allow_broken_pipe, write_stdout_allow_broken_pipe,
-        CategoryCommand, Cli, CliColumnKind, CliSortDirection, CliSortField, CliSortKey,
-        CliSummaryFn, Command, ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand,
-        ListFilters, NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand,
-        ViewAliasCommand, ViewColumnCommand, ViewCommand, ViewSectionCommand,
+        parse_decimal_value, parse_sort_spec, parse_when_datetime_input, parsed_when_feedback_line,
+        read_note_from_stdin, reject_items_with_any_categories, retain_items_by_dependency_state,
+        retain_items_matching_numeric_filters, retain_items_with_all_categories,
+        retain_items_with_any_categories, section_summary_entries, section_summary_line,
+        unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
+        write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, CategoryCommand, Cli,
+        CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
+        ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand, ListFilters,
+        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand,
+        ViewColumnCommand, ViewCommand, ViewSectionCommand,
     };
     use agenda_core::agenda::Agenda;
-    use agenda_core::model::ConditionMatchMode;
     use agenda_core::matcher::SubstringClassifier;
+    use agenda_core::model::ConditionMatchMode;
     use agenda_core::model::{
         Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode,
         DateCompareOp, DateMatcher, DateSource, Item, NumericFormat, Query, Section, SummaryFn,
@@ -5340,8 +5363,9 @@ mod tests {
 
     #[test]
     fn clap_parses_category_set_condition_mode() {
-        let cli = Cli::try_parse_from(["agenda", "category", "set-condition-mode", "Budget", "all"])
-            .expect("parse CLI");
+        let cli =
+            Cli::try_parse_from(["agenda", "category", "set-condition-mode", "Budget", "all"])
+                .expect("parse CLI");
 
         match cli.command {
             Some(Command::Category {
@@ -6783,10 +6807,8 @@ mod tests {
     fn describe_category_action_sorts_targets_and_uses_kind_label() {
         let alpha = Category::new("Alpha".to_string());
         let zed = Category::new("Zed".to_string());
-        let category_names = HashMap::from([
-            (zed.id, zed.name.clone()),
-            (alpha.id, alpha.name.clone()),
-        ]);
+        let category_names =
+            HashMap::from([(zed.id, zed.name.clone()), (alpha.id, alpha.name.clone())]);
         let action = Action::Assign {
             targets: HashSet::from([zed.id, alpha.id]),
         };

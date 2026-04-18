@@ -83,8 +83,10 @@ impl App {
                 state.section_index = section_index;
                 state.sections_view_row_selected = false;
                 state.section_details_field_index = 0;
-                state.inline_input =
-                    Some(ViewEditInlineInput::SectionTitle { section_index, is_new });
+                state.inline_input = Some(ViewEditInlineInput::SectionTitle {
+                    section_index,
+                    is_new,
+                });
                 state.inline_buf = text_buffer::TextBuffer::new(section.title.clone());
                 state.discard_confirm = false;
                 self.status = "Section title: type text  Enter:confirm  Esc:cancel".to_string();

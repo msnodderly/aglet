@@ -14,10 +14,10 @@ use crate::classification::{
 };
 use crate::error::{AgendaError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category, CategoryId,
-    CategoryValueKind, Condition, ConditionMatchMode, DeletionLogEntry, Item, ItemId, ItemLink,
-    ItemLinkKind, NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
-    RESERVED_CATEGORY_NAME_WHEN,
+    Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
+    CategoryId, CategoryValueKind, Condition, ConditionMatchMode, DeletionLogEntry, Item, ItemId,
+    ItemLink, ItemLinkKind, NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View,
+    RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
@@ -1226,10 +1226,8 @@ impl Store {
             assignments: HashMap::new(),
             recurrence_rule: recurrence_json
                 .and_then(|s| serde_json::from_str::<RecurrenceRule>(&s).ok()),
-            recurrence_series_id: series_id_str
-                .and_then(|s| Uuid::parse_str(&s).ok()),
-            recurrence_parent_item_id: parent_id_str
-                .and_then(|s| Uuid::parse_str(&s).ok()),
+            recurrence_series_id: series_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            recurrence_parent_item_id: parent_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
         })
     }
 
@@ -1301,8 +1299,9 @@ impl Store {
                 _ => AssignmentSource::Manual,
             };
             let assigned_at = assigned_str.parse::<Timestamp>().unwrap_or_default();
-            let explanation = serde_json::from_str::<Option<AssignmentExplanation>>(&explanation_json)
-                .unwrap_or_default();
+            let explanation =
+                serde_json::from_str::<Option<AssignmentExplanation>>(&explanation_json)
+                    .unwrap_or_default();
             let numeric_value = numeric_value_str.and_then(|s| s.parse::<Decimal>().ok());
             item.assignments.insert(
                 cat_id,
@@ -1396,8 +1395,8 @@ impl Store {
         let section_flow = section_flow_json
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or(SectionFlow::Vertical);
-        let datebook_config = datebook_config_json
-            .and_then(|json| serde_json::from_str(&json).ok());
+        let datebook_config =
+            datebook_config_json.and_then(|json| serde_json::from_str(&json).ok());
 
         Ok(View {
             id: Uuid::parse_str(&id_str).unwrap_or_default(),
@@ -2343,14 +2342,12 @@ impl Store {
 
         if from_version < 16 {
             if !self.column_exists("items", "recurrence_rule_json")? {
-                self.conn.execute_batch(
-                    "ALTER TABLE items ADD COLUMN recurrence_rule_json TEXT;",
-                )?;
+                self.conn
+                    .execute_batch("ALTER TABLE items ADD COLUMN recurrence_rule_json TEXT;")?;
             }
             if !self.column_exists("items", "recurrence_series_id")? {
-                self.conn.execute_batch(
-                    "ALTER TABLE items ADD COLUMN recurrence_series_id TEXT;",
-                )?;
+                self.conn
+                    .execute_batch("ALTER TABLE items ADD COLUMN recurrence_series_id TEXT;")?;
             }
             if !self.column_exists("items", "recurrence_parent_item_id")? {
                 self.conn.execute_batch(
@@ -2361,9 +2358,8 @@ impl Store {
 
         // v17 → v18: datebook config on views
         if !self.column_exists("views", "datebook_config_json")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN datebook_config_json TEXT;",
-            )?;
+            self.conn
+                .execute_batch("ALTER TABLE views ADD COLUMN datebook_config_json TEXT;")?;
         }
 
         Ok(())
@@ -2422,8 +2418,8 @@ mod tests {
     use crate::model::{
         Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
         CategoryValueKind, Column, ColumnKind, CriterionMode, Item, ItemLink, ItemLinkKind,
-        NumericFormat, Query, Section, SectionFlow, TextMatchSource, View,
-        RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
+        NumericFormat, Query, Section, SectionFlow, TextMatchSource, View, RESERVED_CATEGORY_NAMES,
+        RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
     };
     use jiff::Timestamp;
     use rusqlite::params;
@@ -2935,7 +2931,9 @@ mod tests {
             "migration should add enable_semantic_classification column"
         );
 
-        let legacy = store.get_category(category_id).expect("legacy category loads");
+        let legacy = store
+            .get_category(category_id)
+            .expect("legacy category loads");
         assert!(
             legacy.enable_semantic_classification,
             "legacy rows should default semantic matching on after migration"

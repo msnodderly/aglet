@@ -361,7 +361,9 @@ impl App {
         self.clamp_horizontal_slot_item_indices();
         self.clamp_horizontal_slot_scroll_offsets();
         self.slot_index = self.slot_index.min(self.slots.len().saturating_sub(1));
-        self.board_scroll_offset = self.board_scroll_offset.min(self.slots.len().saturating_sub(1));
+        self.board_scroll_offset = self
+            .board_scroll_offset
+            .min(self.slots.len().saturating_sub(1));
         // If Hide mode landed us on an empty slot, advance to the nearest non-empty.
         if self.effective_empty_sections() == EmptySections::Hide {
             self.skip_hidden_slots(1);
@@ -694,7 +696,11 @@ impl App {
         let step = if delta > 0 { 1i32 } else { -1i32 };
         let start = self.slot_index;
         for _ in 0..self.slots.len() {
-            if self.slots.get(self.slot_index).is_none_or(|s| !s.items.is_empty()) {
+            if self
+                .slots
+                .get(self.slot_index)
+                .is_none_or(|s| !s.items.is_empty())
+            {
                 return; // landed on a non-empty slot (or out of range)
             }
             let next = next_index_clamped(self.slot_index, self.slots.len(), step);
@@ -704,7 +710,11 @@ impl App {
             self.slot_index = next;
         }
         // If we couldn't find a non-empty slot, revert.
-        if self.slots.get(self.slot_index).is_none_or(|s| s.items.is_empty()) {
+        if self
+            .slots
+            .get(self.slot_index)
+            .is_none_or(|s| s.items.is_empty())
+        {
             self.slot_index = start;
         }
     }

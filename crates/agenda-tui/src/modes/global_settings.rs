@@ -65,10 +65,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_global_settings_note_glyphs(
-        &mut self,
-        agenda: &Agenda<'_>,
-    ) -> TuiResult<()> {
+    fn toggle_global_settings_note_glyphs(&mut self, agenda: &Agenda<'_>) -> TuiResult<()> {
         self.show_note_glyphs = !self.show_note_glyphs;
         self.persist_show_note_glyphs(agenda.store())?;
         self.status = format!("Note glyphs: {}", self.show_note_glyphs_label());

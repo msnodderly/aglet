@@ -8,10 +8,7 @@ use crate::model::{
 };
 
 /// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
-pub fn resolve_when_bucket(
-    when_date: Option<DateTime>,
-    reference_date: Date,
-) -> WhenBucket {
+pub fn resolve_when_bucket(when_date: Option<DateTime>, reference_date: Date) -> WhenBucket {
     let Some(when_datetime) = when_date else {
         return WhenBucket::NoDate;
     };
@@ -60,11 +57,7 @@ pub fn resolve_when_bucket(
 }
 
 /// Evaluate a query against a slice of items, preserving input order.
-pub fn evaluate_query<'a>(
-    query: &Query,
-    items: &'a [Item],
-    reference_date: Date,
-) -> Vec<&'a Item> {
+pub fn evaluate_query<'a>(query: &Query, items: &'a [Item], reference_date: Date) -> Vec<&'a Item> {
     let normalized_search = query
         .text_search
         .as_ref()
@@ -500,10 +493,7 @@ fn format_datebook_section_title(
         }
         DatebookInterval::Weekly => {
             // "Apr 7 - Apr 13"
-            let end_date = end
-                .checked_sub(Span::new().days(1))
-                .unwrap_or(end)
-                .date();
+            let end_date = end.checked_sub(Span::new().days(1)).unwrap_or(end).date();
             format!(
                 "{} - {}",
                 format_date_short(start.date()),
@@ -1876,9 +1866,7 @@ mod tests {
 
     // ── Datebook tests ──────────────────────────────────────────────
 
-    use super::{
-        compute_datebook_window, extract_item_date, generate_datebook_sections,
-    };
+    use super::{compute_datebook_window, extract_item_date, generate_datebook_sections};
     use crate::model::{
         DateSource, DatebookAnchor, DatebookConfig, DatebookInterval, DatebookPeriod,
     };
@@ -2049,7 +2037,12 @@ mod tests {
 
         let items = vec![
             item_with_assignments("Monday task", None, Some(datetime(2026, 4, 6, 10, 0)), &[]),
-            item_with_assignments("Wednesday task", None, Some(datetime(2026, 4, 8, 14, 30)), &[]),
+            item_with_assignments(
+                "Wednesday task",
+                None,
+                Some(datetime(2026, 4, 8, 14, 30)),
+                &[],
+            ),
             item_with_assignments("No date task", None, None, &[]),
             item_with_assignments(
                 "Outside window",

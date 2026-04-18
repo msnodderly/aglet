@@ -61,29 +61,25 @@ fn date_draft_from_condition(condition: &Condition) -> Option<DateConditionDraft
             draft.kind = DateConditionDraftKind::Compare(*op);
             draft.value_input = text_buffer::TextBuffer::new(render_date_value_expr(value));
         }
-        agenda_core::model::DateMatcher::Range { from, through } => {
-            match (from, through) {
-                (DateValueExpr::TimeToday(time), DateValueExpr::Today) => {
-                    if *time == default_afternoon_start() {
-                        draft.kind = DateConditionDraftKind::ThisAfternoon;
-                    } else {
-                        draft.kind = DateConditionDraftKind::TodayAfter;
-                        draft.value_input =
-                            text_buffer::TextBuffer::new(render_date_value_expr(from));
-                    }
-                }
-                (DateValueExpr::Today, DateValueExpr::TimeToday(_time)) => {
-                    draft.kind = DateConditionDraftKind::TodayBefore;
-                    draft.value_input = text_buffer::TextBuffer::new(render_date_value_expr(through));
-                }
-                _ => {
-                    draft.kind = DateConditionDraftKind::Range;
-                    draft.from_input = text_buffer::TextBuffer::new(render_date_value_expr(from));
-                    draft.through_input =
-                        text_buffer::TextBuffer::new(render_date_value_expr(through));
+        agenda_core::model::DateMatcher::Range { from, through } => match (from, through) {
+            (DateValueExpr::TimeToday(time), DateValueExpr::Today) => {
+                if *time == default_afternoon_start() {
+                    draft.kind = DateConditionDraftKind::ThisAfternoon;
+                } else {
+                    draft.kind = DateConditionDraftKind::TodayAfter;
+                    draft.value_input = text_buffer::TextBuffer::new(render_date_value_expr(from));
                 }
             }
-        }
+            (DateValueExpr::Today, DateValueExpr::TimeToday(_time)) => {
+                draft.kind = DateConditionDraftKind::TodayBefore;
+                draft.value_input = text_buffer::TextBuffer::new(render_date_value_expr(through));
+            }
+            _ => {
+                draft.kind = DateConditionDraftKind::Range;
+                draft.from_input = text_buffer::TextBuffer::new(render_date_value_expr(from));
+                draft.through_input = text_buffer::TextBuffer::new(render_date_value_expr(through));
+            }
+        },
     }
     Some(draft)
 }
@@ -148,7 +144,9 @@ pub(crate) fn draft_uses_value_field(kind: DateConditionDraftKind) -> bool {
 
 pub(crate) fn draft_match_label(kind: DateConditionDraftKind) -> String {
     match kind {
-        DateConditionDraftKind::Compare(op) => agenda_core::date_rules::render_compare_op(op).to_string(),
+        DateConditionDraftKind::Compare(op) => {
+            agenda_core::date_rules::render_compare_op(op).to_string()
+        }
         DateConditionDraftKind::Range => "Range".to_string(),
         DateConditionDraftKind::TodayAfter => "Today After".to_string(),
         DateConditionDraftKind::TodayBefore => "Today Before".to_string(),
@@ -172,7 +170,9 @@ fn parse_time_today_value_expr(input: &str) -> Result<DateValueExpr, String> {
     if let Ok(expr) = parse_date_value_expr(trimmed) {
         return match expr {
             DateValueExpr::TimeToday(_) => Ok(expr),
-            _ => Err(format!("expected a time like '1:00pm' or '1:00pm today', got '{trimmed}'")),
+            _ => Err(format!(
+                "expected a time like '1:00pm' or '1:00pm today', got '{trimmed}'"
+            )),
         };
     }
     parse_date_value_expr(&format!("{trimmed} today")).and_then(|expr| match expr {
@@ -276,8 +276,7 @@ pub(crate) fn date_condition_draft_feedback(
     let ctx = EvaluationContext::now();
     let mut feedback = DateConditionDraftFeedback::default();
 
-    let parse_date_field =
-        |text: &str| -> (DateDraftFieldFeedback, Option<DateValueExpr>, String) {
+    let parse_date_field = |text: &str| -> (DateDraftFieldFeedback, Option<DateValueExpr>, String) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return (
@@ -312,41 +311,40 @@ pub(crate) fn date_condition_draft_feedback(
         }
     };
 
-    let parse_time_field =
-        |text: &str| -> (DateDraftFieldFeedback, Option<DateValueExpr>, String) {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                return (
+    let parse_time_field = |text: &str| -> (DateDraftFieldFeedback, Option<DateValueExpr>, String) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return (
+                DateDraftFieldFeedback {
+                    normalized: None,
+                    error: Some("time value cannot be empty".to_string()),
+                },
+                None,
+                trimmed.to_string(),
+            );
+        }
+        match parse_time_today_value_expr(trimmed) {
+            Ok(expr) => {
+                let normalized = render_date_value_expr(&expr);
+                (
                     DateDraftFieldFeedback {
-                        normalized: None,
-                        error: Some("time value cannot be empty".to_string()),
+                        normalized: Some(normalized.clone()),
+                        error: None,
                     },
-                    None,
-                    trimmed.to_string(),
-                );
+                    Some(expr),
+                    normalized,
+                )
             }
-            match parse_time_today_value_expr(trimmed) {
-                Ok(expr) => {
-                    let normalized = render_date_value_expr(&expr);
-                    (
-                        DateDraftFieldFeedback {
-                            normalized: Some(normalized.clone()),
-                            error: None,
-                        },
-                        Some(expr),
-                        normalized,
-                    )
-                }
-                Err(err) => (
-                    DateDraftFieldFeedback {
-                        normalized: None,
-                        error: Some(err),
-                    },
-                    None,
-                    trimmed.to_string(),
-                ),
-            }
-        };
+            Err(err) => (
+                DateDraftFieldFeedback {
+                    normalized: None,
+                    error: Some(err),
+                },
+                None,
+                trimmed.to_string(),
+            ),
+        }
+    };
 
     if draft_uses_range_fields(draft.kind) {
         let (from_feedback, from_expr, from_preview) = parse_date_field(draft.from_input.text());
@@ -435,8 +433,7 @@ pub(crate) fn date_condition_draft_feedback(
                 draft.kind,
                 DateConditionDraftKind::Compare(DateCompareOp::AtOrBefore)
                     | DateConditionDraftKind::Compare(DateCompareOp::AtOrAfter)
-            )
-                && is_date_only_expr(expr)
+            ) && is_date_only_expr(expr)
             {
                 feedback.messages.push(DateDraftMessage {
                     severity: DateDraftMessageSeverity::Warning,
@@ -2563,7 +2560,8 @@ impl App {
 
     fn condition_date_status(&mut self) {
         self.status =
-            "Tab/Shift-Tab or Up/Down: field  Source/Match h/l: cycle  Enter:save  Esc:cancel".to_string();
+            "Tab/Shift-Tab or Up/Down: field  Source/Match h/l: cycle  Enter:save  Esc:cancel"
+                .to_string();
     }
 
     fn open_condition_edit_picker(&mut self, condition_index: Option<usize>) {
@@ -2733,7 +2731,10 @@ impl App {
 
         let feedback = date_condition_draft_feedback(
             &draft,
-            &self.selected_category_row().map(|r| r.name.clone()).unwrap_or_default(),
+            &self
+                .selected_category_row()
+                .map(|r| r.name.clone())
+                .unwrap_or_default(),
         );
         if let Some(error) = feedback
             .messages
@@ -2746,15 +2747,13 @@ impl App {
 
         let matcher = match draft.kind {
             DateConditionDraftKind::Range => agenda_core::model::DateMatcher::Range {
-                from: parse_date_value_expr(draft.from_input.trimmed())
-                    .map_err(TuiError::App)?,
+                from: parse_date_value_expr(draft.from_input.trimmed()).map_err(TuiError::App)?,
                 through: parse_date_value_expr(draft.through_input.trimmed())
                     .map_err(TuiError::App)?,
             },
             DateConditionDraftKind::Compare(op) => agenda_core::model::DateMatcher::Compare {
                 op,
-                value: parse_date_value_expr(draft.value_input.trimmed())
-                    .map_err(TuiError::App)?,
+                value: parse_date_value_expr(draft.value_input.trimmed()).map_err(TuiError::App)?,
             },
             DateConditionDraftKind::TodayAfter => agenda_core::model::DateMatcher::Range {
                 from: parse_time_today_value_expr(draft.value_input.trimmed())
@@ -2980,14 +2979,20 @@ impl App {
                     let actual_index = self
                         .selected_category_row()
                         .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
-                        .and_then(|cat| editable_condition_indices(cat).get(edit.list_index).copied());
+                        .and_then(|cat| {
+                            editable_condition_indices(cat)
+                                .get(edit.list_index)
+                                .copied()
+                        });
                     if let Some(idx) = actual_index {
                         let selected_condition = self
                             .selected_category_row()
                             .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
                             .and_then(|cat| cat.conditions.get(idx));
                         match selected_condition {
-                            Some(Condition::Date { .. }) => self.open_condition_date_editor(Some(idx)),
+                            Some(Condition::Date { .. }) => {
+                                self.open_condition_date_editor(Some(idx))
+                            }
                             _ => self.open_condition_edit_picker(Some(idx)),
                         }
                     }
@@ -3153,17 +3158,23 @@ impl App {
                 if let Some(edit) = self.category_manager_condition_edit_mut() {
                     if editable_focus {
                         match edit.draft_date.field_focus {
-                            DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
+                            DateConditionField::Value
+                                if draft_uses_value_field(edit.draft_date.kind) =>
+                            {
                                 edit.draft_date
                                     .value_input
                                     .handle_key_event(text_key.expect("text key"), false);
                             }
-                            DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
+                            DateConditionField::From
+                                if draft_uses_range_fields(edit.draft_date.kind) =>
+                            {
                                 edit.draft_date
                                     .from_input
                                     .handle_key_event(text_key.expect("text key"), false);
                             }
-                            DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
+                            DateConditionField::Through
+                                if draft_uses_range_fields(edit.draft_date.kind) =>
+                            {
                                 edit.draft_date
                                     .through_input
                                     .handle_key_event(text_key.expect("text key"), false);

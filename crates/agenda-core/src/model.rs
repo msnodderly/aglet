@@ -195,27 +195,23 @@ impl RecurrenceRule {
                 ),
                 None => format!("every {} weeks", self.interval),
             },
-            RecurrenceFrequency::Monthly if self.interval == 1 => {
-                match self.day_of_month {
-                    Some(d) => format!("monthly on the {}", ordinal(d)),
-                    None => "monthly".to_string(),
-                }
-            }
-            RecurrenceFrequency::Monthly
-                if self.interval == 3 && self.day_of_month == Some(1) =>
-            {
+            RecurrenceFrequency::Monthly if self.interval == 1 => match self.day_of_month {
+                Some(d) => format!("monthly on the {}", ordinal(d)),
+                None => "monthly".to_string(),
+            },
+            RecurrenceFrequency::Monthly if self.interval == 3 && self.day_of_month == Some(1) => {
                 "quarterly".to_string()
             }
-            RecurrenceFrequency::Monthly => {
-                match self.day_of_month {
-                    Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
-                    None => format!("every {} months", self.interval),
+            RecurrenceFrequency::Monthly => match self.day_of_month {
+                Some(d) => format!("every {} months on the {}", self.interval, ordinal(d)),
+                None => format!("every {} months", self.interval),
+            },
+            RecurrenceFrequency::Yearly if self.interval == 1 => {
+                match (self.month, self.day_of_month) {
+                    (Some(m), Some(d)) => format!("every {} {}", month_name(m), d),
+                    _ => "yearly".to_string(),
                 }
             }
-            RecurrenceFrequency::Yearly if self.interval == 1 => match (self.month, self.day_of_month) {
-                (Some(m), Some(d)) => format!("every {} {}", month_name(m), d),
-                _ => "yearly".to_string(),
-            },
             RecurrenceFrequency::Yearly => format!("every {} years", self.interval),
         }
     }
@@ -532,14 +528,16 @@ impl AssignmentExplanation {
             Self::Action {
                 trigger_category_name,
                 kind,
-            } => match kind {
-                AssignmentActionKind::Assign => {
-                    format!("Removed after action-triggered assignment from {trigger_category_name}")
+            } => {
+                match kind {
+                    AssignmentActionKind::Assign => {
+                        format!("Removed after action-triggered assignment from {trigger_category_name}")
+                    }
+                    AssignmentActionKind::Remove => {
+                        format!("Removed by action on {trigger_category_name}")
+                    }
                 }
-                AssignmentActionKind::Remove => {
-                    format!("Removed by action on {trigger_category_name}")
-                }
-            },
+            }
             Self::Subsumption {
                 via_child_category_name,
                 ..
@@ -663,7 +661,9 @@ impl Default for NumericFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
     ImplicitString,
-    Profile { criteria: Box<Query> },
+    Profile {
+        criteria: Box<Query>,
+    },
     Date {
         source: DateSource,
         matcher: DateMatcher,

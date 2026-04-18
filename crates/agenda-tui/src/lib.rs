@@ -13,8 +13,8 @@ use agenda_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
 use agenda_core::model::{
     Action, Assignment, AssignmentExplanation, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, DateCompareOp, DateSource,
-    DatebookConfig, EmptySections, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section, SectionFlow,
-    SummaryFn, View, WhenBucket,
+    DatebookConfig, EmptySections, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section,
+    SectionFlow, SummaryFn, View, WhenBucket,
 };
 use agenda_core::query::{evaluate_query, generate_datebook_sections, resolve_view};
 use agenda_core::store::Store;
@@ -74,8 +74,8 @@ use state::category::{
     CategoryManagerDetailsFocus, CategoryManagerDetailsInlineField,
     CategoryManagerDetailsInlineInput, CategoryManagerFocus, CategoryManagerState,
     CategorySuggestState, ConditionEditState, ConditionEditorKind, DateConditionDraft,
-    DateConditionDraftKind, DateConditionField, GlobalSettingsRow, GlobalSettingsState, OllamaModelPickerState,
-    WorkflowRolePickerOrigin, WorkflowRolePickerState,
+    DateConditionDraftKind, DateConditionField, GlobalSettingsRow, GlobalSettingsState,
+    OllamaModelPickerState, WorkflowRolePickerOrigin, WorkflowRolePickerState,
 };
 use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,

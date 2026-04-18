@@ -369,8 +369,12 @@ impl InputPanel {
                     InputPanelAction::Unhandled
                 }
             }
-            InputPanelFocus::Categories => self.handle_categories_focus(code, current_row_is_assigned_numeric),
-            InputPanelFocus::Actions | InputPanelFocus::Suggestions => self.handle_edit_sidebar_focus(code),
+            InputPanelFocus::Categories => {
+                self.handle_categories_focus(code, current_row_is_assigned_numeric)
+            }
+            InputPanelFocus::Actions | InputPanelFocus::Suggestions => {
+                self.handle_edit_sidebar_focus(code)
+            }
             InputPanelFocus::TypePicker => self.handle_type_picker_focus(code),
         }
     }
@@ -401,8 +405,7 @@ impl InputPanel {
                     InputPanelFocus::Categories
                         | InputPanelFocus::Actions
                         | InputPanelFocus::Suggestions
-                )
-                    && current_row_is_assigned_numeric) =>
+                ) && current_row_is_assigned_numeric) =>
             {
                 Some(InputPanelAction::Save)
             }
@@ -473,7 +476,6 @@ impl InputPanel {
             _ => InputPanelAction::Unhandled,
         }
     }
-
 
     fn active_buffer_mut(&mut self) -> &mut TextBuffer {
         match self.focus {
@@ -752,7 +754,6 @@ mod tests {
         );
         assert_eq!(p.note.text(), "y");
     }
-
 
     #[test]
     fn enter_in_text_focus_saves() {

@@ -68,7 +68,7 @@ impl App {
                         &view.name,
                         "Rename view",
                     ));
-    
+
                     self.name_input_context = Some(NameInputContext::ViewRename);
                     self.mode = Mode::InputPanel;
                     self.status = format!(
@@ -112,7 +112,7 @@ impl App {
                         "",
                         &format!("Clone view '{}'", view.name),
                     ));
-    
+
                     self.name_input_context = Some(NameInputContext::ViewClone);
                     self.mode = Mode::InputPanel;
                     self.status = format!(

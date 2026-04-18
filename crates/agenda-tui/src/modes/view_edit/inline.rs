@@ -84,7 +84,10 @@ impl App {
                         changed = state.draft.name != text;
                         state.draft.name = text;
                     }
-                    Some(ViewEditInlineInput::SectionTitle { section_index, is_new }) => {
+                    Some(ViewEditInlineInput::SectionTitle {
+                        section_index,
+                        is_new,
+                    }) => {
                         if let Some(section) = state.draft.sections.get_mut(*section_index) {
                             changed = section.title != text;
                             section.title = text;
@@ -107,7 +110,10 @@ impl App {
                             let next_alias = text.clone();
                             let previous = state.draft.category_aliases.get(category_id).cloned();
                             changed = previous.as_deref() != Some(next_alias.as_str());
-                            state.draft.category_aliases.insert(*category_id, next_alias);
+                            state
+                                .draft
+                                .category_aliases
+                                .insert(*category_id, next_alias);
                             alias_status = Some("Alias saved".to_string());
                         }
                     }
