@@ -2148,7 +2148,13 @@ impl Store {
                 .map_err(|e| AgendaError::StorageError {
                     source: Box::new(e),
                 })?;
-            self.apply_migrations(version)?;
+        }
+        // Some local DBs have been stamped with the current schema version by
+        // partial development builds while still missing columns. The migration
+        // body is intentionally idempotent, so run it on every open to repair
+        // those drifted schemas before any SELECT references the new columns.
+        self.apply_migrations(version)?;
+        if version < SCHEMA_VERSION {
             self.conn
                 .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
@@ -2196,10 +2202,7 @@ impl Store {
         } else {
             false
         };
-        if from_version < 19
-            && added_empty_sections_column
-            && self.column_exists("views", "datebook_config_json")?
-        {
+        if added_empty_sections_column && self.column_exists("views", "datebook_config_json")? {
             self.migrate_datebook_empty_sections_to_view()?;
         }
         if !self.column_exists("views", "category_aliases_json")? {
@@ -2875,6 +2878,67 @@ mod tests {
         );
         let legacy = store.get_view(legacy_id).expect("legacy view loads");
         assert_eq!(legacy.empty_sections, EmptySections::Collapse);
+    }
+
+    #[test]
+    fn test_current_version_schema_drift_adds_empty_sections_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+        conn.execute_batch(
+            r#"
+            DROP TABLE views;
+            CREATE TABLE views (
+                id                          TEXT PRIMARY KEY,
+                name                        TEXT NOT NULL UNIQUE,
+                criteria_json               TEXT NOT NULL DEFAULT '{}',
+                sections_json               TEXT NOT NULL DEFAULT '[]',
+                columns_json                TEXT NOT NULL DEFAULT '[]',
+                show_unmatched              INTEGER NOT NULL DEFAULT 1,
+                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
+                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
+                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
+                item_column_label           TEXT,
+                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
+                section_flow                TEXT NOT NULL DEFAULT 'Vertical',
+                hide_dependent_items        INTEGER NOT NULL DEFAULT 0,
+                datebook_config_json        TEXT
+            );
+            "#,
+        )
+        .unwrap();
+        let drifted_id = Uuid::new_v4();
+        let config = DatebookConfig {
+            period: DatebookPeriod::Week,
+            interval: DatebookInterval::Daily,
+            anchor: DatebookAnchor::Today,
+            date_source: DateSource::When,
+            empty_sections: EmptySections::Collapse,
+            browse_offset: 0,
+        };
+        let config_json = serde_json::to_string(&config).expect("serialize config");
+        conn.execute(
+            "INSERT INTO views (
+                id, name, criteria_json, sections_json, columns_json,
+                show_unmatched, unmatched_label, remove_from_view_unassign_json,
+                category_aliases_json, item_column_label, board_display_mode,
+                section_flow, hide_dependent_items, datebook_config_json
+            ) VALUES (?1, 'Drifted Datebook', '{}', '[]', '[]', 1, 'Unassigned',
+                      '[]', '{}', NULL, '\"SingleLine\"', '\"Vertical\"', 0, ?2)",
+            params![drifted_id.to_string(), config_json],
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .unwrap();
+
+        let store = Store { conn };
+        store.init().unwrap();
+
+        assert!(
+            store.column_exists("views", "empty_sections").unwrap(),
+            "current-version drift repair should add empty_sections"
+        );
+        let drifted = store.get_view(drifted_id).expect("drifted view loads");
+        assert_eq!(drifted.empty_sections, EmptySections::Collapse);
     }
 
     #[test]
