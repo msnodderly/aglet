@@ -1,5 +1,6 @@
 ---
 title: Classification Gap Analysis: Aglet vs Lotus Agenda
+updated: 2026-04-19
 status: draft
 created: 2026-03-15
 ---
@@ -342,8 +343,10 @@ sections to the details pane, and Phase D–E describe editor popups. None imple
 **Lotus Agenda:** No specific tree badges (categories were shown in a flat or
 hierarchical list without inline indicators for rules).
 
-**Aglet proposal:** Describes `[C2]` and `[A1]` badges in the category tree. Not
-implemented, but would be useful once conditions/actions are visible.
+**Aglet implementation:** The Category Manager tree shows readable count badges
+such as `[2 conditions]` and `[1 action]` when category-owned rules exist. It
+intentionally avoids the earlier `[C2]` / `[A1]` abbreviation because those
+labels were difficult to remember.
 
 ---
 
@@ -423,7 +426,7 @@ return graduated confidence scores.
 | 16 | Execution timing | Automatically / On demand / Never (per-category) | Global only |
 | 17 | Conflict resolution | Keep old / Override old policy | Implicit first-match-wins |
 | 18 | Text+Assignment AND mode | Require both text AND profile match | OR-only |
-| 19 | Tree badges | [C2] [A1] indicators in category tree | Not implemented |
+| 19 | Tree badges | None | Implemented as readable `[2 conditions]` / `[1 action]` badges |
 
 ### Intentional divergences (not gaps)
 

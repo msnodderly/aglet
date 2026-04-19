@@ -8788,7 +8788,7 @@ fn help_panel_render_contains_shortcut_cheat_sheet() {
         "help panel should include GLOBAL group header: {rendered}"
     );
     assert!(
-        rendered.contains("Search across all sections"),
+        rendered.contains("Search focused section / all sections"),
         "help panel should include global search description: {rendered}"
     );
     assert!(
@@ -8798,6 +8798,18 @@ fn help_panel_render_contains_shortcut_cheat_sheet() {
     assert!(
         rendered.contains("Assign categories to current item or selection"),
         "help panel should include updated assign description: {rendered}"
+    );
+    assert!(
+        rendered.contains("Open dependency link wizard"),
+        "help panel should include current dependency link shortcuts: {rendered}"
+    );
+    assert!(
+        rendered.contains("Classify selected item(s) now"),
+        "help panel should include manual classification shortcut: {rendered}"
+    );
+    assert!(
+        rendered.contains("Browse previous / next period"),
+        "help panel should include datebook browsing shortcuts: {rendered}"
     );
     assert!(
         !rendered.contains("Ctrl-R"),
@@ -14096,13 +14108,31 @@ fn category_manager_numeric_details_render_preview_line() {
 
 #[test]
 fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
+    use agenda_core::model::Criterion;
+
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
 
+    let target = Category::new("Target".to_string());
+    store.create_category(&target).expect("create target");
+
     let mut category = Category::new("Ready".to_string());
     category.is_exclusive = true;
     category.is_actionable = true;
+    category.conditions.push(Condition::Profile {
+        criteria: Box::new(Query {
+            criteria: vec![Criterion {
+                mode: CriterionMode::And,
+                category_id: target.id,
+            }],
+            ..Query::default()
+        }),
+    });
+    category.conditions.push(Condition::ImplicitString);
+    category.actions.push(Action::Assign {
+        targets: HashSet::from([target.id]),
+    });
     store.create_category(&category).expect("create category");
     store
         .set_workflow_config(&agenda_core::workflow::WorkflowConfig {
@@ -14124,8 +14154,12 @@ fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
     terminal.draw(|frame| app.draw(frame)).expect("draw");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("Ready [exclusive] [ready-queue]"),
-        "tree should render non-default/special suffix badges on the category row: {rendered}"
+        rendered.contains("Ready [exclusive] [ready-queue] [2 conditions] [1 action]"),
+        "tree should render readable non-default/special/count badges on the category row: {rendered}"
+    );
+    assert!(
+        !rendered.contains("[C2]") && !rendered.contains("[A1]"),
+        "tree should not render cryptic condition/action count badges: {rendered}"
     );
     assert!(
         !rendered.contains("Excl   Match   Todo"),
