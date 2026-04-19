@@ -615,6 +615,17 @@ If you add or refactor Category Manager render code, explicitly position the
 terminal cursor for these Action/Filter editing states; otherwise text editing
 still works but the caret appears missing/intermittent.
 
+## Category Manager Condition/Action Count Badges (Current)
+
+The Category Manager tree shows count badges for category-owned rules. Use
+readable labels, not cryptic abbreviations:
+
+- `[2 conditions]` means the category has two condition rules.
+- `[1 action]` means the category has one assignment action.
+
+Older proposal docs and screenshots may show `[C2]` or `[A1]`; do not revive
+those abbreviations. They were compact but hard to remember in daily use.
+
 ## InputPanel Note Cursor Requires Explicit Position (Surprising)
 
 `Mode::InputPanel` note editing (`InputPanelFocus::Note`) does not automatically

@@ -1,6 +1,6 @@
 ---
 title: Aglet Overview Demo
-updated: 2026-03-21
+updated: 2026-04-19
 ---
 
 # Aglet: Agenda Reborn — Project Overview Demo
@@ -199,7 +199,7 @@ Pressing `a` opens an inline scrollable category picker. Categories are grouped 
 
 ### Category Manager
 
-A full-screen mode for managing the category tree. Left pane shows the hierarchy with indent; right pane shows details, flags (Exclusive, Auto-match, Actionable), and a freeform note field. `H`/`J`/`K`/`L` reorder; `<<`/`>>` change depth level; `w` configures workflow roles.
+A full-screen mode for managing the category tree. Left pane shows the hierarchy with indent and readable rule-count badges like `[2 conditions]` or `[1 action]`; right pane shows details, flags (Exclusive, Auto-match, Actionable), conditions, actions, and a freeform note field. `H`/`J`/`K`/`L` reorder; `<<`/`>>` change depth level; workflow roles live in Global Settings (`g s` / `F10`).
 
 ### View Editor
 

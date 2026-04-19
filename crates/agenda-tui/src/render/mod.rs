@@ -4822,37 +4822,35 @@ impl App {
         let lines: Vec<Line<'static>> = vec![
             Line::from(Span::styled("CURRENT ITEM", header)),
             help_entry("n", "Add a new item to the focused section"),
-            help_entry("e", "Edit the selected item (text, note, categories)"),
-            help_entry("Enter", "Edit item / column cell / add (if empty)"),
+            help_entry("e / Enter", "Edit selected item; Enter adds when empty"),
             help_entry("a", "Assign categories to current item or selection"),
-            help_entry("d", "Toggle done on selected item(s)"),
-            help_entry("r", "Remove item from current view (keeps item)"),
-            help_entry("x", "Delete selected item(s)"),
-            help_entry(
-                "[/] or S-\u{2191}/\u{2193}",
-                "Move item to previous / next section",
-            ),
-            help_entry("J / K", "Jump cursor to next / previous section"),
-            help_entry("p", "Toggle the preview sidebar"),
-            help_entry("i/o", "Cycle preview mode"),
+            help_entry("d / D", "Toggle done on selected item(s)"),
+            help_entry("r / x", "Remove from view / delete selected item(s)"),
+            help_entry("b / B", "Open dependency link wizard (blocked-by / blocks)"),
+            help_entry("=", "Classify selected item(s) now"),
+            help_entry("p / i/o", "Toggle preview sidebar / cycle preview mode"),
             Line::from(""),
             Line::from(Span::styled("SELECTION", header)),
             help_entry("Space", "Toggle selection on current item"),
-            help_entry("b / B", "Link / unlink selected items (dependency)"),
-            help_entry("x", "Delete selected items"),
+            help_entry("a/d/x/=", "Batch assign, done, delete, or classify"),
+            help_entry("b / B", "Link selected items with a dependency"),
             help_entry("Esc", "Clear selection"),
             Line::from(""),
             Line::from(Span::styled("NAVIGATION", header)),
-            help_entry("\u{2191}/k \u{2193}/j", "Move between items"),
-            help_entry("\u{2190}/h \u{2192}/l", "Move between sections (lanes)"),
-            help_entry("J / K", "Jump cursor to next / previous section"),
-            help_entry("Tab/S-Tab", "Next / previous section"),
-            help_entry("m", "Cycle lane layout (single \u{2194} multi-column)"),
-            help_entry("z", "Cycle card size (compact \u{2194} detail)"),
+            help_entry(
+                "\u{2191}/k \u{2193}/j",
+                "Move items; scroll preview when focused",
+            ),
+            help_entry("\u{2190}/h \u{2192}/l", "Move between sections or columns"),
+            help_entry("Tab/S-Tab", "Next / previous section; J/K jump section"),
+            help_entry(
+                "[/] or S-\u{2191}/S-\u{2193}",
+                "Move item to previous / next section",
+            ),
+            help_entry("m / z", "Cycle lane layout / card size"),
             Line::from(""),
             Line::from(Span::styled("SEARCH", header)),
-            help_entry("/", "Search within the focused section"),
-            help_entry("g/", "Search across all sections (global)"),
+            help_entry("/ / g/", "Search focused section / all sections"),
             help_entry("Esc", "Clear active section filter"),
             Line::from(""),
             Line::from(Span::styled("COLUMNS", header)),
@@ -4864,13 +4862,13 @@ impl App {
             help_entry("s/S or </>", "Sort section by column (asc / desc)"),
             Line::from(""),
             Line::from(Span::styled("VIEWS", header)),
-            help_entry("v / F8", "Open the view picker"),
-            help_entry(",/.", "Previous / next view"),
-            help_entry("ga", "Jump to All Items view"),
+            help_entry("v/V/F8 ,/. ga", "Views, previous/next view, All Items"),
+            Line::from(""),
+            Line::from(Span::styled("DATEBOOK VIEWS", header)),
+            help_entry("{/}/0", "Browse previous / next period; return to today"),
             Line::from(""),
             Line::from(Span::styled("GLOBAL", header)),
-            help_entry("C", "Open classification review"),
-            help_entry("ga", "Jump to All Items view"),
+            help_entry("C", "Review pending classification suggestions"),
             help_entry("g s / F10", "Open Global Settings"),
             help_entry("c / F9", "Open the category manager"),
             help_entry("u", "Toggle hide-dependent-items filter"),
@@ -7202,10 +7200,12 @@ impl App {
                         }
                     }
                     if row.condition_count > 0 {
-                        badges.push(format!("C{}", row.condition_count));
+                        let suffix = if row.condition_count == 1 { "" } else { "s" };
+                        badges.push(format!("{} condition{}", row.condition_count, suffix));
                     }
                     if row.action_count > 0 {
-                        badges.push(format!("A{}", row.action_count));
+                        let suffix = if row.action_count == 1 { "" } else { "s" };
+                        badges.push(format!("{} action{}", row.action_count, suffix));
                     }
                     if !badges.is_empty() {
                         label.push(' ');

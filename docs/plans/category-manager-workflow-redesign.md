@@ -1,5 +1,6 @@
 ---
 title: Category Manager Workflow Redesign
+updated: 2026-04-19
 status: shipped
 created: 2026-03-15
 shipped: 2026-03-21
@@ -115,9 +116,15 @@ Replace the `Excl / Match / Todo` checkbox columns with inline exception badges 
 | `[no-todo]` | Actionable is off | When actionable is off (exception to default) |
 | `[ready-queue]` | Assigned as Ready Queue role | When this category is the Ready Queue |
 | `[claim-target]` | Assigned as Claim Target role | When this category is the Claim Target |
+| `[1 condition]`, `[2 conditions]` | Condition count | When category-owned conditions exist |
+| `[1 action]`, `[2 actions]` | Action count | When category-owned actions exist |
 | _(no badge)_ | Normal defaults | Match on, todo on, not exclusive |
 
 Most rows end up clean. Badges only appear where something is unusual — which is exactly when you want to notice it.
+
+Condition/action count badges intentionally spell out the noun. Earlier
+proposals used `[C2]` / `[A1]`, but those abbreviations were too easy to forget
+while scanning the tree.
 
 ### Category Details: Workflow Role Line
 

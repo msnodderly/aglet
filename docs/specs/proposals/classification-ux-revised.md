@@ -1,5 +1,6 @@
 ---
 title: Classification UX Revised
+updated: 2026-04-19
 status: draft
 created: 2026-03-21
 ---
@@ -496,19 +497,23 @@ actions defined:
 │   ├── Groceries
 │   └── Lodging
 ├── Priority [E]
-│   ├── High [C2] [A1]          ← 2 conditions, 1 action
+│   ├── High [2 conditions] [1 action]
 │   └── Normal
 ├── Status [E]
 │   ├── Ready [RQ]
 │   ├── In Progress [CT]
-│   └── Complete [A1]           ← 1 action (assign to Archive)
+│   └── Complete [1 action]
 └── Travel
 ```
 
 Badge legend:
-- `[C1]` / `[C2]` — condition count
-- `[A1]` / `[A2]` — action count
+- `[1 condition]` / `[2 conditions]` — condition count
+- `[1 action]` / `[2 actions]` — action count
 - Existing badges unchanged: `[E]` exclusive, `[RQ]` ready-queue, `[CT]` claim-target
+
+Implementation note: the shipped TUI uses readable count badges instead of the
+older `[C2]` / `[A1]` abbreviations because the compact forms were easy to
+forget.
 
 ### 7. Normal mode footer with suggestion indicator
 
