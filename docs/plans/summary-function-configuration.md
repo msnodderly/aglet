@@ -42,7 +42,7 @@ Once `summary_fn != None`, the SUMMARY row appears automatically.
 ### CLI: `view set-summary` subcommand
 
 ```
-agenda-cli view set-summary <VIEW_NAME> <SECTION_INDEX> <COLUMN_NAME> <FN>
+aglet view set-summary <VIEW_NAME> <SECTION_INDEX> <COLUMN_NAME> <FN>
 ```
 
 Where `<FN>` is one of: none, sum, avg, min, max, count.
@@ -72,7 +72,7 @@ Update the Normal-mode footer hints to include `F:summary`.
 | `crates/agenda-core/src/model.rs` | `SummaryFn::next()` and `label()` methods |
 | `crates/agenda-tui/src/modes/board.rs` | `F` keybinding handler |
 | `crates/agenda-tui/src/render/mod.rs` | Footer hint for `F` |
-| `crates/agenda-cli/src/main.rs` | `view set-summary` subcommand |
+| `crates/aglet/src/main.rs` | `view set-summary` subcommand |
 | `crates/agenda-tui/src/lib.rs` | TUI tests |
 
 ## Out of scope

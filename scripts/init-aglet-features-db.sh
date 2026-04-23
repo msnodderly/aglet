@@ -15,29 +15,29 @@ if [ -e "$db_path" ]; then
 fi
 
 # Issue type (non-exclusive)
-cargo run --bin agenda-cli -- --db "$db_path" category create "Issue type" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Bug" --parent "Issue type" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Idea" --parent "Issue type" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Feature request" --parent "Issue type" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Issue type" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Bug" --parent "Issue type" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Idea" --parent "Issue type" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Feature request" --parent "Issue type" 2>&1 | tail -1
 
 # Priority (exclusive)
-cargo run --bin agenda-cli -- --db "$db_path" category create "Priority" --exclusive 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Critical" --parent "Priority" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "High" --parent "Priority" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Normal" --parent "Priority" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Low" --parent "Priority" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Priority" --exclusive 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Critical" --parent "Priority" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "High" --parent "Priority" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Normal" --parent "Priority" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Low" --parent "Priority" 2>&1 | tail -1
 
 # Software Projects (non-exclusive)
-cargo run --bin agenda-cli -- --db "$db_path" category create "Software Projects" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Aglet" --parent "Software Projects" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "NeoNV" --parent "Software Projects" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Software Projects" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Aglet" --parent "Software Projects" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "NeoNV" --parent "Software Projects" 2>&1 | tail -1
 
 # Status (exclusive)
-cargo run --bin agenda-cli -- --db "$db_path" category create "Status" --exclusive 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Complete" --parent "Status" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "In Progress" --parent "Status" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Next Action" --parent "Status" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Ready" --parent "Status" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db "$db_path" category create "Waiting/Blocked" --parent "Status" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Status" --exclusive 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Complete" --parent "Status" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "In Progress" --parent "Status" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Next Action" --parent "Status" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Ready" --parent "Status" 2>&1 | tail -1
+cargo run --bin aglet -- --db "$db_path" category create "Waiting/Blocked" --parent "Status" 2>&1 | tail -1
 
 echo "created_db=$db_path"

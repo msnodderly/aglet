@@ -34,7 +34,7 @@ Do not start additional tasks after completing your assigned work.
    **Query candidates by complexity (required):**
    - Standard/unknown model lane (`1,2`):
    ```bash
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag list \
      --any-category Aglet \
      --exclude-category Done \
      --exclude-category Complete \
@@ -45,7 +45,7 @@ Do not start additional tasks after completing your assigned work.
    ```
    Equivalent low-lane form:
    ```bash
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag list \
      --any-category Aglet \
      --exclude-category Done \
      --exclude-category Complete \
@@ -56,7 +56,7 @@ Do not start additional tasks after completing your assigned work.
    ```
    - High-capability lane (`1,2,3,5`, if the model is any `Opus` or `GPT-5/Codex` variant):
    ```bash
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag list \
      --any-category Aglet \
      --exclude-category Done \
      --exclude-category Complete \
@@ -78,7 +78,7 @@ Do not start additional tasks after completing your assigned work.
 3. **Claim task**:
 
    ```bash
-   cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+   cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
    ```
 
 4. **Create worktree** (isolated branch/workdir):
@@ -94,13 +94,13 @@ Do not start additional tasks after completing your assigned work.
    branch_name=$(git branch --show-current)
    worktree_path=$(pwd)
    claim_note=$(printf 'Claimed %s: branch=%s worktree=%s\n' "$(date +%F)" "$branch_name" "$worktree_path")
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$claim_note"
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$claim_note"
    ```
 
 6. **Read item details**:
 
    ```bash
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
    ```
 
 7. **Create plan and save as note** (append concrete implementation steps):
@@ -114,7 +114,7 @@ Do not start additional tasks after completing your assigned work.
    4. <step 4>
    PLAN
    )
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$plan_note"
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$plan_note"
    ```
 
 ---
@@ -176,8 +176,8 @@ cargo test
    - <known caveats, if any>
    DONE
    )
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$completion_note"
-   cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$completion_note"
+   cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
    ```
 
 4. **Create PR** (for normal code-review flow):
@@ -222,7 +222,7 @@ git switch main
 
 # 1b) Query complexity-scoped candidates and choose ITEM_ID from your allowed lane
 # Standard/unknown model: complexity 1 or 2
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
+cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag list \
   --any-category Aglet \
   --exclude-category Done \
   --exclude-category Complete \
@@ -236,7 +236,7 @@ cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag list \
 # --value-in Complexity 1,2,3,5
 
 # 2) Claim item
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
 
 # 3) Create isolated worktree + branch
 git worktree add ../aglet-<ITEM_ID>-<SHORT_SLUG> -b codex/<ITEM_ID>-<SHORT_SLUG> main
@@ -246,10 +246,10 @@ cd ../aglet-<ITEM_ID>-<SHORT_SLUG>
 branch_name=$(git branch --show-current)
 worktree_path=$(pwd)
 claim_note=$(printf 'Claimed %s: branch=%s worktree=%s\n' "$(date +%F)" "$branch_name" "$worktree_path")
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$claim_note"
+cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$claim_note"
 
 # 5) Read item details
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
+cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag show <ITEM_ID>
 
 # 6) Save implementation plan to note
 plan_note=$(cat <<'PLAN'
@@ -260,7 +260,7 @@ Implementation plan (<YYYY-MM-DD>):
 4. <step 4>
 PLAN
 )
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$plan_note"
+cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$plan_note"
 
 # 7) Implement + verify
 cargo fmt
@@ -282,8 +282,8 @@ Implementation summary (<YYYY-MM-DD>):
 - <known caveats, if any>
 DONE
 )
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$completion_note"
-cargo run --bin agenda-cli -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
+cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag edit <ITEM_ID> --append-note "$completion_note"
+cargo run --bin aglet -- --db /Users/mds/src/aglet/aglet-features.ag category assign <ITEM_ID> "Complete"
 
 # 11) Create PR unless direct-merge is explicitly requested
 # pr_body_file=$(mktemp /tmp/aglet-pr-body-XXXX.md)
@@ -308,5 +308,5 @@ Before finishing, confirm:
 - [ ] `cargo clippy --all-targets --all-features` runs clean and all findings are addressed
 - [ ] `git status` is clean (or only expected uncommitted work if not finishing yet)
 - [ ] Branch has been pushed to remote (`git push` completed successfully)
-- [ ] `agenda-cli show <ITEM_ID>` reflects latest plan/completion note and includes `Complete` in `assignments:` (set after push)
+- [ ] `aglet show <ITEM_ID>` reflects latest plan/completion note and includes `Complete` in `assignments:` (set after push)
 - [ ] `AGENTS.md` updated for newly discovered gotchas (if any)

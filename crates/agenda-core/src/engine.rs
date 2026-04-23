@@ -1636,7 +1636,7 @@ mod tests {
         set_item_note(
             &store,
             item.id,
-            Some("The note includes agenda-cli list --category Ready."),
+            Some("The note includes aglet list --category Ready."),
         );
         store
             .assign_item(item.id, complete.id, &manual_assignment())

@@ -8111,7 +8111,7 @@ impl App {
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(Span::styled(
-                        "Pick two categories used by agenda-cli claim:",
+                        "Pick two categories used by aglet claim:",
                         Style::default().fg(MUTED_TEXT_COLOR),
                     )),
                     Line::from(""),

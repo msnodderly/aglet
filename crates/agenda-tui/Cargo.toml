@@ -2,6 +2,7 @@
 name = "agenda-tui"
 version = "0.1.0"
 edition = "2021"
+autobins = false
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }

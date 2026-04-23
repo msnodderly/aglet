@@ -950,12 +950,12 @@ The CLI provides:
 - **`unlink`** subcommands — depends-on, blocks, related.
 - **`tui`** — launches the interactive terminal UI.
 
-A key detail: running `agenda-cli` with no subcommand defaults to `list`. The `tui` command is special — it delegates to `agenda_tui::run()` before the normal Store/Agenda setup, since the TUI manages its own lifecycle.
+A key detail: running `aglet` with no subcommand opens the TUI. Use `aglet list` for the scriptable list command. The `tui` command is still available explicitly and delegates to `agenda_tui::run_with_options()` before the normal Store/Agenda setup, since the TUI manages its own lifecycle.
 
 Let us see the CLI in action against the project's own dogfooding database (`aglet-features.ag`):
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag category list 2>/dev/null
+cargo run --bin aglet -- --db aglet-features.ag category list 2>/dev/null
 ```
 
 ```output
@@ -986,7 +986,7 @@ cargo run --bin agenda-cli -- --db aglet-features.ag category list 2>/dev/null
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag view list 2>/dev/null
+cargo run --bin aglet -- --db aglet-features.ag view list 2>/dev/null
 ```
 
 ```output
@@ -994,7 +994,7 @@ Aglet (sections=2, and=1, not=0, or=0)
 All Items (sections=0, and=0, not=0, or=0)
 Expenses (sections=1, and=0, not=0, or=0)
 Software Projects (sections=2, and=1, not=0, or=0)
-hint: use `agenda view show "<name>"` to see view contents
+hint: use `aglet view show "<name>"` to see view contents
 ```
 
 ## 11. The TUI (`agenda-tui/`)
@@ -1010,7 +1010,6 @@ crates/agenda-tui/src/app.rs
 crates/agenda-tui/src/input/mod.rs
 crates/agenda-tui/src/input_panel.rs
 crates/agenda-tui/src/lib.rs
-crates/agenda-tui/src/main.rs
 crates/agenda-tui/src/modes/board.rs
 crates/agenda-tui/src/modes/category.rs
 crates/agenda-tui/src/modes/mod.rs
@@ -1133,7 +1132,7 @@ impl App {
 Let us trace what happens end-to-end when a user types:
 
 ```
-agenda-cli --db my.ag add "Call Sarah about Project Atlas tomorrow at 3pm"
+aglet --db my.ag add "Call Sarah about Project Atlas tomorrow at 3pm"
 ```
 
 1. **CLI** parses args, opens `my.ag`, creates `Agenda`.
@@ -1154,7 +1153,7 @@ agenda-cli --db my.ag add "Call Sarah about Project Atlas tomorrow at 3pm"
 6. **Deferred removals** are applied (any `Remove` actions).
 7. **CLI** prints `created <uuid>`, `parsed_when=...`, `new_assignments=N`.
 
-When the user later runs `agenda-cli list --view "My View"`:
+When the user later runs `aglet list --view "My View"`:
 
 1. `store.list_items()` loads all items with their assignments.
 2. `store.list_views()` finds the view by name.

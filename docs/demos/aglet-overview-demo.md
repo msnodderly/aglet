@@ -41,7 +41,7 @@ The TUI is the bulk of the codebase (~66% of lines) — it implements 17 distinc
 Let's create a fresh database and demonstrate the key concepts: items, hierarchical categories, numeric values, views with sections, and the auto-assignment engine.
 
 ```bash
-A=/Users/mds/src/aglet/target/release/agenda-cli
+A=/Users/mds/src/aglet/target/release/aglet
 DB=/tmp/aglet-demo.ag
 rm -f $DB
 $A --db $DB category create "Priority" --exclusive
@@ -88,7 +88,7 @@ created category Cost (type=Numeric, processed_items=0, affected_items=0)
 Item text is scanned against category names at creation time. Matching tokens trigger automatic assignment — no manual tagging needed for common patterns.
 
 ```bash
-A=/Users/mds/src/aglet/target/release/agenda-cli
+A=/Users/mds/src/aglet/target/release/aglet
 DB=/tmp/aglet-demo.ag
 $A --db $DB add "Refactor Backend auth module" --note "Needs security review"
 $A --db $DB add "Design new Frontend dashboard"
@@ -123,7 +123,7 @@ be778352-26fc-419b-9c7c-0a097804f38c  open    -                    Refactor Back
 ## Manual Assignment, Numeric Values, and Dependencies
 
 ```bash
-A=/Users/mds/src/aglet/target/release/agenda-cli
+A=/Users/mds/src/aglet/target/release/aglet
 DB=/tmp/aglet-demo.ag
 # Assign Priority manually (exclusive: only one child allowed)
 $A --db $DB category assign be778352 High
@@ -185,7 +185,7 @@ be778352-26fc-419b-9c7c-0a097804f38c  open    -                    Refactor Back
 
 ## The TUI
 
-The TUI (`agenda-cli tui`) provides a full interactive interface over the same SQLite store. It is built on `ratatui` with a custom rendering pipeline.
+The TUI (`aglet tui`) provides a full interactive interface over the same SQLite store. It is built on `ratatui` with a custom rendering pipeline.
 
 ### Normal View — Sectioned Column Layout
 

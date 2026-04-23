@@ -38,9 +38,9 @@ To show items with different mutually exclusive values:
 - Create separate views for each value
 - Or use sections (TUI feature, not yet exposed in CLI)
 
-## `agenda-cli view clone` Semantics
+## `aglet view clone` Semantics
 
-`agenda-cli view clone "<source>" "<new name>"` creates a new mutable view by
+`aglet view clone "<source>" "<new name>"` creates a new mutable view by
 copying the source view configuration (criteria, sections, unmatched settings,
 aliases, and display metadata) with a fresh ID.
 
@@ -52,34 +52,34 @@ Practical implications:
 
 ## CLI Default Behavior
 
-Running `agenda-cli list` without arguments shows a default view, which may be
-empty if not configured correctly. Use `agenda-cli view show "All Items"` to
+Running `aglet list` without arguments shows a default view, which may be
+empty if not configured correctly. Use `aglet view show "All Items"` to
 see all items, or create views that match your data.
 
-`agenda-cli list --category` supports repeated flags with AND semantics.
-For example, `agenda-cli list --category High --category Pending` returns items
+`aglet list --category` supports repeated flags with AND semantics.
+For example, `aglet list --category High --category Pending` returns items
 that have both categories.
 
-`agenda-cli list --any-category` supports repeated flags with OR semantics.
-For example, `agenda-cli list --any-category Aglet --any-category NeoNV` returns
+`aglet list --any-category` supports repeated flags with OR semantics.
+For example, `aglet list --any-category Aglet --any-category NeoNV` returns
 items that have either category.
 
-`agenda-cli list --exclude-category` supports repeated flags with NOT semantics.
-For example, `agenda-cli list --exclude-category Complete` removes completed
+`aglet list --exclude-category` supports repeated flags with NOT semantics.
+For example, `aglet list --exclude-category Complete` removes completed
 status/category matches from results.
 
 Dependency-state filtering is available via derived flags (not assignable
 categories):
-- `agenda-cli list --blocked` / `--not-blocked`
-- `agenda-cli search <query> --blocked` / `--not-blocked`
-- `agenda-cli view show "<name>" --blocked` / `--not-blocked`
+- `aglet list --blocked` / `--not-blocked`
+- `aglet search <query> --blocked` / `--not-blocked`
+- `aglet view show "<name>" --blocked` / `--not-blocked`
 
 `blocked` means the item has at least one unresolved `depends-on` prerequisite.
 This state is computed from links + done state at query time.
 
 ## Claim Workflow Uses Dependency State But Is Not A Link Type (Current)
 
-The workflow-backed claim flow (`agenda-cli ready`, `claim`, `release`) uses
+The workflow-backed claim flow (`aglet ready`, `claim`, `release`) uses
 dependency state as one input, but it is a **separate concept** from item
 links.
 
@@ -128,7 +128,7 @@ Practical implications:
 - Example commands or acceptance criteria inside notes can accidentally match
   categories like `Ready`, `CLI`, or `TUI`
 - If an item appears in a status/project view unexpectedly, inspect
-  `agenda-cli show` assignment provenance before assuming the visible category
+  `aglet show` assignment provenance before assuming the visible category
   was manually assigned
 
 ## Continuous Implicit-String Matches Persist As `AutoClassified` (Surprising)
@@ -207,7 +207,7 @@ Practical implications:
 
 ## CLI And TUI Search Semantics Are Centralized In `agenda-core` (Updated)
 
-CLI `agenda-cli search <query>` and the TUI per-lane `/` search now both route
+CLI `aglet search <query>` and the TUI per-lane `/` search now both route
 through `agenda_core::query::matches_text_search(...)`.
 
 Practical implications:
@@ -235,8 +235,8 @@ Practical implications:
 Aglet databases use the `.ag` extension and are SQLite files. The CLI accepts
 `--db <path>` (or `AGENDA_DB` env var) to target a specific database.
 
-The project has two binaries: `agenda-cli` and `agenda-tui`. Use
-`cargo run --bin agenda-cli` or `cargo run --bin agenda-tui` to run them.
+The project has one user-facing binary: `aglet`. Use `cargo run --bin aglet`
+for CLI commands; running it without a subcommand opens the TUI.
 
 ## Schema Version Drift Can Hide Missing Tables/Columns (Surprising)
 
@@ -257,7 +257,7 @@ Practical implications:
   stamped current.
 - If a DB reports version 11 but lacks `classification_suggestions`, patch the
   table/indexes idempotently with SQLite (or add a newer migration/version bump
-  in code) instead of assuming `agenda-cli` open is sufficient.
+  in code) instead of assuming `aglet` open is sufficient.
 
 ## Documentation Layout
 
@@ -323,29 +323,29 @@ Surprising gotcha: the parent category name in `aglet-features.ag` may be
 command errors with `category not found`, run `category list` and use the exact
 name from that DB.
 
-## `agenda-cli show` status vs Status category (Surprising)
+## `aglet show` status vs Status category (Surprising)
 
 In `aglet-features.ag`, assigning workflow categories like `Ready`,
 `In Progress`, or `Complete` does not change the top-level `status:` field shown
-by `agenda-cli show`; it can still print `status: open`.
+by `aglet show`; it can still print `status: open`.
 
 Treat the `assignments:` section as the source of truth for workflow status
 categories in this DB.
 
 ## Claimed Items Can Show Stale `Status` Provenance Text (Surprising)
 
-After `agenda-cli claim <ITEM_ID>` moves an item from `Ready` to the workflow
-claim target (for example `In Progress`), `agenda-cli ready` correctly removes
-the item from the queue and `agenda-cli show` shows the new claim assignment.
+After `aglet claim <ITEM_ID>` moves an item from `Ready` to the workflow
+claim target (for example `In Progress`), `aglet ready` correctly removes
+the item from the queue and `aglet show` shows the new claim assignment.
 However, the `assignments:` section can still show a `Status | Subsumption`
 explanation that says it was inherited from child `Ready`, even when `Ready`
 is no longer listed as an active assignment.
 
 Practical implications:
-- Do not assume a successful claim failed just because `agenda-cli show`
+- Do not assume a successful claim failed just because `aglet show`
   mentions `subsumption:Status` from `Ready`.
 - Verify the actual claimed category assignment (`In Progress | Manual |
-  manual:cli.claim`) and/or re-run `agenda-cli ready` to confirm the item left
+  manual:cli.claim`) and/or re-run `aglet ready` to confirm the item left
   the queue.
 
 ## Edit Panel Category Checks Include Derived Assignments (Current)
@@ -355,7 +355,7 @@ initialized from all current assignment keys, including derived sources
 (`AutoMatch`, `Subsumption`), so Edit Item matches Assign/Column picker state.
 
 Practical implications:
-- If `agenda-cli show` reports `In Progress | AutoMatch | cat:In Progress`,
+- If `aglet show` reports `In Progress | AutoMatch | cat:In Progress`,
   `In Progress` should now appear checked in Edit Item categories.
 - Category diffs in Edit Item are computed against the full current assignment
   key set (not just manual/action rows).
@@ -367,13 +367,13 @@ categories individually with the full UUID:
 
 ```bash
 # 1. Create the item and extract the UUID from the "created ..." line
-item_id=$(cargo run --bin agenda-cli -- --db aglet-features.ag add "Title here" --note "Description..." 2>&1 | awk '/^created /{print $2; exit}')
+item_id=$(cargo run --bin aglet -- --db aglet-features.ag add "Title here" --note "Description..." 2>&1 | awk '/^created /{print $2; exit}')
 
 # 2. Assign categories (use full UUID)
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" "Feature request" 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Aglet 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
+cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" "Feature request" 2>&1 | tail -1
+cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Aglet 2>&1 | tail -1
+cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
+cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
 ```
 
 Quote category names that contain spaces (e.g., `"Feature request"`,
@@ -384,17 +384,17 @@ Quote category names that contain spaces (e.g., `"Feature request"`,
 **Do not use shell variable shorthand for commands.** This does NOT work:
 
 ```bash
-CLI="cargo run --bin agenda-cli -- --db aglet-features.ag"
+CLI="cargo run --bin aglet -- --db aglet-features.ag"
 $CLI list   # ERROR: command not found
 ```
 
 Write the full command each time, or use `&&` to chain them:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag add "Title" --note "..." 2>&1 | tail -2
+cargo run --bin aglet -- --db aglet-features.ag add "Title" --note "..." 2>&1 | tail -2
 ```
 
-**`add` output parsing gotcha.** `agenda-cli add` can print additional lines
+**`add` output parsing gotcha.** `aglet add` can print additional lines
 after `created <uuid>` (for example `parsed_when=...`). Do not assume the last
 line is always `created ...`; extract the ID by matching the `^created ` prefix.
 
@@ -406,19 +406,19 @@ happens, re-run selection and claim the next eligible item; do not force-assign.
 **Current claim CLI syntax is workflow-based.** The public commands are:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag ready
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag release <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag ready
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag release <ITEM_ID>
 # alias:
-cargo run --bin agenda-cli -- --db aglet-features.ag unclaim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag unclaim <ITEM_ID>
 ```
 
 Practical implications:
-- Older examples showing `agenda-cli claim <ITEM_ID> --must-not-have ...` are
+- Older examples showing `aglet claim <ITEM_ID> --must-not-have ...` are
   stale; current `claim` accepts only the item id.
-- Prefer `agenda-cli ready` when picking work; it already excludes done,
+- Prefer `aglet ready` when picking work; it already excludes done,
   claimed, and dependency-blocked items using workflow config.
-- `agenda-cli view show "Ready Queue" --blocked` is invalid and
+- `aglet view show "Ready Queue" --blocked` is invalid and
   `--not-blocked` is redundant because the Ready Queue already shows only
   claimable items.
 - Marking an item done clears the configured claim assignment automatically; you
@@ -429,8 +429,8 @@ UUID instead of the full ID:
 
 ```bash
 # These are equivalent:
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign be6f0754 High
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
+cargo run --bin aglet -- --db aglet-features.ag category assign be6f0754 High
+cargo run --bin aglet -- --db aglet-features.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
 ```
 
 ## Item ID Prefix Matching
@@ -448,10 +448,10 @@ hex prefix works (e.g., `d157` resolves to `d15772e9-b608-...`).
 assign categories with `&&`-chained commands:
 
 ```bash
-item_id=$(cargo run --bin agenda-cli -- --db aglet-features.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
+item_id=$(cargo run --bin aglet -- --db aglet-features.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
 # Then assign:
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
+cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
+cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
 ```
 
 **Items appearing twice in `list` or `view show` is expected.** The "All Items"
@@ -486,9 +486,9 @@ Practical implications:
 - `rustfmt <file>` is not guaranteed to stay single-file here; still verify for
   spillover changes.
 
-## `agenda-cli edit --note-stdin` Semantics (Surprising)
+## `aglet edit --note-stdin` Semantics (Surprising)
 
-`agenda-cli edit <ITEM_ID> --note-stdin` replaces the entire note with stdin
+`aglet edit <ITEM_ID> --note-stdin` replaces the entire note with stdin
 content and is mutually exclusive with `--note`, `--append-note`, and
 `--clear-note`.
 
@@ -496,7 +496,7 @@ Practical implications:
 - Passing `--note-stdin` with any other note-operation flag returns a validation
   error.
 - Empty stdin payload is a no-op (note content is preserved).
-- Useful shell form: `printf "line one\nline two\n" | cargo run --bin agenda-cli -- --db <db> edit <ITEM_ID> --note-stdin`
+- Useful shell form: `printf "line one\nline two\n" | cargo run --bin aglet -- --db <db> edit <ITEM_ID> --note-stdin`
 
 ## Direct SQLite `when_date` Imports Need Store Format + Do Not Sync `When` Assignment (Surprising)
 
@@ -544,7 +544,7 @@ Board/table columns are stored on `View.sections[*].columns` (serialized inside
 `views.sections_json`). The `views.columns_json` column is a legacy field and is
 ignored by current `Store::row_to_view`.
 
-Related gotcha: CLI `agenda-cli view show` prints section item tables but does
+Related gotcha: CLI `aglet view show` prints section item tables but does
 not render section column definitions at all, so board-column changes are only
 visible in the TUI today.
 
@@ -863,7 +863,7 @@ Practical implications:
 
 ## Clap `--help` Coverage Requires Per-Arg Doc Comments (Surprising)
 
-In `agenda-cli`, Clap renders blank lines for options/arguments that have no
+In `aglet`, Clap renders blank lines for options/arguments that have no
 doc comment/help string, even when the command itself is documented.
 
 Practical implications:

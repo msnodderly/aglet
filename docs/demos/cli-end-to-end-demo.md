@@ -8,7 +8,7 @@ updated: 2026-03-21
 *2026-03-06T07:10:42Z by Showboat 0.6.1*
 <!-- showboat-id: 14d1f096-641e-4d9f-b421-ce1b7984200c -->
 
-This document exercises the aglet CLI (agenda-cli) against a fresh database, covering all major commands and exploring edge cases. It serves as both a functional test suite and living documentation of CLI behavior.
+This document exercises the `aglet` command against a fresh database, covering all major commands and exploring edge cases. It serves as both a functional test suite and living documentation of CLI behavior.
 
 We use a temporary database at `/tmp/cli-demo-test.ag` so tests are isolated and reproducible.
 
@@ -17,15 +17,15 @@ We use a temporary database at `/tmp/cli-demo-test.ag` so tests are isolated and
 First, let's make sure the CLI builds and see the top-level help.
 
 ```bash
-cargo run --bin agenda-cli -- --help 2>&1
+cargo run --bin aglet -- --help 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --help`
-Agenda Reborn CLI
+     Running `target/debug/aglet --help`
+Aglet CLI/TUI
 
-Usage: agenda-cli [OPTIONS] [COMMAND]
+Usage: aglet [OPTIONS] [COMMAND]
 
 Commands:
   add       Add a new item
@@ -55,42 +55,42 @@ Options:
 Let's start with a fresh database and add some items.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag add 'Buy groceries' --note 'Milk, eggs, bread' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag add 'Buy groceries' --note 'Milk, eggs, bread' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag add 'Buy groceries' --note 'Milk, eggs, bread'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag add 'Buy groceries' --note 'Milk, eggs, bread'`
 created c714559e-d4ea-40ee-bb11-1ba1affc6308
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag add 'Fix login bug' --note 'Users see 500 error on /login when session expires' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag add 'Fix login bug' --note 'Users see 500 error on /login when session expires' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag add 'Fix login bug' --note 'Users see 500 error on /login when session expires'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag add 'Fix login bug' --note 'Users see 500 error on /login when session expires'`
 created d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag add 'Write quarterly report' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag add 'Write quarterly report' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag add 'Write quarterly report'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag add 'Write quarterly report'`
 created 4d93ab0c-ad5d-4140-874c-cb90d67373fd
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag add 'Deploy v2.0 to production' --note 'Needs sign-off from QA first' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag add 'Deploy v2.0 to production' --note 'Needs sign-off from QA first' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag add 'Deploy v2.0 to production' --note 'Needs sign-off from QA first'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag add 'Deploy v2.0 to production' --note 'Needs sign-off from QA first'`
 created f168af00-7620-4a7c-a556-b5ad721bcd5b
 ```
 
@@ -99,12 +99,12 @@ created f168af00-7620-4a7c-a556-b5ad721bcd5b
 What happens if we try to add an item with an empty string?
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag add '' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag add '' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag add ''`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag add ''`
 created 4fcf7aa8-33ba-434b-9523-63664cc33adf
 ```
 
@@ -113,12 +113,12 @@ created 4fcf7aa8-33ba-434b-9523-63664cc33adf
 ### Edge case: Adding without --db flag and no AGENDA_DB env
 
 ```bash
-AGENDA_DB= cargo run --bin agenda-cli -- add 'test' 2>&1
+AGENDA_DB= cargo run --bin aglet -- add 'test' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli add test`
+     Running `target/debug/aglet add test`
 error: a value is required for '--db <DB>' but none was supplied
 
 For more information, try '--help'.
@@ -131,12 +131,12 @@ Good — the CLI properly requires a database path and gives a clear error messa
 Let's inspect an item using its full UUID and then try prefix matching.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e-d4ea-40ee-bb11-1ba1affc6308 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e-d4ea-40ee-bb11-1ba1affc6308 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show c714559e-d4ea-40ee-bb11-1ba1affc6308`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show c714559e-d4ea-40ee-bb11-1ba1affc6308`
 id:         c714559e-d4ea-40ee-bb11-1ba1affc6308
 text:       Buy groceries
 status:     open
@@ -155,12 +155,12 @@ related: (none)
 The CLI supports short UUID prefixes. Let's try with just the first 8 characters:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show c714559e`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show c714559e`
 id:         c714559e-d4ea-40ee-bb11-1ba1affc6308
 text:       Buy groceries
 status:     open
@@ -177,12 +177,12 @@ related: (none)
 ### Edge case: Invalid UUID prefix
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show zzzzzzzz 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show zzzzzzzz 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show zzzzzzzz`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show zzzzzzzz`
 error: invalid operation: invalid item id prefix: zzzzzzzz
 ```
 
@@ -191,12 +191,12 @@ Good — non-hex prefixes are rejected with a clear error.
 ### Edge case: Nonexistent but valid hex prefix
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show aaaaaaaa 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show aaaaaaaa 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show aaaaaaaa`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show aaaaaaaa`
 error: invalid operation: no item found matching prefix: aaaaaaaa
 ```
 
@@ -205,12 +205,12 @@ Good error handling for missing items.
 ## 3. Listing Items
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -232,17 +232,17 @@ Notice the empty-text item (4fcf7aa8) shows up with a blank title — confirming
 Let's edit an item's text and note.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit c714559e --text 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit c714559e --text 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit c714559e --text 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit c714559e --text 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread'`
 error: unexpected argument '--text' found
 
   tip: to pass '--text' as a value, use '-- --text'
 
-Usage: agenda-cli edit <ITEM_ID> [TEXT]
+Usage: aglet edit <ITEM_ID> [TEXT]
 
 For more information, try '--help'.
 ```
@@ -250,22 +250,22 @@ For more information, try '--help'.
 **Gotcha:** `--text` is not a named flag — the new text is a positional argument after the item ID. The help message says 'also available as --text' but that doesn't actually work. Let's use the correct positional form:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit c714559e 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit c714559e 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit c714559e 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit c714559e 'Buy groceries (organic)' --note 'Organic milk, free-range eggs, sourdough bread'`
 updated c714559e-d4ea-40ee-bb11-1ba1affc6308
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show c714559e`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show c714559e`
 id:         c714559e-d4ea-40ee-bb11-1ba1affc6308
 text:       Buy groceries (organic)
 status:     open
@@ -284,22 +284,22 @@ related: (none)
 ### Appending notes
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit c714559e --append-note 'Also need butter and cheese' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit c714559e --append-note 'Also need butter and cheese' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit c714559e --append-note 'Also need butter and cheese'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit c714559e --append-note 'Also need butter and cheese'`
 updated c714559e-d4ea-40ee-bb11-1ba1affc6308
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | head -10
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | head -10
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show c714559e`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show c714559e`
 id:         c714559e-d4ea-40ee-bb11-1ba1affc6308
 text:       Buy groceries (organic)
 status:     open
@@ -313,12 +313,12 @@ Also need butter and cheese
 ### Edge case: Mutually exclusive note flags
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit c714559e --note 'Replace' --append-note 'And append' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit c714559e --note 'Replace' --append-note 'And append' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit c714559e --note Replace --append-note 'And append'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit c714559e --note Replace --append-note 'And append'`
 error: --note, --append-note, --note-stdin, and --clear-note are mutually exclusive
 ```
 
@@ -329,57 +329,57 @@ Good — clear error for mutually exclusive note operations.
 Categories are the heart of aglet's organization system. Let's create a category hierarchy.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Priority' --exclusive 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Priority' --exclusive 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Priority --exclusive`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Priority --exclusive`
 created category Priority (type=Tag, processed_items=5, affected_items=0)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'High' --parent Priority 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Normal' --parent Priority 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Low' --parent Priority 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'High' --parent Priority 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Normal' --parent Priority 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Low' --parent Priority 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create High --parent Priority`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create High --parent Priority`
 created category High (type=Tag, processed_items=5, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Normal --parent Priority`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Normal --parent Priority`
 created category Normal (type=Tag, processed_items=5, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Low --parent Priority`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Low --parent Priority`
 created category Low (type=Tag, processed_items=5, affected_items=0)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Status' --exclusive 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Pending' --parent Status 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'In Progress' --parent Status 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Completed' --parent Status 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Status' --exclusive 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Pending' --parent Status 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'In Progress' --parent Status 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Completed' --parent Status 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Status --exclusive`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Status --exclusive`
 created category Status (type=Tag, processed_items=5, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Pending --parent Status`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Pending --parent Status`
 created category Pending (type=Tag, processed_items=5, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create 'In Progress' --parent Status`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create 'In Progress' --parent Status`
 created category In Progress (type=Tag, processed_items=5, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Completed --parent Status`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Completed --parent Status`
 created category Completed (type=Tag, processed_items=5, affected_items=0)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category list 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category list 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category list`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category list`
 - Done [no-implicit-string] [non-actionable]
 - Entry [no-implicit-string] [non-actionable]
 - Priority [exclusive]
@@ -398,52 +398,52 @@ Note the reserved categories (Done, Entry, When) that are pre-created automatica
 ### Assigning categories to items
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign c714559e High 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign c714559e Pending 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign c714559e High 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign c714559e Pending 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign c714559e High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign c714559e High`
 assigned item c714559e-d4ea-40ee-bb11-1ba1affc6308 to category High
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign c714559e Pending`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign c714559e Pending`
 assigned item c714559e-d4ea-40ee-bb11-1ba1affc6308 to category Pending
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign d3a5c306 High 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign d3a5c306 'In Progress' 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign 4d93ab0c Normal 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign 4d93ab0c Pending 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign f168af00 High 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign f168af00 Pending 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign d3a5c306 High 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign d3a5c306 'In Progress' 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign 4d93ab0c Normal 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign 4d93ab0c Pending 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign f168af00 High 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign f168af00 Pending 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign d3a5c306 High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign d3a5c306 High`
 assigned item d3a5c306-5810-4f80-b5c2-1068feeb2f7d to category High
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign d3a5c306 'In Progress'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign d3a5c306 'In Progress'`
 assigned item d3a5c306-5810-4f80-b5c2-1068feeb2f7d to category In Progress
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign 4d93ab0c Normal`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign 4d93ab0c Normal`
 assigned item 4d93ab0c-ad5d-4140-874c-cb90d67373fd to category Normal
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign 4d93ab0c Pending`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign 4d93ab0c Pending`
 assigned item 4d93ab0c-ad5d-4140-874c-cb90d67373fd to category Pending
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign f168af00 High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign f168af00 High`
 assigned item f168af00-7620-4a7c-a556-b5ad721bcd5b to category High
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign f168af00 Pending`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign f168af00 Pending`
 assigned item f168af00-7620-4a7c-a556-b5ad721bcd5b to category Pending
 ```
 
 ### Edge case: Trying to create a reserved category name
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Done' --parent Status 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Done' --parent Status 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Done --parent Status`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Done --parent Status`
 error: cannot modify reserved category: Done
 ```
 
@@ -452,17 +452,17 @@ Reserved categories (Done, When, Entry) are correctly protected.
 ### Edge case: Exclusive category conflict — assigning two children of an exclusive parent
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign c714559e Low 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign c714559e Low 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign c714559e Low`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign c714559e Low`
 assigned item c714559e-d4ea-40ee-bb11-1ba1affc6308 to category Low
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A20 'assignments:'
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A20 'assignments:'
 ```
 
 ```output
@@ -481,12 +481,12 @@ Exclusive categories work correctly — assigning `Low` to an item that already 
 ## 6. Filtering and Search
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --category High 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --category High 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --category High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --category High`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -502,12 +502,12 @@ d3a5c306-5810-4f80-b5c2-1068feeb2f7d  open    -                    Fix login bug
 ### AND semantics with --category (multiple flags)
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --category High --category Pending 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --category High --category Pending 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --category High --category Pending`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --category High --category Pending`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -522,12 +522,12 @@ AND semantics work: only 'Deploy v2.0' has both High AND Pending. 'Fix login bug
 ### OR semantics with --any-category
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --any-category High --any-category Normal 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --any-category High --any-category Normal 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --any-category High --any-category Normal`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --any-category High --any-category Normal`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -545,12 +545,12 @@ d3a5c306-5810-4f80-b5c2-1068feeb2f7d  open    -                    Fix login bug
 ### Exclusion with --exclude-category
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --exclude-category 'In Progress' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --exclude-category 'In Progress' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --exclude-category 'In Progress'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --exclude-category 'In Progress'`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -571,12 +571,12 @@ Good — 'Fix login bug' (In Progress) is correctly excluded.
 ### Search
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag search 'bug' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag search 'bug' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag search bug`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag search bug`
 ID                                    STATUS  WHEN                 TITLE
 ------------------------------------  ------  -------------------  -----
 d3a5c306-5810-4f80-b5c2-1068feeb2f7d  open    -                    Fix login bug
@@ -587,12 +587,12 @@ d3a5c306-5810-4f80-b5c2-1068feeb2f7d  open    -                    Fix login bug
 ### Edge case: Search matches note text, not just title
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag search 'sourdough' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag search 'sourdough' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag search sourdough`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag search sourdough`
 ID                                    STATUS  WHEN                 TITLE
 ------------------------------------  ------  -------------------  -----
 c714559e-d4ea-40ee-bb11-1ba1affc6308  open    -                    Buy groceries (organic)
@@ -607,19 +607,19 @@ Search correctly searches both title and note text. The word 'sourdough' only ap
 Let's create dependency links between items.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag link depends-on f168af00 d3a5c306 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag link depends-on f168af00 d3a5c306 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag link depends-on f168af00 d3a5c306`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag link depends-on f168af00 d3a5c306`
 linked f168af00-7620-4a7c-a556-b5ad721bcd5b depends-on d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 ```
 
 Deploy v2.0 now depends on Fix login bug. Let's verify:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep -E '(prereqs|dependents|text):'
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep -E '(prereqs|dependents|text):'
 ```
 
 ```output
@@ -628,12 +628,12 @@ prereqs:
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show f168af00 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show f168af00 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show f168af00`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show f168af00`
 id:         f168af00-7620-4a7c-a556-b5ad721bcd5b
 text:       Deploy v2.0 to production
 status:     open
@@ -655,12 +655,12 @@ related: (none)
 ### Blocked/not-blocked filtering
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --blocked 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --blocked 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --blocked`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --blocked`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -671,12 +671,12 @@ f168af00-7620-4a7c-a556-b5ad721bcd5b  open    -                    Deploy v2.0 t
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --not-blocked 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --not-blocked 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --not-blocked`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --not-blocked`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -697,17 +697,17 @@ Blocked/not-blocked filtering works correctly. 'Deploy v2.0' is blocked because 
 ### Related links
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag link related c714559e 4d93ab0c 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag link related c714559e 4d93ab0c 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag link related c714559e 4d93ab0c`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag link related c714559e 4d93ab0c`
 linked c714559e-d4ea-40ee-bb11-1ba1affc6308 related 4d93ab0c-ad5d-4140-874c-cb90d67373fd
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A2 'related:'
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A2 'related:'
 ```
 
 ```output
@@ -720,33 +720,33 @@ related:
 Views provide reusable filter configurations.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view list 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view list 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view list`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view list`
 All Items (sections=0, and=0, not=0, or=0, hide_dependent_items=false)
-hint: use `agenda view show "<name>"` to see view contents
+hint: use `aglet view show "<name>"` to see view contents
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view create 'High Priority' --include High 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view create 'High Priority' --include High 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view create 'High Priority' --include High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view create 'High Priority' --include High`
 created view High Priority
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view show 'High Priority' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view show 'High Priority' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view show 'High Priority'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view show 'High Priority'`
 # High Priority
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -762,22 +762,22 @@ d3a5c306-5810-4f80-b5c2-1068feeb2f7d  open    -                    Fix login bug
 ### View with exclude filter
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view create 'Ready to Work' --include Pending --exclude 'In Progress' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view create 'Ready to Work' --include Pending --exclude 'In Progress' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view create 'Ready to Work' --include Pending --exclude 'In Progress'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view create 'Ready to Work' --include Pending --exclude 'In Progress'`
 created view Ready to Work
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view show 'Ready to Work' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view show 'Ready to Work' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view show 'Ready to Work'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view show 'Ready to Work'`
 # Ready to Work
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -795,24 +795,24 @@ c714559e-d4ea-40ee-bb11-1ba1affc6308  open    -                    Buy groceries
 ### Cloning views
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view clone 'High Priority' 'Critical Items' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view clone 'High Priority' 'Critical Items' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view clone 'High Priority' 'Critical Items'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view clone 'High Priority' 'Critical Items'`
 cloned view High Priority -> Critical Items
 ```
 
 ### Edge case: Cloning the immutable 'All Items' view
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view clone 'All Items' 'My All Items' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view clone 'All Items' 'My All Items' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view clone 'All Items' 'My All Items'`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view clone 'All Items' 'My All Items'`
 cloned view All Items -> My All Items
 ```
 
@@ -821,12 +821,12 @@ Cloning an immutable view works fine — it creates a new mutable copy.
 ### Edge case: Creating a view with a reserved name
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag view create 'All Items' --include High 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag view create 'All Items' --include High 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag view create 'All Items' --include High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag view create 'All Items' --include High`
 error: invalid operation: cannot create system view: All Items
 ```
 
@@ -835,12 +835,12 @@ Good — reserved system view name is correctly rejected.
 ## 9. Claim (Atomic Workflow Transition)
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag claim 4d93ab0c 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag claim 4d93ab0c 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag claim 4d93ab0c`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag claim 4d93ab0c`
 error: category not found: Complete
 ```
 
@@ -851,12 +851,12 @@ This is fragile — the command should either document the required category nam
 The `claim` command has `--must-not-have` defaults that include 'Complete' (not 'Completed'). Since our DB uses 'Completed', the category lookup fails. We can either rename it or pass custom flags. Let's rename to match the expected convention:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category rename Completed Complete 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category rename Completed Complete 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category rename Completed Complete`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category rename Completed Complete`
 renamed Completed -> Complete (processed_items=5, affected_items=0)
 ```
 
@@ -865,24 +865,24 @@ renamed Completed -> Complete (processed_items=5, affected_items=0)
 Now let's try claim again:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag claim 4d93ab0c 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag claim 4d93ab0c 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag claim 4d93ab0c`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag claim 4d93ab0c`
 claimed item 4d93ab0c-ad5d-4140-874c-cb90d67373fd to category In Progress
 ```
 
 ### Edge case: Double-claiming
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag claim 4d93ab0c 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag claim 4d93ab0c 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag claim 4d93ab0c`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag claim 4d93ab0c`
 error: invalid operation: claim precondition failed: item 4d93ab0c-ad5d-4140-874c-cb90d67373fd already has category 'In Progress'
 ```
 
@@ -891,44 +891,44 @@ Good — the claim precondition prevents double-claiming.
 ## 10. Delete and Restore
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag delete 4fcf7aa8 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag delete 4fcf7aa8 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag delete 4fcf7aa8`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag delete 4fcf7aa8`
 deleted 4fcf7aa8-33ba-434b-9523-63664cc33adf
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag deleted 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag deleted 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag deleted`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag deleted`
 d8e47956-74de-4029-9581-986d74e6bc8d | item=4fcf7aa8-33ba-434b-9523-63664cc33adf | deleted_at=2026-03-06T07:19:48.848056+00:00 | by=user:cli | 
 ```
 
 The deletion log records who deleted the item (user:cli) and when. Let's restore it:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag restore d8e47956-74de-4029-9581-986d74e6bc8d 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag restore d8e47956-74de-4029-9581-986d74e6bc8d 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag restore d8e47956-74de-4029-9581-986d74e6bc8d`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag restore d8e47956-74de-4029-9581-986d74e6bc8d`
 restored item 4fcf7aa8-33ba-434b-9523-63664cc33adf
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show 4fcf7aa8 2>&1 | head -5
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show 4fcf7aa8 2>&1 | head -5
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show 4fcf7aa8`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show 4fcf7aa8`
 id:         4fcf7aa8-33ba-434b-9523-63664cc33adf
 text:       
 status:     open
@@ -937,34 +937,34 @@ status:     open
 Restore works. The empty-text item is back. Now let's permanently delete it:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag delete 4fcf7aa8 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag delete 4fcf7aa8 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag delete 4fcf7aa8`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag delete 4fcf7aa8`
 deleted 4fcf7aa8-33ba-434b-9523-63664cc33adf
 ```
 
 ## 11. Marking Items Done
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit d3a5c306 --done true 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit d3a5c306 --done true 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit d3a5c306 --done true`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit d3a5c306 --done true`
 marked done d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show d3a5c306 2>&1 | head -6
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show d3a5c306 2>&1 | head -6
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag show d3a5c306`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag show d3a5c306`
 id:         d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 text:       Fix login bug
 status:     done
@@ -974,12 +974,12 @@ when:       -
 Now that the prerequisite is done, 'Deploy v2.0' should no longer be blocked:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --blocked 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --blocked 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --blocked`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --blocked`
 # All Items
 hide_dependent_items: false
 ```
@@ -989,12 +989,12 @@ No blocked items — the dependency resolution works correctly. Marking the prer
 ### Undoing done state
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit d3a5c306 --done false 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit d3a5c306 --done false 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit d3a5c306 --done false`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit d3a5c306 --done false`
 marked not-done d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 ```
 
@@ -1003,12 +1003,12 @@ marked not-done d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 Export items as Markdown.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag export 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag export 2>&1
 ```
 
 ````output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag export`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag export`
 # Items
 
 ## Buy groceries (organic)
@@ -1054,24 +1054,24 @@ Users see 500 error on /login when session expires
 ## 13. Unlink
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306`
 unlinked f168af00-7620-4a7c-a556-b5ad721bcd5b depends-on d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 ```
 
 ### Edge case: Unlinking a non-existent link
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag unlink depends-on f168af00 d3a5c306`
 unlinked f168af00-7620-4a7c-a556-b5ad721bcd5b depends-on d3a5c306-5810-4f80-b5c2-1068feeb2f7d
 ```
 
@@ -1080,17 +1080,17 @@ unlinked f168af00-7620-4a7c-a556-b5ad721bcd5b depends-on d3a5c306-5810-4f80-b5c2
 ## 14. Category Unassign
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category unassign c714559e Low 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category unassign c714559e Low 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category unassign c714559e Low`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category unassign c714559e Low`
 unassigned item c714559e-d4ea-40ee-bb11-1ba1affc6308 from category Low
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A10 'assignments:'
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A10 'assignments:'
 ```
 
 ```output
@@ -1109,12 +1109,12 @@ related:
 **Gotcha:** Priority is still showing via subsumption even after removing the only Priority child (Low). This may be stale — the subsumption rule might not re-evaluate on unassign. Let's verify by assigning a new priority:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category assign c714559e High 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A6 'assignments:'
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category assign c714559e High 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show c714559e 2>&1 | grep -A6 'assignments:'
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category assign c714559e High`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category assign c714559e High`
 assigned item c714559e-d4ea-40ee-bb11-1ba1affc6308 to category High
 assignments:
   High | Manual | manual:cli.assign
@@ -1132,12 +1132,12 @@ Priority subsumption is correctly maintained. The earlier stale-looking subsumpt
 Let's explore the auto-match (implicit string matching) feature.
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Bug' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Bug' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Bug`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Bug`
 created category Bug (type=Tag, processed_items=4, affected_items=1)
 ```
 
@@ -1146,7 +1146,7 @@ Notice `affected_items=1` — the category 'Bug' was auto-matched to 'Fix login 
 Let's verify:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show d3a5c306 2>&1 | grep -A10 'assignments:'
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show d3a5c306 2>&1 | grep -A10 'assignments:'
 ```
 
 ```output
@@ -1166,17 +1166,17 @@ The 'Fix login bug' item now has `Bug | AutoMatch | cat:Bug` — automatically d
 ### Edge case: Auto-match on note text (surprising)
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'QA' 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'QA' 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create QA`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create QA`
 created category QA (type=Tag, processed_items=4, affected_items=1)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep QA
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep QA
 ```
 
 ```output
@@ -1189,33 +1189,33 @@ note:       Needs sign-off from QA first
 ### Disabling auto-match with no-implicit-string
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category update QA --no-implicit-string 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category update QA --no-implicit-string 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category update QA --no-implicit-string`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category update QA --no-implicit-string`
 error: unexpected argument '--no-implicit-string' found
 
   tip: a similar argument exists: '--implicit-string'
 
-Usage: agenda-cli category update --implicit-string <IMPLICIT_STRING> <NAME>
+Usage: aglet category update --implicit-string <IMPLICIT_STRING> <NAME>
 
 For more information, try '--help'.
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category update QA --implicit-string false 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category update QA --implicit-string false 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category update QA --implicit-string false`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category update QA --implicit-string false`
 updated QA (type=Tag, exclusive=false, actionable=true, implicit_string=false, processed_items=4, affected_items=0)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep QA
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep QA
 ```
 
 ```output
@@ -1228,40 +1228,40 @@ note:       Needs sign-off from QA first
 ## 16. Numeric Values (set-value)
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Effort' --type numeric 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Effort' --type numeric 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Effort --type numeric`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Effort --type numeric`
 created category Effort (type=Numeric, processed_items=4, affected_items=0)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category set-value c714559e Effort 3 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category set-value f168af00 Effort 8 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category set-value d3a5c306 Effort 5 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category set-value c714559e Effort 3 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category set-value f168af00 Effort 8 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category set-value d3a5c306 Effort 5 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category set-value c714559e Effort 3`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category set-value c714559e Effort 3`
 set value for item c714559e-d4ea-40ee-bb11-1ba1affc6308 category Effort = 3
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category set-value f168af00 Effort 8`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category set-value f168af00 Effort 8`
 set value for item f168af00-7620-4a7c-a556-b5ad721bcd5b category Effort = 8
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category set-value d3a5c306 Effort 5`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category set-value d3a5c306 Effort 5`
 set value for item d3a5c306-5810-4f80-b5c2-1068feeb2f7d category Effort = 5
 ```
 
 ### Filtering by numeric values
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --value-max Effort 5 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --value-max Effort 5 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --value-max Effort 5`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --value-max Effort 5`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -1275,12 +1275,12 @@ c714559e-d4ea-40ee-bb11-1ba1affc6308  open    -                    Buy groceries
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --value-in Effort 3,8 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --value-in Effort 3,8 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --value-in Effort 3,8`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --value-in Effort 3,8`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -1296,12 +1296,12 @@ c714559e-d4ea-40ee-bb11-1ba1affc6308  open    -                    Buy groceries
 ## 17. Sorting
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag list --sort Priority 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag list --sort Priority 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag list --sort Priority`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag list --sort Priority`
 # All Items
 hide_dependent_items: false
 ID                                    STATUS  WHEN                 TITLE
@@ -1324,12 +1324,12 @@ Sorting by Priority correctly groups High items above Normal.
 ## 18. Category Show (detailed info)
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category show Priority 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category show Priority 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category show Priority`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category show Priority`
 id:              8a8f71ce-af6e-453c-b710-f95bae1b5f7e
 name:            Priority
 parent:          (root)
@@ -1345,28 +1345,28 @@ modified_at:     2026-03-06T07:14:33.063978+00:00
 ## 19. Category Reparent
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category create 'Labels' 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category reparent Bug --parent Labels 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category reparent QA --parent Labels 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category create 'Labels' 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category reparent Bug --parent Labels 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category reparent QA --parent Labels 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category create Labels`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category create Labels`
 created category Labels (type=Tag, processed_items=4, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category reparent Bug --parent Labels`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category reparent Bug --parent Labels`
 reparented Bug under Labels (processed_items=4, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category reparent QA --parent Labels`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category reparent QA --parent Labels`
 reparented QA under Labels (processed_items=4, affected_items=0)
 ```
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category list 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category list 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category list`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category list`
 - Done [no-implicit-string] [non-actionable]
 - Effort [numeric]
 - Entry [no-implicit-string] [non-actionable]
@@ -1387,15 +1387,15 @@ cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category list 2>&1
 ### Edge case: Reparent to root
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category reparent Bug --root 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category list 2>&1 | head -8
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category reparent Bug --root 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category list 2>&1 | head -8
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category reparent Bug --root`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category reparent Bug --root`
 reparented Bug under (root) (processed_items=4, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category list`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category list`
 - Bug
 - Done [no-implicit-string] [non-actionable]
 - Effort [numeric]
@@ -1409,39 +1409,39 @@ Good — `--root` correctly moves a category to the top level.
 ## 20. Category Delete
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category delete Labels 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category delete Labels 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category delete Labels`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category delete Labels`
 error: invalid operation: cannot delete category Labels while it still has children
 ```
 
 Good — can't delete a category with children. Must reparent or delete children first:
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category reparent QA --root 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category delete Labels 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category reparent QA --root 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category delete Labels 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category reparent QA --root`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category reparent QA --root`
 reparented QA under (root) (processed_items=4, affected_items=0)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category delete Labels`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category delete Labels`
 deleted category Labels
 ```
 
 ### Edge case: Deleting a reserved category
 
 ```bash
-cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag category delete Done 2>&1
+cargo run --bin aglet -- --db /tmp/cli-demo-test.ag category delete Done 2>&1
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag category delete Done`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag category delete Done`
 error: cannot modify reserved category: Done
 ```
 
@@ -1450,12 +1450,12 @@ error: cannot modify reserved category: Done
 Testing the stdin note replacement mode:
 
 ```bash
-printf 'Line 1: Updated requirements\nLine 2: Must ship by Friday\nLine 3: Blocked on QA approval' | cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag edit f168af00 --note-stdin 2>&1 && cargo run --bin agenda-cli -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep -A5 'note:'
+printf 'Line 1: Updated requirements\nLine 2: Must ship by Friday\nLine 3: Blocked on QA approval' | cargo run --bin aglet -- --db /tmp/cli-demo-test.ag edit f168af00 --note-stdin 2>&1 && cargo run --bin aglet -- --db /tmp/cli-demo-test.ag show f168af00 2>&1 | grep -A5 'note:'
 ```
 
 ```output
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running `target/debug/agenda-cli --db /tmp/cli-demo-test.ag edit f168af00 --note-stdin`
+     Running `target/debug/aglet --db /tmp/cli-demo-test.ag edit f168af00 --note-stdin`
 updated f168af00-7620-4a7c-a556-b5ad721bcd5b
 note:       Line 1: Updated requirements
 Line 2: Must ship by Friday

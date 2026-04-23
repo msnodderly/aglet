@@ -676,10 +676,10 @@ Add `DateRangeFilter { source: DateSource, from: DateValueExpr, through: DateVal
 1. **Unit tests:** `cargo test --workspace` -- all existing tests pass, new tests cover section generation, bucketing, round-trip, validation
 2. **CLI smoke test:**
    ```sh
-   cargo run --bin agenda-cli -- --db test.ag view create-datebook "This Week" --period week --interval daily
-   cargo run --bin agenda-cli -- --db test.ag view show "This Week"
-   cargo run --bin agenda-cli -- --db test.ag view datebook-browse "This Week" --offset 1
-   cargo run --bin agenda-cli -- --db test.ag view show "This Week"  # should show next week
+   cargo run --bin aglet -- --db test.ag view create-datebook "This Week" --period week --interval daily
+   cargo run --bin aglet -- --db test.ag view show "This Week"
+   cargo run --bin aglet -- --db test.ag view datebook-browse "This Week" --offset 1
+   cargo run --bin aglet -- --db test.ag view show "This Week"  # should show next week
    ```
 3. **TUI smoke test:**
    - Launch TUI, press `v` then `d`, name the view, configure period/interval via Space, save with `S`
