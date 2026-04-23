@@ -15,7 +15,7 @@ Goal: break down work into items suitable for parallel coding agents, with clear
 
 ## Issue Tracking System
 
-This project tracks work in `aglet-features.ag` using `agenda-cli`.
+This project tracks work in `aglet-features.ag` using `aglet`.
 `aglet-features.ag` is the canonical PM backlog database for Aglet.
 
 Every PM command in this doc should explicitly target:
@@ -31,29 +31,29 @@ Use full UUIDs for item commands.
 ```bash
 # Aglet-only backlog views
 ./scripts/list-open-project-items.sh aglet
-cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --view "All Items" --sort Priority
-cargo run --bin agenda-cli -- --db aglet-features.ag show <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag list --any-category Aglet --view "All Items" --sort Priority
+cargo run --bin aglet -- --db aglet-features.ag show <ITEM_ID>
 
 # Create/edit
-cargo run --bin agenda-cli -- --db aglet-features.ag add "<TITLE>" --note "<NOTE>"
-cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> "<NEW_TITLE>"
-cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> --note "<NOTE>"
+cargo run --bin aglet -- --db aglet-features.ag add "<TITLE>" --note "<NOTE>"
+cargo run --bin aglet -- --db aglet-features.ag edit <ITEM_ID> "<NEW_TITLE>"
+cargo run --bin aglet -- --db aglet-features.ag edit <ITEM_ID> --note "<NOTE>"
 
 # Categories
-cargo run --bin agenda-cli -- --db aglet-features.ag category list
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "<CATEGORY>"
-cargo run --bin agenda-cli -- --db aglet-features.ag category unassign <ITEM_ID> "<CATEGORY>"
-cargo run --bin agenda-cli -- --db aglet-features.ag category set-value <ITEM_ID> Complexity <1|2|3|5|7>
+cargo run --bin aglet -- --db aglet-features.ag category list
+cargo run --bin aglet -- --db aglet-features.ag category assign <ITEM_ID> "<CATEGORY>"
+cargo run --bin aglet -- --db aglet-features.ag category unassign <ITEM_ID> "<CATEGORY>"
+cargo run --bin aglet -- --db aglet-features.ag category set-value <ITEM_ID> Complexity <1|2|3|5|7>
 
 # Atomic claim (preferred for multi-agent task pickup)
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> --must-not-have "In Progress" --must-not-have "Complete" --must-not-have "Waiting/Blocked"
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID> --must-not-have "In Progress" --must-not-have "Complete" --must-not-have "Waiting/Blocked"
 
 # Dependency links
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag link depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag unlink blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag unlink depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag link depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag unlink blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag unlink depends-on <ITEM_ID> <DEPENDS_ON_ITEM_ID>
 ```
 
 ### Aglet-Only Query Patterns
@@ -63,7 +63,7 @@ cargo run --bin agenda-cli -- --db aglet-features.ag unlink depends-on <ITEM_ID>
 ./scripts/list-open-project-items.sh aglet
 
 # All open Aglet work (includes In Progress and Waiting/Blocked; excludes completed)
-cargo run --bin agenda-cli -- --db aglet-features.ag list \
+cargo run --bin aglet -- --db aglet-features.ag list \
   --any-category Aglet \
   --exclude-category Done \
   --exclude-category Complete \
@@ -71,28 +71,28 @@ cargo run --bin agenda-cli -- --db aglet-features.ag list \
   --sort Priority
 
 # Aglet items flagged for PM grooming/refinement
-cargo run --bin agenda-cli -- --db aglet-features.ag list \
+cargo run --bin aglet -- --db aglet-features.ag list \
   --any-category Aglet \
   --category "Needs Refinement" \
   --view "All Items" \
   --sort Priority
 
 # Aglet items currently in progress
-cargo run --bin agenda-cli -- --db aglet-features.ag list \
+cargo run --bin aglet -- --db aglet-features.ag list \
   --any-category Aglet \
   --category "In Progress" \
   --view "All Items" \
   --sort Priority
 
 # Aglet items currently blocked
-cargo run --bin agenda-cli -- --db aglet-features.ag list \
+cargo run --bin aglet -- --db aglet-features.ag list \
   --any-category Aglet \
   --category "Waiting/Blocked" \
   --view "All Items" \
   --sort Priority
 
 # Aglet open items missing complexity score (targeted PM cleanup batch)
-cargo run --bin agenda-cli -- --db aglet-features.ag list \
+cargo run --bin aglet -- --db aglet-features.ag list \
   --any-category Aglet \
   --exclude-category Done \
   --exclude-category Complete \
@@ -146,8 +146,8 @@ git pull --ff-only
 git switch -c codex/pm-grooming-$(date +%Y-%m-%d)
 
 ./scripts/list-open-project-items.sh aglet
-cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
-cargo run --bin agenda-cli -- --db aglet-features.ag category list
+cargo run --bin aglet -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
+cargo run --bin aglet -- --db aglet-features.ag category list
 ```
 
 ### 2. Review Criteria
@@ -171,7 +171,7 @@ Use this focused pass whenever backlog hygiene drifts:
 
 1. List only open Aglet items missing complexity:
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag list \
+cargo run --bin aglet -- --db aglet-features.ag list \
   --any-category Aglet \
   --exclude-category Done \
   --exclude-category Complete \
@@ -190,7 +190,7 @@ cargo run --bin agenda-cli -- --db aglet-features.ag list \
 #### Improve an Item Note
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag edit <ITEM_ID> --note "What: ...
+cargo run --bin aglet -- --db aglet-features.ag edit <ITEM_ID> --note "What: ...
 Why: ...
 
 Acceptance Criteria:
@@ -213,19 +213,19 @@ Notes:
 ./scripts/add-aglet-issue.sh "<PREFIX>: Integration" "..." "Normal" "Ready" "Feature request" "Aglet" aglet-features.ag
 
 # Parent depends on each subtask
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK1_ID> <PARENT_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK2_ID> <PARENT_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK3_ID> <PARENT_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <SUBTASK1_ID> <PARENT_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <SUBTASK2_ID> <PARENT_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <SUBTASK3_ID> <PARENT_ID>
 
 # Optional sequence
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK1_ID> <SUBTASK2_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <SUBTASK2_ID> <SUBTASK3_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <SUBTASK1_ID> <SUBTASK2_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <SUBTASK2_ID> <SUBTASK3_ID>
 ```
 
 #### Mark an Item as Blocked
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Waiting/Blocked"
+cargo run --bin aglet -- --db aglet-features.ag category assign <ITEM_ID> "Waiting/Blocked"
 ```
 
 Then update the note with explicit blocker details and required decision/input.
@@ -233,7 +233,7 @@ Then update the note with explicit blocker details and required decision/input.
 #### Set Complexity Score
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag category set-value <ITEM_ID> Complexity <1|2|3|5|7>
+cargo run --bin aglet -- --db aglet-features.ag category set-value <ITEM_ID> Complexity <1|2|3|5|7>
 ```
 
 Use this on every groomed item that does not already have a complexity value.
@@ -243,13 +243,13 @@ If score is `7`, do not leave the item implementation-ready; break it down first
 #### Mark an Item as Needs Refinement
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Needs Refinement"
+cargo run --bin aglet -- --db aglet-features.ag category assign <ITEM_ID> "Needs Refinement"
 ```
 
 After grooming is complete, move it back to actionable:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Ready"
+cargo run --bin aglet -- --db aglet-features.ag category assign <ITEM_ID> "Ready"
 ```
 
 ### 4. Dependency Direction (Critical)
@@ -257,7 +257,7 @@ cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "
 Canonical blocker syntax:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag link blocks <BLOCKER_ITEM_ID> <BLOCKED_ITEM_ID>
 ```
 
 Meaning: `BLOCKER_ITEM_ID` must be completed before `BLOCKED_ITEM_ID`.
@@ -265,14 +265,14 @@ Meaning: `BLOCKER_ITEM_ID` must be completed before `BLOCKED_ITEM_ID`.
 Equivalent form:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag link depends-on <BLOCKED_ITEM_ID> <BLOCKER_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag link depends-on <BLOCKED_ITEM_ID> <BLOCKER_ITEM_ID>
 ```
 
 Always verify direction with:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag show <BLOCKER_ITEM_ID>
-cargo run --bin agenda-cli -- --db aglet-features.ag show <BLOCKED_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag show <BLOCKER_ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag show <BLOCKED_ITEM_ID>
 ```
 
 ### 5. Questions and Design Decisions
@@ -285,9 +285,9 @@ When a decision blocks multiple items, create a dedicated design item and block 
 
 ```bash
 ./scripts/list-open-project-items.sh aglet
-cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
-cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --category "Needs Refinement" --view "All Items" --sort Priority
-cargo run --bin agenda-cli -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --exclude-category Complexity --view "All Items" --sort Priority
+cargo run --bin aglet -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --view "All Items" --sort Priority
+cargo run --bin aglet -- --db aglet-features.ag list --any-category Aglet --category "Needs Refinement" --view "All Items" --sort Priority
+cargo run --bin aglet -- --db aglet-features.ag list --any-category Aglet --exclude-category Done --exclude-category Complete --exclude-category Complexity --view "All Items" --sort Priority
 
 git add docs/process/project-management.md archive/notes/questions.md aglet-features.ag
 git commit -m "PM grooming: <summary>"
@@ -343,25 +343,25 @@ Before opening a grooming PR:
 
 ---
 
-## Smoke Test: `agenda claim`
+## Smoke Test: `aglet claim`
 
 Use this against `aglet-features.ag` to validate claim behavior quickly.
 
 ```bash
 # 1) Create a disposable test item (capture the UUID from output)
-cargo run --bin agenda-cli -- --db aglet-features.ag add "Smoke test claim"
+cargo run --bin aglet -- --db aglet-features.ag add "Smoke test claim"
 
 # 2) Seed it as Ready
-cargo run --bin agenda-cli -- --db aglet-features.ag category assign <ITEM_ID> "Ready"
+cargo run --bin aglet -- --db aglet-features.ag category assign <ITEM_ID> "Ready"
 
 # 3) Claim once (should succeed)
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
 
 # 4) Claim again (should fail due to precondition, non-zero exit)
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
 
 # 5) Verify assignments include In Progress and not Complete
-cargo run --bin agenda-cli -- --db aglet-features.ag show <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag show <ITEM_ID>
 ```
 
 Expected outcomes:

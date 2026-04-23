@@ -242,7 +242,7 @@ improved so the plumbing is actually useful.
 Primary detailed surface:
 
 - TUI assignment inspector popup
-- CLI `agenda-cli show`
+- CLI `aglet show`
 
 Proposed UX:
 

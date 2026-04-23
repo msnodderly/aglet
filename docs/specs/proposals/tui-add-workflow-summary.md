@@ -119,7 +119,7 @@ Each phase is testable independently; keeps existing tests passing throughout.
 
 4. **Extend to CLI**: The CLI currently lacks view/section richness (feature request #5). An InputPanel-inspired CLI subcommand could help:
    ```
-   agenda-cli item create "Fix login timeout" --note "..." --categories "High,Infrastructure"
+   aglet item create "Fix login timeout" --note "..." --categories "High,Infrastructure"
    ```
 
 5. **Defer Phase 5e** (S key) until 5a–5d are stable. Breaking Enter behavior requires migration guide.

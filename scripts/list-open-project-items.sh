@@ -38,7 +38,7 @@ if [ "${#project_categories[@]}" -eq 0 ]; then
 fi
 
 cmd=(
-  cargo run --bin agenda-cli -- --db "$db_path"
+  cargo run --bin aglet -- --db "$db_path"
   list
   --exclude-category Done
   --exclude-category Complete
@@ -51,7 +51,7 @@ for project_category in "${project_categories[@]}"; do
   cmd+=(--any-category "$project_category")
 done
 
-if cargo run --bin agenda-cli -- --db "$db_path" view list 2>/dev/null | rg -qi '^All Items '; then
+if cargo run --bin aglet -- --db "$db_path" view list 2>/dev/null | rg -qi '^All Items '; then
   cmd+=(--view "All Items")
 fi
 

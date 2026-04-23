@@ -22,9 +22,9 @@ project="${6:-Aglet}"
 db_path="${7:-aglet-features.ag}"
 
 if [ -n "$note" ]; then
-  create_output="$(cargo run --bin agenda-cli -- --db "$db_path" add "$title" --note "$note" 2>&1)"
+  create_output="$(cargo run --bin aglet -- --db "$db_path" add "$title" --note "$note" 2>&1)"
 else
-  create_output="$(cargo run --bin agenda-cli -- --db "$db_path" add "$title" 2>&1)"
+  create_output="$(cargo run --bin aglet -- --db "$db_path" add "$title" 2>&1)"
 fi
 
 item_id="$(printf '%s\n' "$create_output" | awk '/^created / { print $2 }' | tail -1)"
@@ -34,9 +34,9 @@ if [ -z "$item_id" ]; then
   exit 1
 fi
 
-cargo run --bin agenda-cli -- --db "$db_path" category assign "$item_id" "$issue_type"
-cargo run --bin agenda-cli -- --db "$db_path" category assign "$item_id" "$project"
-cargo run --bin agenda-cli -- --db "$db_path" category assign "$item_id" "$priority"
-cargo run --bin agenda-cli -- --db "$db_path" category assign "$item_id" "$status"
+cargo run --bin aglet -- --db "$db_path" category assign "$item_id" "$issue_type"
+cargo run --bin aglet -- --db "$db_path" category assign "$item_id" "$project"
+cargo run --bin aglet -- --db "$db_path" category assign "$item_id" "$priority"
+cargo run --bin aglet -- --db "$db_path" category assign "$item_id" "$status"
 
 echo "created_issue_id=$item_id"

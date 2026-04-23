@@ -5,8 +5,12 @@ Rust CLI/TUI for managing agenda items, categories, views, and item dependency l
 ## Quick Start
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag list --view "All Items"
+cargo run --bin aglet -- --db aglet-features.ag
+cargo run --bin aglet -- --db aglet-features.ag list --view "All Items"
 ```
+
+Running `aglet` without a subcommand opens the TUI. Use `aglet list` for
+non-interactive list output.
 
 ## Multi-Agent Claim Workflow
 
@@ -16,13 +20,13 @@ Use `claim` to atomically move an item into active work:
 # Default claim behavior:
 # - assigns "In Progress"
 # - fails if item already has "In Progress" or "Complete"
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
 ```
 
 Equivalent explicit criteria:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> \
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID> \
   --claim-category "In Progress" \
   --must-not-have "In Progress" \
   --must-not-have "Complete"
@@ -32,17 +36,17 @@ cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> \
 it as a category or sub-category first. Feature DB-style setup:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag category create Status --exclusive
-cargo run --bin agenda-cli -- --db aglet-features.ag category create Ready --parent Status
-cargo run --bin agenda-cli -- --db aglet-features.ag category create "In Progress" --parent Status
-cargo run --bin agenda-cli -- --db aglet-features.ag category create "Waiting/Blocked" --parent Status
-cargo run --bin agenda-cli -- --db aglet-features.ag category create Complete --parent Status
+cargo run --bin aglet -- --db aglet-features.ag category create Status --exclusive
+cargo run --bin aglet -- --db aglet-features.ag category create Ready --parent Status
+cargo run --bin aglet -- --db aglet-features.ag category create "In Progress" --parent Status
+cargo run --bin aglet -- --db aglet-features.ag category create "Waiting/Blocked" --parent Status
+cargo run --bin aglet -- --db aglet-features.ag category create Complete --parent Status
 ```
 
 Custom preconditions:
 
 ```bash
-cargo run --bin agenda-cli -- --db aglet-features.ag claim <ITEM_ID> \
+cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID> \
   --claim-category "In Progress" \
   --must-not-have "In Progress" \
   --must-not-have "Complete" \

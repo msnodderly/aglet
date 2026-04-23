@@ -36,8 +36,11 @@ struct NumericValueAssignment {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "agenda")]
-#[command(about = "Agenda Reborn CLI")]
+#[command(name = "aglet")]
+#[command(about = "Aglet CLI/TUI")]
+#[command(
+    after_help = "Run without a command to launch the TUI. Use `aglet list` for the scriptable list view."
+)]
 struct Cli {
     /// SQLite database path
     #[arg(long, env = "AGENDA_DB")]
@@ -90,7 +93,7 @@ enum Command {
 
     /// Edit an existing item's text, note, and/or done state
     #[command(
-        after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --note-stdin           Replace the entire note with stdin content\n  --clear-note           Remove the note entirely\n\nExamples:\n  agenda edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  agenda edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin"
+        after_help = "Note operations:\n  --note <TEXT>          Replace the entire note\n  --append-note <TEXT>   Append text to the existing note (separated by newline)\n  --note-stdin           Replace the entire note with stdin content\n  --clear-note           Remove the note entirely\n\nExamples:\n  aglet edit <id> --append-note \"Claimed 2026-03-02: branch=feature\"\n  aglet edit <id> --append-note \"Implementation plan:\\n1. Step one\\n2. Step two\"\n  printf \"line one\\nline two\\n\" | aglet edit <id> --note-stdin"
     )]
     Edit {
         /// Item id (full UUID or unique hex prefix).
@@ -158,7 +161,7 @@ enum Command {
 
     /// List items (optionally filtered)
     #[command(
-        after_help = "Default behavior:\n  If `--view` is omitted, `list` uses the \"All Items\" view when present;\n  otherwise falls back to the first stored view.\n\nDependency-state filter examples:\n  agenda list --blocked\n  agenda list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  agenda list --value-eq Complexity 2\n  agenda list --value-in Complexity 1,2\n  agenda list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
+        after_help = "Default behavior:\n  If `--view` is omitted, `list` uses the \"All Items\" view when present;\n  otherwise falls back to the first stored view.\n\nDependency-state filter examples:\n  aglet list --blocked\n  aglet list --not-blocked --sort Priority\n\nNumeric value filter examples:\n  aglet list --value-eq Complexity 2\n  aglet list --value-in Complexity 1,2\n  aglet list --value-max Complexity 2\n\nSemantics:\n  Dependency state is derived from depends-on links and done state.\n  Numeric value filters are AND-composed with each other and with category filters."
     )]
     List {
         /// View to render. If omitted, defaults to "All Items"; falls back to
@@ -233,7 +236,7 @@ enum Command {
 
     /// Export items as Markdown
     #[command(
-        after_help = "Examples:\n  agenda export\n  agenda export --view \"All Items\"\n  agenda export --view \"Backlog\" --include-links"
+        after_help = "Examples:\n  aglet export\n  aglet export --view \"All Items\"\n  aglet export --view \"Backlog\" --include-links"
     )]
     Export {
         /// Optional view scope (case-insensitive view name).
@@ -260,7 +263,11 @@ enum Command {
     },
 
     /// Launch the interactive TUI
-    Tui,
+    Tui {
+        /// Enable debug logging while running the TUI.
+        #[arg(long)]
+        debug: bool,
+    },
 
     /// Category commands
     Category {
@@ -297,7 +304,7 @@ enum Command {
     Item(ItemCommand),
 }
 
-/// Noun-verb aliases for item operations: `agenda item add`, `agenda item list`, etc.
+/// Noun-verb aliases for item operations: `aglet item add`, `aglet item list`, etc.
 #[derive(Subcommand, Debug)]
 enum ItemCommand {
     /// Add a new item
@@ -1148,24 +1155,10 @@ fn main() {
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db)?;
-    let command = cli.command.unwrap_or(Command::List {
-        view: None,
-        category: Vec::new(),
-        any_category: Vec::new(),
-        exclude_category: Vec::new(),
-        blocked: false,
-        not_blocked: false,
-        value_eq: Vec::new(),
-        value_in: Vec::new(),
-        value_max: Vec::new(),
-        sort: Vec::new(),
-        format: OutputFormatArg::Table,
-        include_done: false,
-    });
-
-    if matches!(&command, Command::Tui) {
-        return agenda_tui::run(&db_path).map_err(|e| e.to_string());
+    if let Some(debug) = tui_launch_debug(&cli.command) {
+        return agenda_tui::run_with_options(&db_path, debug).map_err(|e| e.to_string());
     }
+    let command = cli.command.expect("non-TUI command should be present");
 
     let store = Store::open(&db_path).map_err(|e| e.to_string())?;
     let classifier = SubstringClassifier;
@@ -1349,7 +1342,15 @@ fn run() -> Result<(), String> {
             }
             ItemCommand::Delete { item_id } => cmd_delete(&agenda, item_id),
         },
-        Command::Tui => Ok(()),
+        Command::Tui { .. } => Ok(()),
+    }
+}
+
+fn tui_launch_debug(command: &Option<Command>) -> Option<bool> {
+    match command {
+        None => Some(false),
+        Some(Command::Tui { debug }) => Some(*debug),
+        Some(_) => None,
     }
 }
 
@@ -1528,7 +1529,7 @@ fn cmd_edit(
         && !clear_recurrence
     {
         return Err(
-            "nothing to update\n\nUsage: agenda edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when] [--recurrence <RULE>] [--clear-recurrence]\n\nExamples:\n  agenda edit <id> \"new text here\"\n  agenda edit <id> --note \"updated note\"\n  agenda edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | agenda edit <id> --note-stdin\n  agenda edit <id> \"new text\" --note \"and note\"\n  agenda edit <id> --clear-note\n  agenda edit <id> --done true\n  agenda edit <id> --done false\n  agenda edit <id> --when 2026-02-20\n  agenda edit <id> --clear-when\n  agenda edit <id> --recurrence \"every friday\"\n  agenda edit <id> --clear-recurrence".to_string()
+            "nothing to update\n\nUsage: aglet edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when] [--recurrence <RULE>] [--clear-recurrence]\n\nExamples:\n  aglet edit <id> \"new text here\"\n  aglet edit <id> --note \"updated note\"\n  aglet edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | aglet edit <id> --note-stdin\n  aglet edit <id> \"new text\" --note \"and note\"\n  aglet edit <id> --clear-note\n  aglet edit <id> --done true\n  aglet edit <id> --done false\n  aglet edit <id> --when 2026-02-20\n  aglet edit <id> --clear-when\n  aglet edit <id> --recurrence \"every friday\"\n  aglet edit <id> --clear-recurrence".to_string()
         );
     }
 
@@ -2680,7 +2681,7 @@ fn cmd_category(
             }
             if category.value_kind == CategoryValueKind::Numeric {
                 return Err(format!(
-                    "category '{}' is Numeric; use `agenda category set-value <item-id> \"{}\" <number>`",
+                    "category '{}' is Numeric; use `aglet category set-value <item-id> \"{}\" <number>`",
                     category.name, category.name
                 ));
             }
@@ -3072,7 +3073,7 @@ fn cmd_view(agenda: &Agenda<'_>, store: &Store, command: ViewCommand) -> Result<
                     view.hide_dependent_items
                 );
             }
-            println!("hint: use `agenda view show \"<name>\"` to see view contents");
+            println!("hint: use `aglet view show \"<name>\"` to see view contents");
             Ok(())
         }
         ViewCommand::Show {
@@ -3830,7 +3831,7 @@ fn duplicate_category_create_error(
         .unwrap_or_default();
 
     format!(
-        "category \"{requested_name}\" already exists{id_fragment}. Category names are global across the database, so it cannot be created{parent_context}. Use `agenda category assign <item-id> \"{requested_name}\"` to assign items to the existing category."
+        "category \"{requested_name}\" already exists{id_fragment}. Category names are global across the database, so it cannot be created{parent_context}. Use `aglet category assign <item-id> \"{requested_name}\"` to assign items to the existing category."
     )
 }
 
@@ -5058,7 +5059,7 @@ mod tests {
         read_note_from_stdin, reject_items_with_any_categories, retain_items_by_dependency_state,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, section_summary_entries, section_summary_line,
-        unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
+        tui_launch_debug, unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
         write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, CategoryCommand, Cli,
         CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
         ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand, ListFilters,
@@ -5085,7 +5086,7 @@ mod tests {
     use uuid::Uuid;
 
     fn assert_help_docs_for_command_tree(cmd: &clap::Command) {
-        if cmd.get_name() != "agenda" {
+        if cmd.get_name() != "aglet" {
             let about = cmd
                 .get_about()
                 .or(cmd.get_long_about())
@@ -5127,7 +5128,7 @@ mod tests {
         assert!(msg.contains("already exists"));
         assert!(msg.contains("Category names are global"));
         assert!(msg.contains("under parent \"Project X\""));
-        assert!(msg.contains("agenda category assign <item-id> \"Priority\""));
+        assert!(msg.contains("aglet category assign <item-id> \"Priority\""));
         assert!(msg.contains("123e4567-e89b-12d3-a456-426614174000"));
     }
 
@@ -5180,6 +5181,29 @@ mod tests {
                 assert_eq!(categories, vec!["Budget".to_string(), "Vendor".to_string()]);
                 assert_eq!(values, vec!["Cost=245.96".to_string()]);
             }
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_root_command_is_aglet() {
+        let cmd = Cli::command();
+        assert_eq!(cmd.get_name(), "aglet");
+    }
+
+    #[test]
+    fn no_subcommand_launches_tui_without_debug() {
+        let cli = Cli::try_parse_from(["aglet"]).expect("parse CLI");
+        assert!(cli.command.is_none());
+        assert_eq!(tui_launch_debug(&cli.command), Some(false));
+    }
+
+    #[test]
+    fn clap_parses_tui_with_debug() {
+        let cli = Cli::try_parse_from(["aglet", "tui", "--debug"]).expect("parse CLI");
+
+        match cli.command {
+            Some(Command::Tui { debug }) => assert!(debug),
             other => panic!("unexpected parse result: {other:?}"),
         }
     }
@@ -6009,7 +6033,7 @@ mod tests {
         let help = export_cmd.render_help().to_string();
         assert!(help.contains("--view <VIEW>"));
         assert!(help.contains("--include-links"));
-        assert!(help.contains("agenda export --view \"All Items\""));
+        assert!(help.contains("aglet export --view \"All Items\""));
     }
 
     struct AlwaysBrokenPipeWriter;

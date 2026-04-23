@@ -25,13 +25,13 @@ surface area to exercise that capability cleanly.
 
 Current CLI baseline:
 
-- `agenda-cli add` supports item text plus optional `--note`
-- `agenda-cli edit` supports text/note/done changes, but not explicit
+- `aglet add` supports item text plus optional `--note`
+- `aglet edit` supports text/note/done changes, but not explicit
   `when_date` editing
-- `agenda-cli category set-value` supports numeric category assignment
-- `agenda-cli view create` and `agenda-cli view edit` support only basic view
+- `aglet category set-value` supports numeric category assignment
+- `aglet view create` and `aglet view edit` support only basic view
   creation and a small set of mutable properties
-- `agenda-cli view set-summary` exists for section-column summaries
+- `aglet view set-summary` exists for section-column summaries
 - richer view authoring operations are not exposed in CLI
 
 This gap forced a fallback to direct SQL for both item dates and view shaping.
@@ -75,10 +75,10 @@ Add first-class `when_date` editing to both capture and update flows.
 Proposed commands:
 
 ```bash
-agenda-cli add "DRZ Payment" --when 2025-12-11
-agenda-cli add "Track day" --when "2026-02-20 09:00"
-agenda-cli edit <ITEM_ID> --when 2025-12-11
-agenda-cli edit <ITEM_ID> --clear-when
+aglet add "DRZ Payment" --when 2025-12-11
+aglet add "Track day" --when "2026-02-20 09:00"
+aglet edit <ITEM_ID> --when 2025-12-11
+aglet edit <ITEM_ID> --clear-when
 ```
 
 Notes:
@@ -95,7 +95,7 @@ one command.
 Proposed commands:
 
 ```bash
-agenda-cli add "DRZ Payment" \
+aglet add "DRZ Payment" \
   --when 2025-12-11 \
   --note "Monthly payment" \
   --category "Moto Budget 2025" \
@@ -105,7 +105,7 @@ agenda-cli add "DRZ Payment" \
 ```
 
 ```bash
-agenda-cli add "YCRS" \
+aglet add "YCRS" \
   --when 2026-02-20 \
   --category "Moto Budget 2026" \
   --category Track \
@@ -126,7 +126,7 @@ Add a structured import entrypoint for repeated rows.
 Proposed commands:
 
 ```bash
-agenda-cli import csv expenses.csv \
+aglet import csv expenses.csv \
   --title-col Expense \
   --date-col Date \
   --note-col Notes \
@@ -137,7 +137,7 @@ agenda-cli import csv expenses.csv \
 ```
 
 ```bash
-agenda-cli import csv expenses.csv \
+aglet import csv expenses.csv \
   --title-col Expense \
   --date-col Date \
   --category-col Category \
@@ -177,29 +177,29 @@ Current gap:
 Proposed commands:
 
 ```bash
-agenda-cli view create "Moto Budget Combined" \
+aglet view create "Moto Budget Combined" \
   --or-include "Moto Budget 2025" \
   --or-include "Moto Budget 2026" \
   --hide-unmatched
 ```
 
 ```bash
-agenda-cli view section add "Expenses by Year" "2025" --include "Moto Budget 2025"
-agenda-cli view section add "Expenses by Year" "2026" --include "Moto Budget 2026"
+aglet view section add "Expenses by Year" "2025" --include "Moto Budget 2025"
+aglet view section add "Expenses by Year" "2026" --include "Moto Budget 2026"
 ```
 
 ```bash
-agenda-cli view column add "Expenses by Year" 0 When --kind when --width 12
-agenda-cli view column add "Expenses by Year" 0 Vendor --width 26
-agenda-cli view column add "Expenses by Year" 0 "Budget Tags" --width 22
-agenda-cli view column add "Expenses by Year" 0 Cost --width 12 --summary sum
+aglet view column add "Expenses by Year" 0 When --kind when --width 12
+aglet view column add "Expenses by Year" 0 Vendor --width 26
+aglet view column add "Expenses by Year" 0 "Budget Tags" --width 22
+aglet view column add "Expenses by Year" 0 Cost --width 12 --summary sum
 ```
 
 ```bash
-agenda-cli view alias set "Expenses by Year" When Date
-agenda-cli view alias set "Expenses by Year" "Budget Tags" Category
-agenda-cli view set-item-label "Expenses by Year" Expense
-agenda-cli view set-remove-from-view "Expenses by Year" "Moto Budget 2025" "Moto Budget 2026"
+aglet view alias set "Expenses by Year" When Date
+aglet view alias set "Expenses by Year" "Budget Tags" Category
+aglet view set-item-label "Expenses by Year" Expense
+aglet view set-remove-from-view "Expenses by Year" "Moto Budget 2025" "Moto Budget 2026"
 ```
 
 Proposed authoring coverage:
@@ -218,9 +218,9 @@ Add CLI control over numeric display formatting.
 Proposed commands:
 
 ```bash
-agenda-cli category format Cost --decimals 2 --currency '$' --thousands
-agenda-cli category format Hours --decimals 1
-agenda-cli category format Count --decimals 0 --no-thousands
+aglet category format Cost --decimals 2 --currency '$' --thousands
+aglet category format Hours --decimals 1
+aglet category format Count --decimals 0 --no-thousands
 ```
 
 This should cover:
@@ -236,14 +236,14 @@ The examples below are proposed CLI flows, not current behavior.
 ### Example A: Import a Budget CSV Into a Fresh Database
 
 ```bash
-agenda-cli --db moto.ag category create Budget
-agenda-cli --db moto.ag category create "Moto Budget 2025" --parent Budget --disable-implicit-string
-agenda-cli --db moto.ag category create Vendor --disable-implicit-string
-agenda-cli --db moto.ag category create "Budget Tags" --disable-implicit-string
-agenda-cli --db moto.ag category create Cost --type numeric --disable-implicit-string
-agenda-cli --db moto.ag category format Cost --decimals 2 --currency '$' --thousands
+aglet --db moto.ag category create Budget
+aglet --db moto.ag category create "Moto Budget 2025" --parent Budget --disable-implicit-string
+aglet --db moto.ag category create Vendor --disable-implicit-string
+aglet --db moto.ag category create "Budget Tags" --disable-implicit-string
+aglet --db moto.ag category create Cost --type numeric --disable-implicit-string
+aglet --db moto.ag category format Cost --decimals 2 --currency '$' --thousands
 
-agenda-cli --db moto.ag import csv expenses.csv \
+aglet --db moto.ag import csv expenses.csv \
   --title-col Expense \
   --date-col Date \
   --vendor-col Vendor=Vendor \
@@ -257,7 +257,7 @@ agenda-cli --db moto.ag import csv expenses.csv \
 ### Example B: Capture One Dated Expense Row Without a CSV
 
 ```bash
-agenda-cli --db moto.ag add "DRZ Payment" \
+aglet --db moto.ag add "DRZ Payment" \
   --when 2025-12-11 \
   --note "Monthly payment" \
   --category "Moto Budget 2025" \
@@ -269,46 +269,46 @@ agenda-cli --db moto.ag add "DRZ Payment" \
 ### Example C: Create a Combined Budget View Across 2025 and 2026
 
 ```bash
-agenda-cli --db moto.ag view create "Moto Budget Combined" \
+aglet --db moto.ag view create "Moto Budget Combined" \
   --or-include "Moto Budget 2025" \
   --or-include "Moto Budget 2026" \
   --hide-unmatched
 
-agenda-cli --db moto.ag view section add "Moto Budget Combined" "All Moto Budget Items"
-agenda-cli --db moto.ag view column add "Moto Budget Combined" 0 When --kind when --width 12
-agenda-cli --db moto.ag view column add "Moto Budget Combined" 0 Vendor --width 26
-agenda-cli --db moto.ag view column add "Moto Budget Combined" 0 "Budget Tags" --width 22
-agenda-cli --db moto.ag view column add "Moto Budget Combined" 0 Cost --width 12 --summary sum
-agenda-cli --db moto.ag view alias set "Moto Budget Combined" When Date
-agenda-cli --db moto.ag view alias set "Moto Budget Combined" "Budget Tags" Category
-agenda-cli --db moto.ag view set-item-label "Moto Budget Combined" Expense
+aglet --db moto.ag view section add "Moto Budget Combined" "All Moto Budget Items"
+aglet --db moto.ag view column add "Moto Budget Combined" 0 When --kind when --width 12
+aglet --db moto.ag view column add "Moto Budget Combined" 0 Vendor --width 26
+aglet --db moto.ag view column add "Moto Budget Combined" 0 "Budget Tags" --width 22
+aglet --db moto.ag view column add "Moto Budget Combined" 0 Cost --width 12 --summary sum
+aglet --db moto.ag view alias set "Moto Budget Combined" When Date
+aglet --db moto.ag view alias set "Moto Budget Combined" "Budget Tags" Category
+aglet --db moto.ag view set-item-label "Moto Budget Combined" Expense
 ```
 
 ### Example D: Create an “Expenses by Year” View With Separate 2025 and 2026 Sections
 
 ```bash
-agenda-cli --db moto.ag view create "Expenses by Year" \
+aglet --db moto.ag view create "Expenses by Year" \
   --or-include "Moto Budget 2025" \
   --or-include "Moto Budget 2026" \
   --hide-unmatched
 
-agenda-cli --db moto.ag view section add "Expenses by Year" "2025" --include "Moto Budget 2025"
-agenda-cli --db moto.ag view section add "Expenses by Year" "2026" --include "Moto Budget 2026"
+aglet --db moto.ag view section add "Expenses by Year" "2025" --include "Moto Budget 2025"
+aglet --db moto.ag view section add "Expenses by Year" "2026" --include "Moto Budget 2026"
 
-agenda-cli --db moto.ag view column add "Expenses by Year" 0 When --kind when --width 12
-agenda-cli --db moto.ag view column add "Expenses by Year" 0 Vendor --width 26
-agenda-cli --db moto.ag view column add "Expenses by Year" 0 "Budget Tags" --width 22
-agenda-cli --db moto.ag view column add "Expenses by Year" 0 Cost --width 12 --summary sum
-agenda-cli --db moto.ag view column add "Expenses by Year" 1 When --kind when --width 12
-agenda-cli --db moto.ag view column add "Expenses by Year" 1 Vendor --width 26
-agenda-cli --db moto.ag view column add "Expenses by Year" 1 "Budget Tags" --width 22
-agenda-cli --db moto.ag view column add "Expenses by Year" 1 Cost --width 12 --summary sum
+aglet --db moto.ag view column add "Expenses by Year" 0 When --kind when --width 12
+aglet --db moto.ag view column add "Expenses by Year" 0 Vendor --width 26
+aglet --db moto.ag view column add "Expenses by Year" 0 "Budget Tags" --width 22
+aglet --db moto.ag view column add "Expenses by Year" 0 Cost --width 12 --summary sum
+aglet --db moto.ag view column add "Expenses by Year" 1 When --kind when --width 12
+aglet --db moto.ag view column add "Expenses by Year" 1 Vendor --width 26
+aglet --db moto.ag view column add "Expenses by Year" 1 "Budget Tags" --width 22
+aglet --db moto.ag view column add "Expenses by Year" 1 Cost --width 12 --summary sum
 ```
 
 ### Example E: Format `Cost` as Currency
 
 ```bash
-agenda-cli --db moto.ag category format Cost --decimals 2 --currency '$' --thousands
+aglet --db moto.ag category format Cost --decimals 2 --currency '$' --thousands
 ```
 
 ## Design Constraints / Policy

@@ -508,4 +508,4 @@ Open questions resolved above (§9). Remaining actions:
 1. **Implement 5a first** — it is the foundation; 5b–5e are all blocked on it.
 2. **Get user feedback after 5b** before merging 5c. The add flow change is visible; verify it feels natural.
 3. **Deprecate Mode::NoteEdit** in a Phase 5f cleanup after 5c ships (see §9.5).
-4. **CLI parity**: after InputPanel is stable, evaluate exposing `--note` and `--category` flags on `agenda-cli add` to match the TUI capability (see CLI FR `6d47d7b2`).
+4. **CLI parity**: after InputPanel is stable, evaluate exposing `--note` and `--category` flags on `aglet add` to match the TUI capability (see CLI FR `6d47d7b2`).
