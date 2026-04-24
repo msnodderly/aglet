@@ -3,8 +3,13 @@ use crate::*;
 impl App {
     pub(crate) fn begin_view_edit_name_input(&mut self) {
         if let Some(state) = &mut self.view_edit_state {
-            let current = state.draft.name.clone();
+            let current = if state.is_new_view && state.draft.name == "Untitled View" {
+                String::new()
+            } else {
+                state.draft.name.clone()
+            };
             state.sections_view_row_selected = true;
+            state.active_tab = ViewEditTab::Criteria;
             if state.region == ViewEditRegion::Sections {
                 state.region = ViewEditRegion::Criteria;
             }

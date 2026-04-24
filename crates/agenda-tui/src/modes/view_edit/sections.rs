@@ -79,6 +79,7 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             if let Some(section) = state.draft.sections.get(section_index) {
                 state.region = ViewEditRegion::Sections;
+                state.active_tab = ViewEditTab::Sections;
                 state.pane_focus = ViewEditPaneFocus::Sections;
                 state.section_index = section_index;
                 state.sections_view_row_selected = false;
@@ -314,8 +315,8 @@ impl App {
                 }
                 self.request_view_edit_section_delete(idx);
             }
-            KeyCode::Char('[') | KeyCode::Char('K') if is_datebook => {}
-            KeyCode::Char('[') | KeyCode::Char('K') => {
+            KeyCode::Char('[') if is_datebook => {}
+            KeyCode::Char('[') => {
                 if selecting_view_row {
                     return Ok(true);
                 }
@@ -328,8 +329,8 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char(']') | KeyCode::Char('J') if is_datebook => {}
-            KeyCode::Char(']') | KeyCode::Char('J') => {
+            KeyCode::Char(']') if is_datebook => {}
+            KeyCode::Char(']') => {
                 if selecting_view_row {
                     return Ok(true);
                 }

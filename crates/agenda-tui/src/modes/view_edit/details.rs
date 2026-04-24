@@ -5,8 +5,94 @@ impl App {
         state.draft.criteria.criteria.len().max(1)
     }
 
+    pub(crate) const VIEW_TYPE_FIELD_INDEX: usize = 9;
+
     pub(crate) fn view_details_aux_field_count() -> usize {
-        9
+        10
+    }
+
+    fn view_criteria_tab_focus_index(state: &ViewEditState) -> usize {
+        if state.region == ViewEditRegion::Unmatched
+            && state.unmatched_field_index == Self::VIEW_TYPE_FIELD_INDEX
+        {
+            return 0;
+        }
+        if state.name_focused {
+            return 1;
+        }
+        let criteria_rows = Self::view_details_criteria_row_count(state);
+        match state.region {
+            ViewEditRegion::Criteria => {
+                2 + state.criteria_index.min(criteria_rows.saturating_sub(1))
+            }
+            ViewEditRegion::Unmatched => 2 + criteria_rows + state.unmatched_field_index.min(1),
+            _ => 0,
+        }
+    }
+
+    fn set_view_criteria_tab_focus_index(&mut self, new_index: usize) {
+        if let Some(state) = &mut self.view_edit_state {
+            let criteria_rows = Self::view_details_criteria_row_count(state);
+            if new_index == 0 {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = Self::VIEW_TYPE_FIELD_INDEX;
+                state.name_focused = false;
+                return;
+            }
+            if new_index == 1 {
+                state.region = ViewEditRegion::Criteria;
+                state.criteria_index = 0;
+                state.name_focused = true;
+                return;
+            }
+
+            state.name_focused = false;
+            let adjusted = new_index - 2;
+            if adjusted < criteria_rows {
+                state.region = ViewEditRegion::Criteria;
+                state.criteria_index = if state.draft.criteria.criteria.is_empty() {
+                    0
+                } else {
+                    adjusted.min(state.draft.criteria.criteria.len().saturating_sub(1))
+                };
+            } else {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = (adjusted - criteria_rows).min(1);
+            }
+        }
+    }
+
+    fn view_display_tab_focus_index(state: &ViewEditState) -> usize {
+        let datebook_rows = if state.draft.datebook_config.is_some() {
+            Self::DATEBOOK_FIELD_COUNT
+        } else {
+            0
+        };
+        match state.region {
+            ViewEditRegion::Datebook => state.datebook_field_index.min(datebook_rows),
+            ViewEditRegion::Unmatched => {
+                datebook_rows + state.unmatched_field_index.saturating_sub(2).min(6)
+            }
+            _ => datebook_rows,
+        }
+    }
+
+    fn set_view_display_tab_focus_index(&mut self, new_index: usize) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.name_focused = false;
+            let datebook_rows = if state.draft.datebook_config.is_some() {
+                Self::DATEBOOK_FIELD_COUNT
+            } else {
+                0
+            };
+            if datebook_rows > 0 && new_index < datebook_rows {
+                state.region = ViewEditRegion::Datebook;
+                state.datebook_field_index = new_index.min(datebook_rows.saturating_sub(1));
+            } else {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = 2 + new_index.saturating_sub(datebook_rows).min(6);
+            }
+        }
     }
 
     pub(crate) fn view_edit_showing_view_details(state: &ViewEditState) -> bool {
@@ -233,7 +319,10 @@ impl App {
         if name_focused {
             match code {
                 KeyCode::Char('j') | KeyCode::Down => {
-                    self.set_view_details_focus_index(Self::NAME_ROW_COUNT);
+                    self.set_view_criteria_tab_focus_index(2);
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.set_view_criteria_tab_focus_index(0);
                 }
                 KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('r') | KeyCode::Char('R') => {
                     self.begin_view_edit_name_input();
@@ -243,27 +332,68 @@ impl App {
             return Ok(true);
         }
 
+        if state.active_tab == ViewEditTab::Criteria && state.region == ViewEditRegion::Unmatched {
+            match code {
+                KeyCode::Char(' ') | KeyCode::Enter => {
+                    if state.unmatched_field_index == Self::VIEW_TYPE_FIELD_INDEX {
+                        self.toggle_view_edit_view_type();
+                        return Ok(true);
+                    }
+                    let target = if state.unmatched_field_index == 0 {
+                        BucketEditTarget::ViewVirtualInclude
+                    } else {
+                        BucketEditTarget::ViewVirtualExclude
+                    };
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.overlay = Some(ViewEditOverlay::BucketPicker { target });
+                        state.picker_index = 0;
+                    }
+                    return Ok(true);
+                }
+                _ => {}
+            }
+        }
+
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                let current = self
-                    .view_edit_state
-                    .as_ref()
-                    .map(Self::view_details_focus_index)
-                    .unwrap_or(0);
-                let max_index = Self::NAME_ROW_COUNT
-                    + criteria_rows
-                    + datebook_rows
-                    + Self::view_details_aux_field_count()
-                    - 1;
-                self.set_view_details_focus_index((current + 1).min(max_index));
+                if state.active_tab == ViewEditTab::Criteria {
+                    let current = self
+                        .view_edit_state
+                        .as_ref()
+                        .map(Self::view_criteria_tab_focus_index)
+                        .unwrap_or(0);
+                    let max_index = 2 + criteria_rows + 2 - 1;
+                    self.set_view_criteria_tab_focus_index((current + 1).min(max_index));
+                } else {
+                    let current = self
+                        .view_edit_state
+                        .as_ref()
+                        .map(Self::view_details_focus_index)
+                        .unwrap_or(0);
+                    let max_index = Self::NAME_ROW_COUNT
+                        + criteria_rows
+                        + datebook_rows
+                        + Self::view_details_aux_field_count()
+                        - 1;
+                    self.set_view_details_focus_index((current + 1).min(max_index));
+                }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                let current = self
-                    .view_edit_state
-                    .as_ref()
-                    .map(Self::view_details_focus_index)
-                    .unwrap_or(0);
-                self.set_view_details_focus_index(current.saturating_sub(1));
+                if state.active_tab == ViewEditTab::Criteria {
+                    let current = self
+                        .view_edit_state
+                        .as_ref()
+                        .map(Self::view_criteria_tab_focus_index)
+                        .unwrap_or(0);
+                    self.set_view_criteria_tab_focus_index(current.saturating_sub(1));
+                } else {
+                    let current = self
+                        .view_edit_state
+                        .as_ref()
+                        .map(Self::view_details_focus_index)
+                        .unwrap_or(0);
+                    self.set_view_details_focus_index(current.saturating_sub(1));
+                }
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 self.open_view_edit_view_criteria_picker();
@@ -272,6 +402,9 @@ impl App {
                 self.begin_view_edit_name_input();
             }
             KeyCode::Char('x') => {
+                if state.region != ViewEditRegion::Criteria {
+                    return Ok(true);
+                }
                 let mut changed = false;
                 if let Some(state) = &mut self.view_edit_state {
                     if idx < state.draft.criteria.criteria.len() {
@@ -289,6 +422,9 @@ impl App {
                 }
             }
             KeyCode::Char(' ') => {
+                if state.region != ViewEditRegion::Criteria {
+                    return Ok(true);
+                }
                 let mut changed = false;
                 if let Some(state) = &mut self.view_edit_state {
                     if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx) {
@@ -407,6 +543,7 @@ impl App {
     pub(crate) fn open_view_edit_view_criteria_picker(&mut self) {
         let first = first_non_reserved_category_index(&self.category_rows);
         if let Some(state) = &mut self.view_edit_state {
+            state.active_tab = ViewEditTab::Criteria;
             state.overlay = Some(ViewEditOverlay::CategoryPicker {
                 target: CategoryEditTarget::ViewCriteria,
             });
@@ -419,6 +556,7 @@ impl App {
     fn open_view_edit_alias_picker(&mut self) {
         let first = first_non_reserved_category_index(&self.category_rows);
         if let Some(state) = &mut self.view_edit_state {
+            state.active_tab = ViewEditTab::Display;
             state.region = ViewEditRegion::Unmatched;
             state.unmatched_field_index = 8;
             state.overlay = Some(ViewEditOverlay::CategoryPicker {
@@ -484,15 +622,6 @@ impl App {
                     state.dirty = true;
                     state.discard_confirm = false;
                 }
-            }
-            KeyCode::Char('l') => {
-                if let Some(state) = &mut self.view_edit_state {
-                    let current = state.draft.unmatched_label.clone();
-                    state.unmatched_field_index = 7;
-                    state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
-                    state.inline_buf = text_buffer::TextBuffer::new(current);
-                }
-                self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
             }
             KeyCode::Char('d') => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -612,6 +741,9 @@ impl App {
                             state.discard_confirm = false;
                         }
                     }
+                    Self::VIEW_TYPE_FIELD_INDEX => {
+                        self.toggle_view_edit_view_type();
+                    }
                     _ => {
                         if target == 7 {
                             if let Some(state) = &mut self.view_edit_state {
@@ -631,5 +763,68 @@ impl App {
             _ => {}
         }
         Ok(true)
+    }
+
+    fn toggle_view_edit_view_type(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.unmatched_field_index = Self::VIEW_TYPE_FIELD_INDEX;
+            if state.draft.datebook_config.is_some() {
+                state.draft.datebook_config = None;
+                if state.draft.sections.is_empty() {
+                    state.draft.sections.push(Self::view_edit_default_section(
+                        Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
+                    ));
+                }
+                state.region = ViewEditRegion::Unmatched;
+                self.status = "View type: Board".to_string();
+            } else {
+                state.draft.datebook_config = Some(DatebookConfig::default());
+                state.region = ViewEditRegion::Unmatched;
+                self.status = "View type: Datebook".to_string();
+            }
+            state.dirty = true;
+            state.discard_confirm = false;
+            state.section_delete_confirm = None;
+            state.pane_focus = ViewEditPaneFocus::Details;
+        }
+        self.refresh_view_edit_preview();
+    }
+
+    pub(crate) fn handle_view_edit_display_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+        let Some(state) = &self.view_edit_state else {
+            return Ok(false);
+        };
+        let datebook_rows = if state.draft.datebook_config.is_some() {
+            Self::DATEBOOK_FIELD_COUNT
+        } else {
+            0
+        };
+        let region = state.region;
+        let display_rows = datebook_rows + 7;
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_display_tab_focus_index)
+                    .unwrap_or(0);
+                let max_index = datebook_rows + display_rows - 1;
+                self.set_view_display_tab_focus_index((current + 1).min(max_index));
+                Ok(true)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let current = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(Self::view_display_tab_focus_index)
+                    .unwrap_or(0);
+                self.set_view_display_tab_focus_index(current.saturating_sub(1));
+                Ok(true)
+            }
+            _ => match region {
+                ViewEditRegion::Datebook => self.handle_view_edit_datebook_key(code),
+                _ => self.handle_view_edit_unmatched_key(code),
+            },
+        }
     }
 }

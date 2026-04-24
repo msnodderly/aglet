@@ -4437,8 +4437,7 @@ impl App {
             Mode::ViewPicker => {
                 vec![
                     ("Enter", "switch"),
-                    ("N", "new"),
-                    ("d", "datebook"),
+                    ("n", "new"),
                     ("c", "clone"),
                     ("r", "rename"),
                     ("e", "edit"),
@@ -4479,9 +4478,34 @@ impl App {
                         } else {
                             vec![("Space", "toggle"), ("Esc", "done")]
                         }
+                    } else if state.active_tab == ViewEditTab::Criteria {
+                        vec![
+                            ("H/L", "tab"),
+                            ("1-3", "jump"),
+                            ("Enter", "edit"),
+                            ("n", "rule"),
+                            ("p", "preview"),
+                            ("S", "save"),
+                            ("Esc", "close"),
+                        ]
+                    } else if state.active_tab == ViewEditTab::Display {
+                        let mut hints = vec![
+                            ("H/L", "tab"),
+                            ("1-3", "jump"),
+                            ("Enter", "edit"),
+                            ("Space", "toggle"),
+                            ("p", "preview"),
+                            ("S", "save"),
+                            ("Esc", "close"),
+                        ];
+                        if let Some(field) = Self::view_edit_active_field_label(state) {
+                            hints.insert(0, ("field", field));
+                        }
+                        hints
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
                         if state.sections_view_row_selected {
                             vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("Enter", "details"),
                                 ("n", "add section"),
@@ -4490,17 +4514,19 @@ impl App {
                             ]
                         } else {
                             vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("e", "title"),
                                 ("n", "add"),
                                 ("x", "del"),
-                                ("J/K", "move"),
+                                ("[/]", "move"),
                                 ("Tab", "details"),
                                 ("Esc", "close"),
                             ]
                         }
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
                         vec![
+                            ("H/L", "tab"),
                             ("S", "save"),
                             ("p", "hide"),
                             ("Tab", "sections"),
@@ -4510,6 +4536,7 @@ impl App {
                         // Details pane
                         let mut hints = if state.sections_view_row_selected {
                             vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("Enter", "edit"),
                                 ("r", "name"),
@@ -4519,6 +4546,7 @@ impl App {
                             ]
                         } else {
                             vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("Enter", "edit"),
                                 ("Space", "toggle"),
@@ -4779,6 +4807,7 @@ impl App {
                     6 => Some("Hide dependent"),
                     7 => Some("Unmatched label"),
                     8 => Some("Aliases"),
+                    9 => Some("View type"),
                     _ => None,
                 },
                 ViewEditRegion::Sections => None,
@@ -8248,34 +8277,91 @@ impl App {
             return;
         };
 
-        let preview_three_column = state.preview_visible && area.width >= 120 && area.height >= 12;
-        let preview_stacked_right = state.preview_visible && !preview_three_column;
-        let panes = if preview_three_column {
-            Layout::default()
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .split(area);
+        let header_area = outer[0];
+        let body_area = outer[1];
+
+        let mut tab_spans = vec![Span::raw("  ‹  ")];
+        for tab in [
+            ViewEditTab::Criteria,
+            ViewEditTab::Sections,
+            ViewEditTab::Display,
+        ] {
+            let active = tab == state.active_tab;
+            let label = format!(" {} {} ", tab.number(), tab.label());
+            let style = if active {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(190, 184, 170))
+            };
+            tab_spans.push(Span::styled(format!("[{label}]"), style));
+            tab_spans.push(Span::raw("  "));
+        }
+        tab_spans.push(Span::raw("›"));
+        let dirty_marker = if state.dirty { "  • unsaved" } else { "" };
+        frame.render_widget(
+            Paragraph::new(Line::from(tab_spans)).block(
+                Block::default()
+                    .title(format!(
+                        " View Editor · {}{} ",
+                        state.draft.name, dirty_marker
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(60, 70, 90))),
+            ),
+            header_area,
+        );
+
+        let show_sections_pane = state.active_tab == ViewEditTab::Sections;
+        let preview_three_column = show_sections_pane
+            && state.preview_visible
+            && body_area.width >= 120
+            && body_area.height >= 12;
+        let preview_stacked_right =
+            show_sections_pane && state.preview_visible && !preview_three_column;
+
+        let (sections_area, details_area, preview_area) = if show_sections_pane {
+            let panes = if preview_three_column {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(36),
+                        Constraint::Percentage(42),
+                        Constraint::Percentage(22),
+                    ])
+                    .split(body_area)
+            } else {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                    .split(body_area)
+            };
+            let (details_area, preview_area) = if preview_three_column && panes.len() > 2 {
+                (panes[1], Some(panes[2]))
+            } else if preview_stacked_right {
+                let right = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+                    .split(panes[1]);
+                (right[0], Some(right[1]))
+            } else {
+                (panes[1], None)
+            };
+            (Some(panes[0]), details_area, preview_area)
+        } else if state.preview_visible {
+            let panes = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(36),
-                    Constraint::Percentage(42),
-                    Constraint::Percentage(22),
-                ])
-                .split(area)
+                .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+                .split(body_area);
+            (None, panes[0], Some(panes[1]))
         } else {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-                .split(area)
-        };
-        let sections_area = panes[0];
-        let (details_area, preview_area) = if preview_three_column && panes.len() > 2 {
-            (panes[1], Some(panes[2]))
-        } else if preview_stacked_right {
-            let right = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
-                .split(panes[1]);
-            (right[0], Some(right[1]))
-        } else {
-            (panes[1], None)
+            (None, body_area, None)
         };
 
         let focused_border = Color::Cyan;
@@ -8378,6 +8464,8 @@ impl App {
             }
 
             if show_view_details {
+                let showing_criteria_tab = state.active_tab == ViewEditTab::Criteria;
+                let showing_display_tab = state.active_tab == ViewEditTab::Display;
                 let display_mode_label = match state.draft.board_display_mode {
                     BoardDisplayMode::SingleLine => "single-line",
                     BoardDisplayMode::MultiLine => "multi-line",
@@ -8417,358 +8505,390 @@ impl App {
                         && state.unmatched_field_index == field_index
                 };
 
-                // ── Name ──
-                let editing_view_name =
-                    matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
-                let name_row_focused =
-                    details_focused && Self::view_details_on_name_row(state) && !editing_view_name;
-                let view_name_style = if editing_view_name || name_row_focused {
-                    selected_line = Some(items.len());
-                    sel_style
-                } else {
-                    Style::default()
-                };
-                let name_line = if editing_view_name {
-                    let label = format!(
-                        "{}{:<width$}◀ ",
-                        row_marker(editing_view_name || name_row_focused),
-                        "Name",
-                        width = pad
+                if showing_criteria_tab {
+                    // ── Basics ──
+                    let view_type_label = if state.draft.datebook_config.is_some() {
+                        "Datebook"
+                    } else {
+                        "Board"
+                    };
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(Self::VIEW_TYPE_FIELD_INDEX)),
+                            "View type",
+                            view_type_label,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            Self::VIEW_TYPE_FIELD_INDEX,
+                            &items,
+                            &mut selected_line,
+                        )),
                     );
-                    Line::from(inline_edit_spans(
-                        &label,
-                        state.inline_buf.text(),
-                        state.inline_buf.cursor(),
-                        view_name_style,
-                        view_name_style,
-                    ))
-                } else {
-                    Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(name_row_focused),
-                        "Name",
-                        state.draft.name,
-                        width = pad
-                    ))
-                };
-                items.push(ListItem::new(name_line).style(view_name_style));
 
-                // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Filter criteria ──
-                items.push(ListItem::new(Line::from("  Filter criteria:")));
-
-                let criteria_row_start = items.len();
-                let criteria_lines = summarize_query(&state.draft.criteria);
-                if criteria_lines.is_empty() {
-                    let style = if details_focused && state.region == ViewEditRegion::Criteria {
-                        selected_line = Some(criteria_row_start);
+                    // ── Name ──
+                    let editing_view_name =
+                        matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
+                    let name_row_focused = details_focused
+                        && Self::view_details_on_name_row(state)
+                        && !editing_view_name;
+                    let view_name_style = if editing_view_name || name_row_focused {
+                        selected_line = Some(items.len());
                         sel_style
                     } else {
                         Style::default()
                     };
-                    items.push(
-                        ListItem::new(Line::from(format!(
-                            "{}  (no criteria — matches all items)",
-                            row_marker(details_focused && state.region == ViewEditRegion::Criteria)
-                        )))
-                        .style(style),
-                    );
-                } else {
-                    for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
-                        let is_selected = details_focused
-                            && state.region == ViewEditRegion::Criteria
-                            && i == state.criteria_index;
-                        if is_selected {
-                            selected_line = Some(criteria_row_start + i);
-                        }
-                        let text_color = if is_selected {
-                            Color::Black
-                        } else {
-                            criterion_mode_color(*mode)
-                        };
-                        let line = Line::from(vec![
-                            Span::raw(format!("{}  ", row_marker(is_selected))),
-                            Span::styled(criterion.clone(), Style::default().fg(text_color)),
-                        ]);
-                        let style = if is_selected {
-                            sel_style
-                        } else {
-                            Style::default()
-                        };
-                        items.push(ListItem::new(line).style(style));
-                    }
-                }
+                    let name_line = if editing_view_name {
+                        let label = format!(
+                            "{}{:<width$}◀ ",
+                            row_marker(editing_view_name || name_row_focused),
+                            "Name",
+                            width = pad
+                        );
+                        Line::from(inline_edit_spans(
+                            &label,
+                            state.inline_buf.text(),
+                            state.inline_buf.cursor(),
+                            view_name_style,
+                            view_name_style,
+                        ))
+                    } else {
+                        Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(name_row_focused),
+                            "Name",
+                            state.draft.name,
+                            width = pad
+                        ))
+                    };
+                    items.push(ListItem::new(name_line).style(view_name_style));
 
-                // ── Datebook config (only for datebook views) ──
-                if let Some(config) = &state.draft.datebook_config {
+                    // ── Separator ──
                     items.push(ListItem::new(Line::from(Span::styled(
                         "  ─────────────────────────────────────────",
                         separator_style,
                     ))));
-                    items.push(ListItem::new(Line::from("  Datebook config:")));
 
-                    let datebook_fields: &[(&str, String)] = &[
-                        ("Period", config.period.label().to_string()),
-                        ("Interval", config.interval.label().to_string()),
-                        ("Anchor", config.anchor.label().to_string()),
-                        ("Date source", config.date_source.label().to_string()),
-                    ];
-                    for (fi, (label, value)) in datebook_fields.iter().enumerate() {
-                        let is_selected = details_focused
-                            && state.region == ViewEditRegion::Datebook
-                            && state.datebook_field_index == fi;
-                        if is_selected {
-                            selected_line = Some(items.len());
-                        }
-                        let style = if is_selected {
+                    // ── Filter criteria ──
+                    items.push(ListItem::new(Line::from("  Filter criteria:")));
+
+                    let criteria_row_start = items.len();
+                    let criteria_lines = summarize_query(&state.draft.criteria);
+                    if criteria_lines.is_empty() {
+                        let style = if details_focused && state.region == ViewEditRegion::Criteria {
+                            selected_line = Some(criteria_row_start);
                             sel_style
                         } else {
                             Style::default()
                         };
                         items.push(
                             ListItem::new(Line::from(format!(
-                                "{}{:<width$}{}",
-                                row_marker(is_selected),
-                                label,
-                                value,
-                                width = pad
+                                "{}  (no criteria — matches all items)",
+                                row_marker(
+                                    details_focused && state.region == ViewEditRegion::Criteria
+                                )
                             )))
                             .style(style),
                         );
+                    } else {
+                        for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
+                            let is_selected = details_focused
+                                && state.region == ViewEditRegion::Criteria
+                                && i == state.criteria_index;
+                            if is_selected {
+                                selected_line = Some(criteria_row_start + i);
+                            }
+                            let text_color = if is_selected {
+                                Color::Black
+                            } else {
+                                criterion_mode_color(*mode)
+                            };
+                            let line = Line::from(vec![
+                                Span::raw(format!("{}  ", row_marker(is_selected))),
+                                Span::styled(criterion.clone(), Style::default().fg(text_color)),
+                            ]);
+                            let style = if is_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(ListItem::new(line).style(style));
+                        }
+                    }
+                }
+
+                // ── Datebook config (only for datebook views) ──
+                if showing_display_tab {
+                    if let Some(config) = &state.draft.datebook_config {
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            "  ─────────────────────────────────────────",
+                            separator_style,
+                        ))));
+                        items.push(ListItem::new(Line::from("  Datebook config:")));
+
+                        let datebook_fields: &[(&str, String)] = &[
+                            ("Period", config.period.label().to_string()),
+                            ("Interval", config.interval.label().to_string()),
+                            ("Anchor", config.anchor.label().to_string()),
+                            ("Date source", config.date_source.label().to_string()),
+                        ];
+                        for (fi, (label, value)) in datebook_fields.iter().enumerate() {
+                            let is_selected = details_focused
+                                && state.region == ViewEditRegion::Datebook
+                                && state.datebook_field_index == fi;
+                            if is_selected {
+                                selected_line = Some(items.len());
+                            }
+                            let style = if is_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(
+                                ListItem::new(Line::from(format!(
+                                    "{}{:<width$}{}",
+                                    row_marker(is_selected),
+                                    label,
+                                    value,
+                                    width = pad
+                                )))
+                                .style(style),
+                            );
+                        }
                     }
                 }
 
                 // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Date range ──
-                let when_include = if state.draft.criteria.virtual_include.is_empty() {
-                    "(all)".to_string()
-                } else {
-                    when_bucket_options()
-                        .iter()
-                        .filter(|b| state.draft.criteria.virtual_include.contains(*b))
-                        .map(|b| when_bucket_label(*b).to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                };
-                let when_exclude = if state.draft.criteria.virtual_exclude.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    when_bucket_options()
-                        .iter()
-                        .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
-                        .map(|b| when_bucket_label(*b).to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                };
-
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(0)),
-                        "Date range (include)",
-                        when_include,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        0,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(1)),
-                        "Date range (exclude)",
-                        when_exclude,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        1,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Display ──
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(2)),
-                        "Display mode",
-                        display_mode_label,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        2,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(3)),
-                        "Section flow",
-                        section_flow_label,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        3,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(4)),
-                        "Empty sections",
-                        empty_sections_label,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        4,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                let configured_aliases: Vec<_> = state
-                    .draft
-                    .category_aliases
-                    .iter()
-                    .filter(|(_, alias)| !alias.trim().is_empty())
-                    .map(|(cat_id, alias)| {
-                        let cat_name = self
-                            .categories
-                            .iter()
-                            .find(|c| c.id == *cat_id)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("?");
-                        (cat_name.to_string(), alias.clone())
-                    })
-                    .collect();
-                let alias_summary = if configured_aliases.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    format!("{} configured", configured_aliases.len())
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(8)),
-                        "Aliases",
-                        alias_summary,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        8,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                // Show configured aliases as indented sub-rows (display-only)
-                for (cat_name, alias) in &configured_aliases {
+                if showing_criteria_tab {
                     items.push(ListItem::new(Line::from(Span::styled(
-                        format!("      {} \u{2192} {}", cat_name, alias),
-                        Style::default().fg(MUTED_TEXT_COLOR),
+                        "  ─────────────────────────────────────────",
+                        separator_style,
                     ))));
+
+                    // ── Date range ──
+                    let when_include = if state.draft.criteria.virtual_include.is_empty() {
+                        "(all)".to_string()
+                    } else {
+                        when_bucket_options()
+                            .iter()
+                            .filter(|b| state.draft.criteria.virtual_include.contains(*b))
+                            .map(|b| when_bucket_label(*b).to_string())
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    };
+                    let when_exclude = if state.draft.criteria.virtual_exclude.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        when_bucket_options()
+                            .iter()
+                            .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
+                            .map(|b| when_bucket_label(*b).to_string())
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    };
+
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(0)),
+                            "Date range (include)",
+                            when_include,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            0,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(1)),
+                            "Date range (exclude)",
+                            when_exclude,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            1,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
                 }
 
                 // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
+                if showing_display_tab {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "  ─────────────────────────────────────────",
+                        separator_style,
+                    ))));
 
-                // ── Unmatched ──
-                let unmatched_value = if state.draft.show_unmatched {
-                    format!("yes, as \"{}\"", state.draft.unmatched_label)
-                } else {
-                    "hidden".to_string()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(5)),
-                        "Show unmatched",
-                        unmatched_value,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        5,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                let hide_dependent_value = if state.draft.hide_dependent_items {
-                    "yes".to_string()
-                } else {
-                    "no".to_string()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(6)),
-                        "Hide dependent",
-                        hide_dependent_value,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        6,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                let editing_unmatched_label = matches!(
-                    state.inline_input,
-                    Some(ViewEditInlineInput::UnmatchedLabel)
-                );
-                let unmatched_label_style =
-                    style_for_unmatched_field(7, &items, &mut selected_line);
-                let unmatched_label_line = if editing_unmatched_label {
-                    let label = format!(
-                        "{}{:<width$}◀ ",
-                        row_marker(unmatched_field_selected(7) || editing_unmatched_label),
-                        "Unmatched label",
-                        width = pad
+                    // ── Display ──
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(2)),
+                            "Display mode",
+                            display_mode_label,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            2,
+                            &items,
+                            &mut selected_line,
+                        )),
                     );
-                    Line::from(inline_edit_spans(
-                        &label,
-                        state.inline_buf.text(),
-                        state.inline_buf.cursor(),
-                        unmatched_label_style,
-                        unmatched_label_style,
-                    ))
-                } else {
-                    Line::from(format!(
-                        "{}{:<width$}\"{}\"",
-                        row_marker(unmatched_field_selected(7)),
-                        "Unmatched label",
-                        state.draft.unmatched_label,
-                        width = pad
-                    ))
-                };
-                items.push(ListItem::new(unmatched_label_line).style(unmatched_label_style));
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(3)),
+                            "Section flow",
+                            section_flow_label,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            3,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(4)),
+                            "Empty sections",
+                            empty_sections_label,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            4,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+
+                    let configured_aliases: Vec<_> = state
+                        .draft
+                        .category_aliases
+                        .iter()
+                        .filter(|(_, alias)| !alias.trim().is_empty())
+                        .map(|(cat_id, alias)| {
+                            let cat_name = self
+                                .categories
+                                .iter()
+                                .find(|c| c.id == *cat_id)
+                                .map(|c| c.name.as_str())
+                                .unwrap_or("?");
+                            (cat_name.to_string(), alias.clone())
+                        })
+                        .collect();
+                    let alias_summary = if configured_aliases.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        format!("{} configured", configured_aliases.len())
+                    };
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(8)),
+                            "Aliases",
+                            alias_summary,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            8,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+                    // Show configured aliases as indented sub-rows (display-only)
+                    for (cat_name, alias) in &configured_aliases {
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            format!("      {} \u{2192} {}", cat_name, alias),
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ))));
+                    }
+
+                    // ── Separator ──
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "  ─────────────────────────────────────────",
+                        separator_style,
+                    ))));
+
+                    // ── Unmatched ──
+                    let unmatched_value = if state.draft.show_unmatched {
+                        format!("yes, as \"{}\"", state.draft.unmatched_label)
+                    } else {
+                        "hidden".to_string()
+                    };
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(5)),
+                            "Show unmatched",
+                            unmatched_value,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            5,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+
+                    let hide_dependent_value = if state.draft.hide_dependent_items {
+                        "yes".to_string()
+                    } else {
+                        "no".to_string()
+                    };
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(unmatched_field_selected(6)),
+                            "Hide dependent",
+                            hide_dependent_value,
+                            width = pad
+                        )))
+                        .style(style_for_unmatched_field(
+                            6,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+
+                    let editing_unmatched_label = matches!(
+                        state.inline_input,
+                        Some(ViewEditInlineInput::UnmatchedLabel)
+                    );
+                    let unmatched_label_style =
+                        style_for_unmatched_field(7, &items, &mut selected_line);
+                    let unmatched_label_line = if editing_unmatched_label {
+                        let label = format!(
+                            "{}{:<width$}◀ ",
+                            row_marker(unmatched_field_selected(7) || editing_unmatched_label),
+                            "Unmatched label",
+                            width = pad
+                        );
+                        Line::from(inline_edit_spans(
+                            &label,
+                            state.inline_buf.text(),
+                            state.inline_buf.cursor(),
+                            unmatched_label_style,
+                            unmatched_label_style,
+                        ))
+                    } else {
+                        Line::from(format!(
+                            "{}{:<width$}\"{}\"",
+                            row_marker(unmatched_field_selected(7)),
+                            "Unmatched label",
+                            state.draft.unmatched_label,
+                            width = pad
+                        ))
+                    };
+                    items.push(ListItem::new(unmatched_label_line).style(unmatched_label_style));
+                }
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
                     state.inline_input,
@@ -9052,7 +9172,7 @@ impl App {
         }
 
         // ── Sections region ──────────────────────────────────────────────────
-        {
+        if let Some(sections_area) = sections_area {
             let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
                 if let ViewEditInlineInput::SectionTitle { section_index, .. } = inp {
                     Some(*section_index)

@@ -8,5 +8,5 @@ mod state;
 
 pub(crate) use state::{
     BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
-    ViewEditRegion, ViewEditState,
+    ViewEditRegion, ViewEditState, ViewEditTab,
 };

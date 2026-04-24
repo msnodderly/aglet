@@ -52,11 +52,6 @@ impl App {
                 }
                 self.open_view_edit_new_view_focus_name(view);
             }
-            KeyCode::Char('d') | KeyCode::Char('D') => {
-                let mut view = View::new("Untitled Datebook".to_string());
-                view.datebook_config = Some(DatebookConfig::default());
-                self.open_view_edit_new_view_focus_name(view);
-            }
             KeyCode::Char('r') => {
                 if let Some(view) = self.selected_view_from_picker() {
                     if is_immutable_view(&view) {

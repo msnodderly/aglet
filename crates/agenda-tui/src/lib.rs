@@ -55,7 +55,7 @@ pub use error::{TuiError, TuiResult};
 
 use modes::view_edit::{
     BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
-    ViewEditRegion, ViewEditState,
+    ViewEditRegion, ViewEditState, ViewEditTab,
 };
 use state::assign::{
     AssignmentPreview, InspectAssignmentRow, ItemAssignPane, ItemAssignReturnTarget, ViewAssignRow,

@@ -12,7 +12,7 @@ use super::{
     CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, DateConditionDraftKind,
     DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext,
     OllamaModelPickerState, SectionBorderMode, SlotSortDirection, SuggestionDecision,
-    ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
+    ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, ViewEditTab, WorkflowRolePickerOrigin,
 };
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
@@ -4675,10 +4675,11 @@ fn view_picker_delete_uses_x_and_removes_selected_view() {
         .iter()
         .position(|view| view.name == "Keep Me")
         .expect("keep view should exist");
-    // 'd' now creates a new datebook view (opens ViewEdit), not delete
+    // Datebook is selected from ViewEdit now; 'd' no longer creates a second
+    // kind of new view from the picker.
     app.handle_view_picker_key(KeyCode::Char('d'), &agenda)
-        .expect("d key should open datebook creation");
-    assert_eq!(app.mode, Mode::ViewEdit);
+        .expect("d key should be ignored by view picker");
+    assert_eq!(app.mode, Mode::ViewPicker);
     assert!(store
         .list_views()
         .expect("list views")
@@ -4840,17 +4841,14 @@ fn view_picker_lowercase_n_opens_view_create() {
     app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
         .expect("n opens create view");
 
-    // N now opens ViewEdit directly with inline name editing
+    // n opens ViewEdit directly with the type prompt first.
     assert_eq!(app.mode, Mode::ViewEdit);
     let state = app.view_edit_state.as_ref().expect("view_edit_state");
     assert!(state.is_new_view, "should be flagged as new view");
-    assert!(
-        matches!(
-            state.inline_input,
-            Some(super::ViewEditInlineInput::ViewName)
-        ),
-        "should be editing view name inline"
-    );
+    assert_eq!(state.active_tab, ViewEditTab::Criteria);
+    assert_eq!(state.region, ViewEditRegion::Unmatched);
+    assert_eq!(state.unmatched_field_index, App::VIEW_TYPE_FIELD_INDEX);
+    assert!(state.inline_input.is_none());
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -5019,17 +5017,19 @@ fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() 
     app.refresh(&store).expect("refresh");
     app.mode = Mode::ViewPicker;
 
-    // N now opens ViewEdit directly with inline name editing
+    // n opens ViewEdit directly with the type prompt first.
     app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
     let state = app.view_edit_state.as_ref().expect("view edit state");
-    assert!(matches!(
-        state.inline_input,
-        Some(super::ViewEditInlineInput::ViewName)
-    ));
+    assert_eq!(state.active_tab, ViewEditTab::Criteria);
+    assert_eq!(state.region, ViewEditRegion::Unmatched);
+    assert_eq!(state.unmatched_field_index, App::VIEW_TYPE_FIELD_INDEX);
 
-    // Type the view name
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("move from type to name");
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("start name edit");
     for ch in "Mixed".chars() {
         app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
             .expect("type view name");
@@ -5070,12 +5070,15 @@ fn view_create_wizard_esc_discards_unsaved_view() {
     app.refresh(&store).expect("refresh");
     app.mode = Mode::ViewPicker;
 
-    // N now opens ViewEdit directly with inline name editing
+    // n opens ViewEdit directly with the type prompt first.
     app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
 
-    // Type a name
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("move from type to name");
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("start name edit");
     for ch in "Scratch".chars() {
         app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
             .expect("type view name");
@@ -5124,12 +5127,15 @@ fn view_create_wizard_s_save_persists_view() {
     app.refresh(&store).expect("refresh");
     app.mode = Mode::ViewPicker;
 
-    // N now opens ViewEdit directly with inline name editing
+    // n opens ViewEdit directly with the type prompt first.
     app.handle_view_picker_key(KeyCode::Char('n'), &agenda)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
 
-    // Type the view name and confirm
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("move from type to name");
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("start name edit");
     for ch in "Roadmap".chars() {
         app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
             .expect("type view name");
@@ -16162,6 +16168,16 @@ fn board_inline_border_shows_item_label_when_item_column_is_reordered() {
 // Phase 2a: ViewEdit tests
 // -------------------------------------------------------------------------
 
+fn switch_view_edit_tab(app: &mut App, agenda: &Agenda<'_>, tab: ViewEditTab) {
+    let key = match tab {
+        ViewEditTab::Criteria => '1',
+        ViewEditTab::Sections => '2',
+        ViewEditTab::Display => '3',
+    };
+    app.handle_view_edit_key(KeyCode::Char(key), agenda)
+        .expect("switch view edit tab");
+}
+
 #[test]
 fn store_section_roundtrip_smoke() {
     // Minimal test: can the store persist and reload a Section?
@@ -16254,6 +16270,7 @@ fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
     });
     app.open_view_edit(view);
     if let Some(state) = &mut app.view_edit_state {
+        state.active_tab = ViewEditTab::Sections;
         state.pane_focus = ViewEditPaneFocus::Details;
         state.region = ViewEditRegion::Sections;
         state.section_index = 0;
@@ -16321,7 +16338,7 @@ fn view_picker_e_opens_view_edit() {
 }
 
 #[test]
-fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
+fn view_picker_n_opens_new_view_editor_with_type_focus_and_default_section() {
     let (store, db_path) = make_test_store_with_view("new-view-picker");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -16345,11 +16362,60 @@ fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
         App::DEFAULT_VIEW_EDIT_SECTION_TITLE
     );
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
-    assert_eq!(state.region, ViewEditRegion::Criteria);
+    assert_eq!(state.active_tab, ViewEditTab::Criteria);
+    assert_eq!(state.region, ViewEditRegion::Unmatched);
+    assert_eq!(state.unmatched_field_index, App::VIEW_TYPE_FIELD_INDEX);
+    assert!(state.inline_input.is_none());
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_criteria_view_type_row_toggles_board_and_datebook() {
+    let (store, db_path) = make_test_store_with_view("view-type-toggle");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("criteria -> name");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("name -> view type");
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert_eq!(state.region, ViewEditRegion::Unmatched);
     assert_eq!(
-        state.inline_input,
-        Some(super::ViewEditInlineInput::ViewName)
+        state.unmatched_field_index,
+        App::VIEW_TYPE_FIELD_INDEX,
+        "Criteria tab should focus the view type selector first"
     );
+    assert!(state.draft.datebook_config.is_none());
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle to datebook");
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert!(state.draft.datebook_config.is_some());
+    assert!(state.dirty);
+    assert_eq!(state.unmatched_field_index, App::VIEW_TYPE_FIELD_INDEX);
+
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert_eq!(state.region, ViewEditRegion::Datebook);
+    assert_eq!(state.datebook_field_index, 0);
+
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Criteria);
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("criteria -> name");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("name -> view type");
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle back to board");
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert!(state.draft.datebook_config.is_none());
+    assert!(!state.draft.sections.is_empty());
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -16678,7 +16744,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
 }
 
 #[test]
-fn view_edit_tab_cycles_panes() {
+fn view_edit_tabs_switch_with_hl_and_number_keys() {
     let (store, db_path) = make_test_store_with_view("tab-cycle");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -16696,59 +16762,47 @@ fn view_edit_tab_cycles_panes() {
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Details
     );
-
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
-    );
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Criteria
     );
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("next tab");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Details
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Sections
     );
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
-    );
-
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab wraps");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
     );
 
-    let _ = std::fs::remove_file(&db_path);
-}
-
-#[test]
-fn view_edit_shift_tab_cycles_panes_backwards() {
-    let (store, db_path) = make_test_store_with_view("shift-tab-cycle");
-    let classifier = SubstringClassifier;
-    let agenda = Agenda::new(&store, &classifier);
-
-    let mut app = App::default();
-    app.refresh(&store).expect("refresh");
-    let view = test_view_from_app(&app);
-    app.open_view_edit(view);
-
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("next tab");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Display
     );
-    app.handle_view_edit_key(KeyCode::BackTab, &agenda)
-        .expect("shift-tab");
+
+    app.handle_view_edit_key(KeyCode::Char('H'), &agenda)
+        .expect("previous tab");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Sections
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump display");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Display
+    );
+    app.handle_view_edit_key(KeyCode::Char('1'), &agenda)
+        .expect("jump criteria");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Criteria
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -16836,8 +16890,7 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
     app.open_view_edit(view);
 
     // Move to Sections pane, then select first section row
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
@@ -16908,7 +16961,7 @@ fn view_edit_overlay_intercepts_keys_before_region() {
 }
 
 #[test]
-fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
+fn view_edit_details_jk_moves_within_active_tabs() {
     let (store, db_path) = make_test_store_with_view("details-jk-view-rows");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -16924,7 +16977,7 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("criteria -> when include");
+        .expect("criteria -> date include");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
         ViewEditRegion::Unmatched
@@ -16935,7 +16988,7 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("when include -> when exclude");
+        .expect("date include -> date exclude");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
         ViewEditRegion::Unmatched
@@ -16946,16 +16999,21 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("when exclude -> display mode");
+        .expect("stay at last criteria-tab row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
         ViewEditRegion::Unmatched
     );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        2
+        1
     );
 
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        2
+    );
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("display mode -> section flow");
     assert_eq!(
@@ -17013,24 +17071,10 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("display mode -> when exclude");
+        .expect("display mode stays first display row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        1
-    );
-
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("when exclude -> when include");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        0
-    );
-
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("when include -> criteria");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
+        2
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -17046,22 +17090,8 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Unmatched
-    );
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        0
-    );
-
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
@@ -17110,13 +17140,8 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
@@ -17157,13 +17182,8 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     assert_eq!(
@@ -17205,9 +17225,10 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
 
     // Move focus to Aliases row in view details.
-    for _ in 0..9 {
+    for _ in 0..7 {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("move details selection");
     }
@@ -17274,10 +17295,13 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
     view.category_aliases
         .insert(category.id, "Client".to_string());
     app.open_view_edit(view);
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
 
-    // Enter unmatched details, then open aliases picker.
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("move to unmatched details");
+    // Move to aliases row, then open aliases picker.
+    for _ in 0..7 {
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("move details selection");
+    }
     app.handle_view_edit_key(KeyCode::Char('A'), &agenda)
         .expect("open aliases picker");
     assert!(matches!(
@@ -17341,10 +17365,7 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
     app.handle_view_edit_key(KeyCode::Esc, &agenda)
         .expect("close bucket picker");
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         2
@@ -17431,8 +17452,7 @@ fn view_edit_section_details_field_count_is_seven() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("to sections pane");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select section row");
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -17485,8 +17505,7 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("to sections");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select section");
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -17581,8 +17600,7 @@ fn view_edit_section_layout_space_toggles_split_mode() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("to sections");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select section");
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -17648,8 +17666,7 @@ fn view_edit_h_does_not_toggle_section_layout() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("to sections");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select section");
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -17708,8 +17725,7 @@ fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("to sections pane");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select section row");
 
@@ -17785,8 +17801,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("to sections");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select section");
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -17920,8 +17935,7 @@ fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
@@ -17971,8 +17985,7 @@ fn view_edit_section_e_starts_section_title_edit() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
         .expect("add section");
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -18007,8 +18020,7 @@ fn view_edit_section_uppercase_n_adds_and_starts_section_title_edit() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('N'), &agenda)
         .expect("add section and start title edit");
 
@@ -18063,8 +18075,7 @@ fn view_edit_section_lowercase_n_inserts_below_current_and_starts_title_edit() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select first section");
     if let Some(state) = &mut app.view_edit_state {
@@ -18127,8 +18138,7 @@ fn view_edit_section_uppercase_n_inserts_above_current_and_starts_title_edit() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select first section");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
@@ -18155,7 +18165,7 @@ fn view_edit_section_uppercase_n_inserts_above_current_and_starts_title_edit() {
 }
 
 #[test]
-fn view_edit_section_uppercase_jk_reorders_sections() {
+fn view_edit_section_bracket_keys_reorder_sections() {
     let (store, db_path) = make_test_store_with_view("section-uppercase-jk-reorder");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -18190,22 +18200,21 @@ fn view_edit_section_uppercase_jk_reorders_sections() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select first section");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("select second section");
     assert_eq!(app.view_edit_state.as_ref().unwrap().section_index, 1);
 
-    app.handle_view_edit_key(KeyCode::Char('K'), &agenda)
+    app.handle_view_edit_key(KeyCode::Char('['), &agenda)
         .expect("move selected section up");
     let state = app.view_edit_state.as_ref().unwrap();
     assert_eq!(state.section_index, 0);
     assert_eq!(state.draft.sections[0].title, "Bravo");
     assert_eq!(state.draft.sections[1].title, "Alpha");
 
-    app.handle_view_edit_key(KeyCode::Char('J'), &agenda)
+    app.handle_view_edit_key(KeyCode::Char(']'), &agenda)
         .expect("move selected section down");
     let state = app.view_edit_state.as_ref().unwrap();
     assert_eq!(state.section_index, 1);
@@ -18241,16 +18250,23 @@ fn view_edit_sections_can_select_view_properties_row_and_enter_opens_criteria() 
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
     );
     let state = app.view_edit_state.as_ref().unwrap();
-    assert!(state.sections_view_row_selected);
+    assert!(!state.sections_view_row_selected);
     assert_eq!(state.section_index, 0, "section cursor is preserved");
 
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("select view settings row");
+    assert!(
+        app.view_edit_state
+            .as_ref()
+            .unwrap()
+            .sections_view_row_selected
+    );
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
         .expect("enter should open criteria details");
     assert_eq!(
@@ -18276,15 +18292,6 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
         .cloned()
         .expect("TestView should exist");
     app.open_view_edit(view);
-
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections");
-    assert!(
-        app.view_edit_state
-            .as_ref()
-            .expect("state")
-            .sections_view_row_selected
-    );
 
     app.handle_view_edit_key(KeyCode::Char('r'), &agenda)
         .expect("start view rename");
@@ -18422,15 +18429,15 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
         .expect("show preview again");
     assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
 
-    // Tab skips preview — goes Details -> Sections (not Preview)
+    // Tab moves between details and optional preview within the active tab.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("details -> sections");
+        .expect("details -> preview");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
+        ViewEditPaneFocus::Preview
     );
 
-    // Shift-P focuses preview directly
+    // Shift-P also focuses preview directly.
     app.handle_view_edit_key(KeyCode::Char('P'), &agenda)
         .expect("P focuses preview");
     assert_eq!(
@@ -18438,12 +18445,12 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
         ViewEditPaneFocus::Preview
     );
 
-    // Tab from preview returns to sections
+    // Tab from preview returns to details.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("preview -> sections via tab");
+        .expect("preview -> details via tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
+        ViewEditPaneFocus::Details
     );
 
     // Focus preview again, then hide it with p
@@ -18453,7 +18460,7 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
         .expect("hide preview while preview focused");
     let state = app.view_edit_state.as_ref().unwrap();
     assert!(!state.preview_visible);
-    assert_eq!(state.pane_focus, ViewEditPaneFocus::Sections);
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -18520,8 +18527,7 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
         .expect("add section");
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -18575,7 +18581,7 @@ fn section_column_picker_excludes_leaf_tag_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
         .unwrap();
     app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
@@ -18627,7 +18633,7 @@ fn section_column_picker_includes_non_leaf_tag_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
         .unwrap();
     app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
@@ -18680,7 +18686,7 @@ fn section_column_picker_includes_nested_non_leaf_tag_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
         .unwrap();
     app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
@@ -18728,7 +18734,7 @@ fn section_column_picker_includes_numeric_leaf_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda).unwrap();
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     app.handle_view_edit_key(KeyCode::Char('n'), &agenda)
         .unwrap();
     app.handle_view_edit_key(KeyCode::Enter, &agenda).unwrap();
@@ -18776,8 +18782,7 @@ fn view_edit_save_persists_view() {
     app.open_view_edit(view);
 
     // Add a section via 'N' in Sections region
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Sections);
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
@@ -18802,29 +18807,18 @@ fn view_edit_save_persists_view() {
         Some(BoardDisplayMode::SingleLine)
     );
 
-    // Move from section details to view criteria details
-    // Tab goes Details → Sections
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections pane");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
-    );
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("select view properties row");
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
-        .expect("open view criteria details");
+    switch_view_edit_tab(&mut app, &agenda, ViewEditTab::Display);
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Details
     );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
+        ViewEditRegion::Unmatched
     );
 
-    // Toggle view default display mode in Criteria details
-    app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
+    // Toggle view default display mode in Display tab.
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
         .expect("toggle view display mode");
     assert_eq!(
         app.view_edit_state
@@ -18834,9 +18828,6 @@ fn view_edit_save_persists_view() {
             .board_display_mode,
         BoardDisplayMode::MultiLine
     );
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections");
-
     // Verify draft has section before save
     let draft_before_save = app.view_edit_state.as_ref().unwrap().draft.clone();
     assert_eq!(

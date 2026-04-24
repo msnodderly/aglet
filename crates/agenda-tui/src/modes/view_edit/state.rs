@@ -31,6 +31,47 @@ pub(crate) enum ViewEditPaneFocus {
     Preview,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ViewEditTab {
+    Criteria,
+    Sections,
+    Display,
+}
+
+impl ViewEditTab {
+    pub(crate) fn previous(self) -> Self {
+        match self {
+            Self::Criteria => Self::Display,
+            Self::Sections => Self::Criteria,
+            Self::Display => Self::Sections,
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Criteria => Self::Sections,
+            Self::Sections => Self::Display,
+            Self::Display => Self::Criteria,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Criteria => "Criteria",
+            Self::Sections => "Sections",
+            Self::Display => "Display",
+        }
+    }
+
+    pub(crate) fn number(self) -> char {
+        match self {
+            Self::Criteria => '1',
+            Self::Sections => '2',
+            Self::Display => '3',
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ViewEditOverlay {
     CategoryPicker { target: CategoryEditTarget },
@@ -50,6 +91,7 @@ pub(crate) enum ViewEditInlineInput {
 pub(crate) struct ViewEditState {
     pub(crate) draft: View,
     pub(crate) is_new_view: bool,
+    pub(crate) active_tab: ViewEditTab,
     pub(crate) region: ViewEditRegion,
     pub(crate) pane_focus: ViewEditPaneFocus,
     pub(crate) criteria_index: usize,
