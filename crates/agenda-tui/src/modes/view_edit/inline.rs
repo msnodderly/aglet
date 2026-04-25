@@ -3,11 +3,18 @@ use crate::*;
 impl App {
     pub(crate) fn begin_view_edit_name_input(&mut self) {
         if let Some(state) = &mut self.view_edit_state {
-            let current = state.draft.name.clone();
-            state.sections_view_row_selected = true;
-            if state.region == ViewEditRegion::Sections {
-                state.region = ViewEditRegion::Criteria;
-            }
+            let current = if state.is_new_view
+                && matches!(
+                    state.draft.name.as_str(),
+                    "Untitled View" | "Untitled Datebook"
+                ) {
+                String::new()
+            } else {
+                state.draft.name.clone()
+            };
+            state.active_tab = ViewEditTab::Scope;
+            state.scope_row = ViewScopeRow::Name;
+            Self::sync_scope_row_to_legacy(state);
             state.pane_focus = ViewEditPaneFocus::Details;
             state.inline_input = Some(ViewEditInlineInput::ViewName);
             state.inline_buf = text_buffer::TextBuffer::new(current);

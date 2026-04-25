@@ -212,6 +212,115 @@ impl App {
         Ok(true)
     }
 
+    fn move_view_edit_sections_settings_row(&mut self, forward: bool) {
+        let next = self.view_edit_state.as_ref().map(|state| {
+            let rows: &[ViewSectionsSettingsRow] = if state.draft.datebook_config.is_some() {
+                &[ViewSectionsSettingsRow::DatebookPreview]
+            } else {
+                &[
+                    ViewSectionsSettingsRow::ShowUnmatched,
+                    ViewSectionsSettingsRow::UnmatchedLabel,
+                ]
+            };
+            let current = if rows.contains(&state.sections_settings_row) {
+                state.sections_settings_row
+            } else {
+                rows[0]
+            };
+            let current_index = rows.iter().position(|row| *row == current).unwrap_or(0);
+            let next_index = if forward {
+                (current_index + 1).min(rows.len().saturating_sub(1))
+            } else {
+                current_index.saturating_sub(1)
+            };
+            rows[next_index]
+        });
+        if let Some(row) = next {
+            self.set_view_edit_sections_settings_row(row);
+        }
+    }
+
+    fn begin_view_edit_unmatched_label_input(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            let current = state.draft.unmatched_label.clone();
+            state.sections_settings_row = ViewSectionsSettingsRow::UnmatchedLabel;
+            Self::sync_sections_settings_row_to_legacy(state);
+            state.inline_input = Some(ViewEditInlineInput::UnmatchedLabel);
+            state.inline_buf = text_buffer::TextBuffer::new(current);
+            state.discard_confirm = false;
+            state.section_delete_confirm = None;
+        }
+        self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
+    }
+
+    fn toggle_view_edit_unmatched_visibility(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.sections_settings_row = ViewSectionsSettingsRow::ShowUnmatched;
+            Self::sync_sections_settings_row_to_legacy(state);
+            state.draft.show_unmatched = !state.draft.show_unmatched;
+            state.dirty = true;
+            state.discard_confirm = false;
+            state.section_delete_confirm = None;
+        }
+    }
+
+    pub(crate) fn handle_view_edit_sections_view_details_key(
+        &mut self,
+        code: KeyCode,
+    ) -> TuiResult<bool> {
+        let Some(state) = &self.view_edit_state else {
+            return Ok(false);
+        };
+        let is_datebook = state.draft.datebook_config.is_some();
+        let current = if is_datebook {
+            ViewSectionsSettingsRow::DatebookPreview
+        } else if matches!(
+            state.sections_settings_row,
+            ViewSectionsSettingsRow::ShowUnmatched | ViewSectionsSettingsRow::UnmatchedLabel
+        ) {
+            state.sections_settings_row
+        } else {
+            ViewSectionsSettingsRow::ShowUnmatched
+        };
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.move_view_edit_sections_settings_row(true);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.move_view_edit_sections_settings_row(false);
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.begin_view_edit_name_input();
+            }
+            KeyCode::Char('t') if !is_datebook => {
+                self.toggle_view_edit_unmatched_visibility();
+            }
+            KeyCode::Char('l') if !is_datebook => {
+                self.begin_view_edit_unmatched_label_input();
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if is_datebook {
+                    self.set_view_edit_tab(ViewEditTab::Scope);
+                    self.set_view_edit_scope_row(ViewScopeRow::ViewType);
+                    self.status = "Datebook sections are generated from Scope settings".to_string();
+                } else {
+                    match current {
+                        ViewSectionsSettingsRow::ShowUnmatched => {
+                            self.toggle_view_edit_unmatched_visibility();
+                        }
+                        ViewSectionsSettingsRow::UnmatchedLabel => {
+                            self.begin_view_edit_unmatched_label_input();
+                        }
+                        ViewSectionsSettingsRow::DatebookPreview => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
     pub(crate) fn handle_view_edit_sections_key(&mut self, code: KeyCode) -> TuiResult<bool> {
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
@@ -345,8 +454,15 @@ impl App {
             KeyCode::Enter => {
                 if selecting_view_row {
                     if let Some(state) = &mut self.view_edit_state {
-                        state.region = ViewEditRegion::Criteria;
+                        state.active_tab = ViewEditTab::Sections;
+                        state.region = ViewEditRegion::Sections;
                         state.pane_focus = ViewEditPaneFocus::Details;
+                        state.sections_settings_row = if state.draft.datebook_config.is_some() {
+                            ViewSectionsSettingsRow::DatebookPreview
+                        } else {
+                            ViewSectionsSettingsRow::ShowUnmatched
+                        };
+                        Self::sync_sections_settings_row_to_legacy(state);
                     }
                     return Ok(true);
                 }

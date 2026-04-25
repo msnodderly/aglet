@@ -4480,8 +4480,9 @@ impl App {
                             vec![("Space", "toggle"), ("Esc", "done")]
                         }
                     } else if state.pane_focus == ViewEditPaneFocus::Sections {
-                        if state.sections_view_row_selected {
+                        let mut hints = if state.sections_view_row_selected {
                             vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("Enter", "details"),
                                 ("n", "add section"),
@@ -4490,42 +4491,78 @@ impl App {
                             ]
                         } else {
                             vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("e", "title"),
                                 ("n", "add"),
                                 ("x", "del"),
-                                ("J/K", "move"),
+                                ("[/]", "move"),
                                 ("Tab", "details"),
                                 ("Esc", "close"),
                             ]
+                        };
+                        if state.draft.datebook_config.is_some() {
+                            hints.retain(|hint| hint.0 != "n" && hint.0 != "[/]");
                         }
+                        hints
                     } else if state.pane_focus == ViewEditPaneFocus::Preview {
                         vec![
+                            ("H/L", "tab"),
                             ("S", "save"),
                             ("p", "hide"),
-                            ("Tab", "sections"),
+                            ("Tab", "pane"),
                             ("Esc", "close"),
                         ]
                     } else {
-                        // Details pane
-                        let mut hints = if state.sections_view_row_selected {
-                            vec![
+                        let mut hints = match state.active_tab {
+                            ViewEditTab::Scope => vec![
+                                ("H/L", "tab"),
+                                ("1-3", "jump"),
+                                ("j/k", "nav"),
+                                ("Enter", "edit"),
+                                ("n", "rule"),
+                                ("[/]", "date"),
+                                ("p", "preview"),
+                                ("S", "save"),
+                                ("Esc", "close"),
+                            ],
+                            ViewEditTab::Sections if state.sections_view_row_selected => {
+                                if state.draft.datebook_config.is_some() {
+                                    vec![
+                                        ("H/L", "tab"),
+                                        ("S", "save"),
+                                        ("Enter", "scope"),
+                                        ("Tab", "sections"),
+                                        ("Esc", "close"),
+                                    ]
+                                } else {
+                                    vec![
+                                        ("H/L", "tab"),
+                                        ("S", "save"),
+                                        ("t", "toggle"),
+                                        ("l", "label"),
+                                        ("Tab", "sections"),
+                                        ("Esc", "close"),
+                                    ]
+                                }
+                            }
+                            ViewEditTab::Sections => vec![
+                                ("H/L", "tab"),
                                 ("S", "save"),
                                 ("Enter", "edit"),
-                                ("r", "name"),
-                                ("p", "preview"),
                                 ("Tab", "sections"),
                                 ("Esc", "close"),
-                            ]
-                        } else {
-                            vec![
+                            ],
+                            ViewEditTab::Appearance => vec![
+                                ("H/L", "tab"),
+                                ("1-3", "jump"),
+                                ("j/k", "nav"),
+                                ("Enter", "toggle"),
+                                ("a", "aliases"),
+                                ("p", "preview"),
                                 ("S", "save"),
-                                ("Enter", "edit"),
-                                ("Space", "toggle"),
-                                ("p", "preview"),
-                                ("Tab", "sections"),
                                 ("Esc", "close"),
-                            ]
+                            ],
                         };
                         if let Some(field) = Self::view_edit_active_field_label(state) {
                             hints.insert(0, ("field", field));
@@ -4753,36 +4790,37 @@ impl App {
             };
         }
 
-        if state.sections_view_row_selected || state.region != ViewEditRegion::Sections {
-            return match state.region {
-                ViewEditRegion::Criteria => {
-                    if state.name_focused {
-                        Some("Name")
-                    } else {
-                        Some("Filter criteria")
-                    }
-                }
-                ViewEditRegion::Datebook => match state.datebook_field_index {
-                    0 => Some("Period"),
-                    1 => Some("Interval"),
-                    2 => Some("Anchor"),
-                    3 => Some("Date source"),
-                    _ => None,
-                },
-                ViewEditRegion::Unmatched => match state.unmatched_field_index {
-                    0 => Some("Date range include"),
-                    1 => Some("Date range exclude"),
-                    2 => Some("Display mode"),
-                    3 => Some("Section flow"),
-                    4 => Some("Empty sections"),
-                    5 => Some("Show unmatched"),
-                    6 => Some("Hide dependent"),
-                    7 => Some("Unmatched label"),
-                    8 => Some("Aliases"),
-                    _ => None,
-                },
-                ViewEditRegion::Sections => None,
-            };
+        match state.active_tab {
+            ViewEditTab::Scope => {
+                return match Self::normalized_scope_row(state) {
+                    ViewScopeRow::ViewType => Some("View type"),
+                    ViewScopeRow::DatebookPeriod => Some("Period"),
+                    ViewScopeRow::DatebookInterval => Some("Interval"),
+                    ViewScopeRow::DatebookAnchor => Some("Anchor"),
+                    ViewScopeRow::DatebookDateSource => Some("Date source"),
+                    ViewScopeRow::Name => Some("Name"),
+                    ViewScopeRow::Criterion(_) => Some("Filter criteria"),
+                    ViewScopeRow::DateInclude => Some("Date include"),
+                    ViewScopeRow::DateExclude => Some("Date exclude"),
+                    ViewScopeRow::HideDependent => Some("Hide dependent"),
+                };
+            }
+            ViewEditTab::Appearance => {
+                return match Self::normalized_appearance_row(state) {
+                    ViewAppearanceRow::DisplayMode => Some("Display mode"),
+                    ViewAppearanceRow::SectionFlow => Some("Section flow"),
+                    ViewAppearanceRow::EmptySections => Some("Empty sections"),
+                    ViewAppearanceRow::Aliases => Some("Aliases"),
+                };
+            }
+            ViewEditTab::Sections if state.sections_view_row_selected => {
+                return match state.sections_settings_row {
+                    ViewSectionsSettingsRow::ShowUnmatched => Some("Show unmatched"),
+                    ViewSectionsSettingsRow::UnmatchedLabel => Some("Unmatched label"),
+                    ViewSectionsSettingsRow::DatebookPreview => Some("Datebook sections"),
+                };
+            }
+            ViewEditTab::Sections => {}
         }
 
         match state.section_details_field_index {
@@ -8248,34 +8286,91 @@ impl App {
             return;
         };
 
-        let preview_three_column = state.preview_visible && area.width >= 120 && area.height >= 12;
-        let preview_stacked_right = state.preview_visible && !preview_three_column;
-        let panes = if preview_three_column {
-            Layout::default()
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .split(area);
+        let header_area = outer[0];
+        let body_area = outer[1];
+
+        let mut tab_spans = vec![Span::raw("  <  ")];
+        for tab in [
+            ViewEditTab::Scope,
+            ViewEditTab::Sections,
+            ViewEditTab::Appearance,
+        ] {
+            let active = tab == state.active_tab;
+            let label = format!(" {} {} ", tab.number(), tab.label());
+            let style = if active {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(190, 184, 170))
+            };
+            tab_spans.push(Span::styled(format!("[{label}]"), style));
+            tab_spans.push(Span::raw("  "));
+        }
+        tab_spans.push(Span::raw(">"));
+        let dirty_marker = if state.dirty { "  * unsaved" } else { "" };
+        frame.render_widget(
+            Paragraph::new(Line::from(tab_spans)).block(
+                Block::default()
+                    .title(format!(
+                        " View Editor - {}{} ",
+                        state.draft.name, dirty_marker
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(60, 70, 90))),
+            ),
+            header_area,
+        );
+
+        let show_sections_pane = state.active_tab == ViewEditTab::Sections;
+        let preview_three_column = show_sections_pane
+            && state.preview_visible
+            && body_area.width >= 120
+            && body_area.height >= 12;
+        let preview_stacked_right =
+            show_sections_pane && state.preview_visible && !preview_three_column;
+
+        let (sections_area, details_area, preview_area) = if show_sections_pane {
+            let panes = if preview_three_column {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(36),
+                        Constraint::Percentage(42),
+                        Constraint::Percentage(22),
+                    ])
+                    .split(body_area)
+            } else {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                    .split(body_area)
+            };
+            let (details_area, preview_area) = if preview_three_column && panes.len() > 2 {
+                (panes[1], Some(panes[2]))
+            } else if preview_stacked_right {
+                let right = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+                    .split(panes[1]);
+                (right[0], Some(right[1]))
+            } else {
+                (panes[1], None)
+            };
+            (Some(panes[0]), details_area, preview_area)
+        } else if state.preview_visible {
+            let panes = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(36),
-                    Constraint::Percentage(42),
-                    Constraint::Percentage(22),
-                ])
-                .split(area)
+                .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
+                .split(body_area);
+            (None, panes[0], Some(panes[1]))
         } else {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-                .split(area)
-        };
-        let sections_area = panes[0];
-        let (details_area, preview_area) = if preview_three_column && panes.len() > 2 {
-            (panes[1], Some(panes[2]))
-        } else if preview_stacked_right {
-            let right = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
-                .split(panes[1]);
-            (right[0], Some(right[1]))
-        } else {
-            (panes[1], None)
+            (None, body_area, None)
         };
 
         let focused_border = Color::Cyan;
@@ -8336,8 +8431,9 @@ impl App {
                 names.join(", ")
             };
 
-            let show_view_details = state.region != ViewEditRegion::Sections
+            let show_view_details = state.active_tab != ViewEditTab::Sections
                 || state.sections_view_row_selected
+                || state.draft.datebook_config.is_some()
                 || state.draft.sections.get(state.section_index).is_none();
             let details_focused = state.pane_focus == ViewEditPaneFocus::Details;
             let details_border = if details_focused {
@@ -8378,150 +8474,44 @@ impl App {
             }
 
             if show_view_details {
-                let display_mode_label = match state.draft.board_display_mode {
-                    BoardDisplayMode::SingleLine => "single-line",
-                    BoardDisplayMode::MultiLine => "multi-line",
-                };
-                let section_flow_label = match state.draft.section_flow {
-                    SectionFlow::Vertical => "vertical (stacked lanes)",
-                    SectionFlow::Horizontal => "horizontal (kanban lanes)",
-                };
-                let empty_sections_label = state.draft.empty_sections.label();
-
                 let separator_style = Style::default().fg(dim);
-                let pad = 26; // column alignment width
+                let pad = 26;
 
                 let sel_style = Style::default()
                     .fg(Color::Black)
                     .bg(Color::Cyan)
                     .add_modifier(Modifier::BOLD);
                 let row_marker = |active: bool| if active { "> " } else { "  " };
-                // Helper: style + track selected_line for unmatched-region fields
-                let style_for_unmatched_field =
-                    |field_index: usize,
-                     items: &[ListItem<'_>],
-                     selected_line_ref: &mut Option<usize>| {
-                        if details_focused
-                            && state.region == ViewEditRegion::Unmatched
-                            && state.unmatched_field_index == field_index
-                        {
-                            *selected_line_ref = Some(items.len());
-                            sel_style
-                        } else {
-                            Style::default()
-                        }
-                    };
-                let unmatched_field_selected = |field_index: usize| {
-                    details_focused
-                        && state.region == ViewEditRegion::Unmatched
-                        && state.unmatched_field_index == field_index
-                };
-
-                // ── Name ──
-                let editing_view_name =
-                    matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
-                let name_row_focused =
-                    details_focused && Self::view_details_on_name_row(state) && !editing_view_name;
-                let view_name_style = if editing_view_name || name_row_focused {
-                    selected_line = Some(items.len());
-                    sel_style
-                } else {
-                    Style::default()
-                };
-                let name_line = if editing_view_name {
-                    let label = format!(
-                        "{}{:<width$}◀ ",
-                        row_marker(editing_view_name || name_row_focused),
-                        "Name",
-                        width = pad
-                    );
-                    Line::from(inline_edit_spans(
-                        &label,
-                        state.inline_buf.text(),
-                        state.inline_buf.cursor(),
-                        view_name_style,
-                        view_name_style,
-                    ))
-                } else {
-                    Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(name_row_focused),
-                        "Name",
-                        state.draft.name,
-                        width = pad
-                    ))
-                };
-                items.push(ListItem::new(name_line).style(view_name_style));
-
-                // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Filter criteria ──
-                items.push(ListItem::new(Line::from("  Filter criteria:")));
-
-                let criteria_row_start = items.len();
-                let criteria_lines = summarize_query(&state.draft.criteria);
-                if criteria_lines.is_empty() {
-                    let style = if details_focused && state.region == ViewEditRegion::Criteria {
-                        selected_line = Some(criteria_row_start);
-                        sel_style
-                    } else {
-                        Style::default()
-                    };
-                    items.push(
-                        ListItem::new(Line::from(format!(
-                            "{}  (no criteria — matches all items)",
-                            row_marker(details_focused && state.region == ViewEditRegion::Criteria)
-                        )))
-                        .style(style),
-                    );
-                } else {
-                    for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
-                        let is_selected = details_focused
-                            && state.region == ViewEditRegion::Criteria
-                            && i == state.criteria_index;
-                        if is_selected {
-                            selected_line = Some(criteria_row_start + i);
-                        }
-                        let text_color = if is_selected {
-                            Color::Black
-                        } else {
-                            criterion_mode_color(*mode)
-                        };
-                        let line = Line::from(vec![
-                            Span::raw(format!("{}  ", row_marker(is_selected))),
-                            Span::styled(criterion.clone(), Style::default().fg(text_color)),
-                        ]);
-                        let style = if is_selected {
-                            sel_style
-                        } else {
-                            Style::default()
-                        };
-                        items.push(ListItem::new(line).style(style));
-                    }
-                }
-
-                // ── Datebook config (only for datebook views) ──
-                if let Some(config) = &state.draft.datebook_config {
-                    items.push(ListItem::new(Line::from(Span::styled(
-                        "  ─────────────────────────────────────────",
+                let separator = || {
+                    ListItem::new(Line::from(Span::styled(
+                        "  -----------------------------------------",
                         separator_style,
-                    ))));
-                    items.push(ListItem::new(Line::from("  Datebook config:")));
+                    )))
+                };
+                let scope_row = Self::normalized_scope_row(state);
+                let appearance_row = Self::normalized_appearance_row(state);
+                let scope_selected = |row: ViewScopeRow| {
+                    details_focused && state.active_tab == ViewEditTab::Scope && scope_row == row
+                };
+                let appearance_selected = |row: ViewAppearanceRow| {
+                    details_focused
+                        && state.active_tab == ViewEditTab::Appearance
+                        && appearance_row == row
+                };
+                let sections_settings_selected = |row: ViewSectionsSettingsRow| {
+                    details_focused
+                        && state.active_tab == ViewEditTab::Sections
+                        && state.sections_settings_row == row
+                };
 
-                    let datebook_fields: &[(&str, String)] = &[
-                        ("Period", config.period.label().to_string()),
-                        ("Interval", config.interval.label().to_string()),
-                        ("Anchor", config.anchor.label().to_string()),
-                        ("Date source", config.date_source.label().to_string()),
-                    ];
-                    for (fi, (label, value)) in datebook_fields.iter().enumerate() {
-                        let is_selected = details_focused
-                            && state.region == ViewEditRegion::Datebook
-                            && state.datebook_field_index == fi;
+                match state.active_tab {
+                    ViewEditTab::Scope => {
+                        let view_type_value = if state.draft.datebook_config.is_some() {
+                            "datebook"
+                        } else {
+                            "board"
+                        };
+                        let is_selected = scope_selected(ViewScopeRow::ViewType);
                         if is_selected {
                             selected_line = Some(items.len());
                         }
@@ -8534,241 +8524,433 @@ impl App {
                             ListItem::new(Line::from(format!(
                                 "{}{:<width$}{}",
                                 row_marker(is_selected),
-                                label,
-                                value,
+                                "View type",
+                                view_type_value,
                                 width = pad
                             )))
                             .style(style),
                         );
+
+                        if let Some(config) = &state.draft.datebook_config {
+                            let datebook_fields: &[(ViewScopeRow, &str, String)] = &[
+                                (
+                                    ViewScopeRow::DatebookPeriod,
+                                    "Period",
+                                    config.period.label().to_string(),
+                                ),
+                                (
+                                    ViewScopeRow::DatebookInterval,
+                                    "Interval",
+                                    config.interval.label().to_string(),
+                                ),
+                                (
+                                    ViewScopeRow::DatebookAnchor,
+                                    "Anchor",
+                                    config.anchor.label().to_string(),
+                                ),
+                                (
+                                    ViewScopeRow::DatebookDateSource,
+                                    "Date source",
+                                    config.date_source.label().to_string(),
+                                ),
+                            ];
+                            for (row, label, value) in datebook_fields {
+                                let is_selected = scope_selected(*row);
+                                if is_selected {
+                                    selected_line = Some(items.len());
+                                }
+                                let style = if is_selected {
+                                    sel_style
+                                } else {
+                                    Style::default()
+                                };
+                                items.push(
+                                    ListItem::new(Line::from(format!(
+                                        "{}{:<width$}{}",
+                                        row_marker(is_selected),
+                                        label,
+                                        value,
+                                        width = pad
+                                    )))
+                                    .style(style),
+                                );
+                            }
+                        }
+
+                        items.push(separator());
+
+                        let editing_view_name =
+                            matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
+                        let name_selected = scope_selected(ViewScopeRow::Name);
+                        let view_name_style = if editing_view_name || name_selected {
+                            selected_line = Some(items.len());
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        let name_line = if editing_view_name {
+                            let label = format!(
+                                "{}{:<width$}< ",
+                                row_marker(editing_view_name || name_selected),
+                                "Name",
+                                width = pad
+                            );
+                            Line::from(inline_edit_spans(
+                                &label,
+                                state.inline_buf.text(),
+                                state.inline_buf.cursor(),
+                                view_name_style,
+                                view_name_style,
+                            ))
+                        } else {
+                            Line::from(format!(
+                                "{}{:<width$}{}",
+                                row_marker(name_selected),
+                                "Name",
+                                state.draft.name,
+                                width = pad
+                            ))
+                        };
+                        items.push(ListItem::new(name_line).style(view_name_style));
+
+                        items.push(separator());
+                        items.push(ListItem::new(Line::from("  Filter criteria:")));
+
+                        let criteria_lines = summarize_query(&state.draft.criteria);
+                        if criteria_lines.is_empty() {
+                            let row = ViewScopeRow::Criterion(0);
+                            let is_selected = scope_selected(row);
+                            if is_selected {
+                                selected_line = Some(items.len());
+                            }
+                            let style = if is_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(
+                                ListItem::new(Line::from(format!(
+                                    "{}  (no criteria - matches all items)",
+                                    row_marker(is_selected)
+                                )))
+                                .style(style),
+                            );
+                        } else {
+                            for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
+                                let row = ViewScopeRow::Criterion(i);
+                                let is_selected = scope_selected(row);
+                                if is_selected {
+                                    selected_line = Some(items.len());
+                                }
+                                let text_color = if is_selected {
+                                    Color::Black
+                                } else {
+                                    criterion_mode_color(*mode)
+                                };
+                                let style = if is_selected {
+                                    sel_style
+                                } else {
+                                    Style::default()
+                                };
+                                items.push(
+                                    ListItem::new(Line::from(vec![
+                                        Span::raw(format!("{}  ", row_marker(is_selected))),
+                                        Span::styled(
+                                            criterion.clone(),
+                                            Style::default().fg(text_color),
+                                        ),
+                                    ]))
+                                    .style(style),
+                                );
+                            }
+                        }
+
+                        items.push(separator());
+
+                        let when_include = if state.draft.criteria.virtual_include.is_empty() {
+                            "(all)".to_string()
+                        } else {
+                            when_bucket_options()
+                                .iter()
+                                .filter(|b| state.draft.criteria.virtual_include.contains(*b))
+                                .map(|b| when_bucket_label(*b).to_string())
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        };
+                        let when_exclude = if state.draft.criteria.virtual_exclude.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            when_bucket_options()
+                                .iter()
+                                .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
+                                .map(|b| when_bucket_label(*b).to_string())
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        };
+                        for (row, label, value) in [
+                            (
+                                ViewScopeRow::DateInclude,
+                                "Date range (include)",
+                                when_include,
+                            ),
+                            (
+                                ViewScopeRow::DateExclude,
+                                "Date range (exclude)",
+                                when_exclude,
+                            ),
+                            (
+                                ViewScopeRow::HideDependent,
+                                "Hide dependent",
+                                if state.draft.hide_dependent_items {
+                                    "yes".to_string()
+                                } else {
+                                    "no".to_string()
+                                },
+                            ),
+                        ] {
+                            let is_selected = scope_selected(row);
+                            if is_selected {
+                                selected_line = Some(items.len());
+                            }
+                            let style = if is_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(
+                                ListItem::new(Line::from(format!(
+                                    "{}{:<width$}{}",
+                                    row_marker(is_selected),
+                                    label,
+                                    value,
+                                    width = pad
+                                )))
+                                .style(style),
+                            );
+                        }
+                    }
+                    ViewEditTab::Sections => {
+                        if let Some(config) = &state.draft.datebook_config {
+                            let is_selected = sections_settings_selected(
+                                ViewSectionsSettingsRow::DatebookPreview,
+                            );
+                            if is_selected {
+                                selected_line = Some(items.len());
+                            }
+                            let style = if is_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(
+                                ListItem::new(Line::from(format!(
+                                    "{}Sections generated from Scope datebook settings",
+                                    row_marker(is_selected)
+                                )))
+                                .style(style),
+                            );
+                            let sections =
+                                generate_datebook_sections(config, jiff::Zoned::now().date());
+                            let preview_titles: Vec<String> =
+                                sections.iter().take(8).map(|s| s.title.clone()).collect();
+                            let preview = if preview_titles.is_empty() {
+                                "(none)".to_string()
+                            } else {
+                                preview_titles.join(", ")
+                            };
+                            items.push(ListItem::new(Line::from(Span::styled(
+                                format!("  Current preview: {preview}"),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ))));
+                            items.push(ListItem::new(Line::from(Span::styled(
+                                "  Enter returns to Scope",
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ))));
+                        } else {
+                            items.push(ListItem::new(Line::from("  Unmatched items:")));
+                            let unmatched_value = if state.draft.show_unmatched {
+                                format!("yes, as \"{}\"", state.draft.unmatched_label)
+                            } else {
+                                "hidden".to_string()
+                            };
+                            let show_unmatched_selected =
+                                sections_settings_selected(ViewSectionsSettingsRow::ShowUnmatched);
+                            if show_unmatched_selected {
+                                selected_line = Some(items.len());
+                            }
+                            let show_unmatched_style = if show_unmatched_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(
+                                ListItem::new(Line::from(format!(
+                                    "{}{:<width$}{}",
+                                    row_marker(show_unmatched_selected),
+                                    "Show unmatched",
+                                    unmatched_value,
+                                    width = pad
+                                )))
+                                .style(show_unmatched_style),
+                            );
+
+                            let editing_unmatched_label = matches!(
+                                state.inline_input,
+                                Some(ViewEditInlineInput::UnmatchedLabel)
+                            );
+                            let label_selected =
+                                sections_settings_selected(ViewSectionsSettingsRow::UnmatchedLabel);
+                            let unmatched_label_style = if editing_unmatched_label || label_selected
+                            {
+                                selected_line = Some(items.len());
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            let unmatched_label_line = if editing_unmatched_label {
+                                let label = format!(
+                                    "{}{:<width$}< ",
+                                    row_marker(editing_unmatched_label || label_selected),
+                                    "Unmatched label",
+                                    width = pad
+                                );
+                                Line::from(inline_edit_spans(
+                                    &label,
+                                    state.inline_buf.text(),
+                                    state.inline_buf.cursor(),
+                                    unmatched_label_style,
+                                    unmatched_label_style,
+                                ))
+                            } else {
+                                Line::from(format!(
+                                    "{}{:<width$}\"{}\"",
+                                    row_marker(label_selected),
+                                    "Unmatched label",
+                                    state.draft.unmatched_label,
+                                    width = pad
+                                ))
+                            };
+                            items.push(
+                                ListItem::new(unmatched_label_line).style(unmatched_label_style),
+                            );
+                        }
+                    }
+                    ViewEditTab::Appearance => {
+                        let display_mode_label = match state.draft.board_display_mode {
+                            BoardDisplayMode::SingleLine => "single-line",
+                            BoardDisplayMode::MultiLine => "multi-line",
+                        };
+                        let section_flow_label = match state.draft.section_flow {
+                            SectionFlow::Vertical => "vertical (stacked lanes)",
+                            SectionFlow::Horizontal => "horizontal (kanban lanes)",
+                        };
+                        let empty_sections_label = state.draft.empty_sections.label().to_string();
+                        items.push(ListItem::new(Line::from("  Item display:")));
+                        let display_mode_selected =
+                            appearance_selected(ViewAppearanceRow::DisplayMode);
+                        if display_mode_selected {
+                            selected_line = Some(items.len());
+                        }
+                        let display_mode_style = if display_mode_selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(
+                            ListItem::new(Line::from(format!(
+                                "{}{:<width$}{}",
+                                row_marker(display_mode_selected),
+                                "Display mode",
+                                display_mode_label,
+                                width = pad
+                            )))
+                            .style(display_mode_style),
+                        );
+
+                        items.push(separator());
+                        items.push(ListItem::new(Line::from("  Section layout:")));
+                        for (row, label, value) in [
+                            (
+                                ViewAppearanceRow::SectionFlow,
+                                "Section flow",
+                                section_flow_label.to_string(),
+                            ),
+                            (
+                                ViewAppearanceRow::EmptySections,
+                                "Empty sections",
+                                empty_sections_label,
+                            ),
+                        ] {
+                            let is_selected = appearance_selected(row);
+                            if is_selected {
+                                selected_line = Some(items.len());
+                            }
+                            let style = if is_selected {
+                                sel_style
+                            } else {
+                                Style::default()
+                            };
+                            items.push(
+                                ListItem::new(Line::from(format!(
+                                    "{}{:<width$}{}",
+                                    row_marker(is_selected),
+                                    label,
+                                    value,
+                                    width = pad
+                                )))
+                                .style(style),
+                            );
+                        }
+
+                        items.push(separator());
+                        items.push(ListItem::new(Line::from("  Category aliases:")));
+                        let configured_aliases: Vec<_> = state
+                            .draft
+                            .category_aliases
+                            .iter()
+                            .filter(|(_, alias)| !alias.trim().is_empty())
+                            .map(|(cat_id, alias)| {
+                                let cat_name = self
+                                    .categories
+                                    .iter()
+                                    .find(|c| c.id == *cat_id)
+                                    .map(|c| c.name.as_str())
+                                    .unwrap_or("?");
+                                (cat_name.to_string(), alias.clone())
+                            })
+                            .collect();
+                        let alias_summary = if configured_aliases.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            format!("{} configured", configured_aliases.len())
+                        };
+                        let is_selected = appearance_selected(ViewAppearanceRow::Aliases);
+                        if is_selected {
+                            selected_line = Some(items.len());
+                        }
+                        let style = if is_selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(
+                            ListItem::new(Line::from(format!(
+                                "{}{:<width$}{}",
+                                row_marker(is_selected),
+                                "Aliases",
+                                alias_summary,
+                                width = pad
+                            )))
+                            .style(style),
+                        );
+                        for (cat_name, alias) in &configured_aliases {
+                            items.push(ListItem::new(Line::from(Span::styled(
+                                format!("      {} -> {}", cat_name, alias),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ))));
+                        }
                     }
                 }
-
-                // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Date range ──
-                let when_include = if state.draft.criteria.virtual_include.is_empty() {
-                    "(all)".to_string()
-                } else {
-                    when_bucket_options()
-                        .iter()
-                        .filter(|b| state.draft.criteria.virtual_include.contains(*b))
-                        .map(|b| when_bucket_label(*b).to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                };
-                let when_exclude = if state.draft.criteria.virtual_exclude.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    when_bucket_options()
-                        .iter()
-                        .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
-                        .map(|b| when_bucket_label(*b).to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                };
-
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(0)),
-                        "Date range (include)",
-                        when_include,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        0,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(1)),
-                        "Date range (exclude)",
-                        when_exclude,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        1,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Display ──
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(2)),
-                        "Display mode",
-                        display_mode_label,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        2,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(3)),
-                        "Section flow",
-                        section_flow_label,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        3,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(4)),
-                        "Empty sections",
-                        empty_sections_label,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        4,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                let configured_aliases: Vec<_> = state
-                    .draft
-                    .category_aliases
-                    .iter()
-                    .filter(|(_, alias)| !alias.trim().is_empty())
-                    .map(|(cat_id, alias)| {
-                        let cat_name = self
-                            .categories
-                            .iter()
-                            .find(|c| c.id == *cat_id)
-                            .map(|c| c.name.as_str())
-                            .unwrap_or("?");
-                        (cat_name.to_string(), alias.clone())
-                    })
-                    .collect();
-                let alias_summary = if configured_aliases.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    format!("{} configured", configured_aliases.len())
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(8)),
-                        "Aliases",
-                        alias_summary,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        8,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-                // Show configured aliases as indented sub-rows (display-only)
-                for (cat_name, alias) in &configured_aliases {
-                    items.push(ListItem::new(Line::from(Span::styled(
-                        format!("      {} \u{2192} {}", cat_name, alias),
-                        Style::default().fg(MUTED_TEXT_COLOR),
-                    ))));
-                }
-
-                // ── Separator ──
-                items.push(ListItem::new(Line::from(Span::styled(
-                    "  ─────────────────────────────────────────",
-                    separator_style,
-                ))));
-
-                // ── Unmatched ──
-                let unmatched_value = if state.draft.show_unmatched {
-                    format!("yes, as \"{}\"", state.draft.unmatched_label)
-                } else {
-                    "hidden".to_string()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(5)),
-                        "Show unmatched",
-                        unmatched_value,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        5,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                let hide_dependent_value = if state.draft.hide_dependent_items {
-                    "yes".to_string()
-                } else {
-                    "no".to_string()
-                };
-                items.push(
-                    ListItem::new(Line::from(format!(
-                        "{}{:<width$}{}",
-                        row_marker(unmatched_field_selected(6)),
-                        "Hide dependent",
-                        hide_dependent_value,
-                        width = pad
-                    )))
-                    .style(style_for_unmatched_field(
-                        6,
-                        &items,
-                        &mut selected_line,
-                    )),
-                );
-
-                let editing_unmatched_label = matches!(
-                    state.inline_input,
-                    Some(ViewEditInlineInput::UnmatchedLabel)
-                );
-                let unmatched_label_style =
-                    style_for_unmatched_field(7, &items, &mut selected_line);
-                let unmatched_label_line = if editing_unmatched_label {
-                    let label = format!(
-                        "{}{:<width$}◀ ",
-                        row_marker(unmatched_field_selected(7) || editing_unmatched_label),
-                        "Unmatched label",
-                        width = pad
-                    );
-                    Line::from(inline_edit_spans(
-                        &label,
-                        state.inline_buf.text(),
-                        state.inline_buf.cursor(),
-                        unmatched_label_style,
-                        unmatched_label_style,
-                    ))
-                } else {
-                    Line::from(format!(
-                        "{}{:<width$}\"{}\"",
-                        row_marker(unmatched_field_selected(7)),
-                        "Unmatched label",
-                        state.draft.unmatched_label,
-                        width = pad
-                    ))
-                };
-                items.push(ListItem::new(unmatched_label_line).style(unmatched_label_style));
             } else if let Some(section) = state.draft.sections.get(state.section_index) {
                 let editing_title = matches!(
                     state.inline_input,
@@ -9052,7 +9234,7 @@ impl App {
         }
 
         // ── Sections region ──────────────────────────────────────────────────
-        {
+        if let Some(sections_area) = sections_area {
             let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
                 if let ViewEditInlineInput::SectionTitle { section_index, .. } = inp {
                     Some(*section_index)

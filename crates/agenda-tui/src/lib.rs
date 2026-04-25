@@ -54,8 +54,9 @@ mod undo;
 pub use error::{TuiError, TuiResult};
 
 use modes::view_edit::{
-    BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
-    ViewEditRegion, ViewEditState,
+    BucketEditTarget, CategoryEditTarget, ViewAppearanceRow, ViewEditInlineInput, ViewEditOverlay,
+    ViewEditPaneFocus, ViewEditRegion, ViewEditState, ViewEditTab, ViewScopeRow,
+    ViewSectionsSettingsRow,
 };
 use state::assign::{
     AssignmentPreview, InspectAssignmentRow, ItemAssignPane, ItemAssignReturnTarget, ViewAssignRow,

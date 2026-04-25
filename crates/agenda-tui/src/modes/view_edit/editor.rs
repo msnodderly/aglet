@@ -61,6 +61,14 @@ impl App {
         self.view_edit_state = Some(ViewEditState {
             draft: view,
             is_new_view,
+            active_tab: ViewEditTab::Scope,
+            scope_row: if is_new_view {
+                ViewScopeRow::ViewType
+            } else {
+                ViewScopeRow::Criterion(0)
+            },
+            sections_settings_row: ViewSectionsSettingsRow::ShowUnmatched,
+            appearance_row: ViewAppearanceRow::DisplayMode,
             region: ViewEditRegion::Criteria,
             pane_focus: ViewEditPaneFocus::Details,
             criteria_index: 0,
@@ -94,23 +102,30 @@ impl App {
     pub(crate) fn open_view_edit_new_view_focus_name(&mut self, view: View) {
         self.open_view_edit_with_mode(view, true);
         if let Some(state) = &mut self.view_edit_state {
-            state.sections_view_row_selected = true;
-            state.region = ViewEditRegion::Criteria;
+            state.active_tab = ViewEditTab::Scope;
+            state.scope_row = ViewScopeRow::ViewType;
+            state.sections_view_row_selected = false;
             state.pane_focus = ViewEditPaneFocus::Details;
-            state.inline_input = Some(ViewEditInlineInput::ViewName);
+            state.inline_input = None;
             state.inline_buf = text_buffer::TextBuffer::new(String::new());
             state.discard_confirm = false;
+            Self::sync_scope_row_to_legacy(state);
         }
-        self.status = "New view: type name, Enter to confirm, Esc to cancel".to_string();
+        self.status =
+            "New view: choose type first  Enter/Space:toggle Board/Datebook  j:name".to_string();
     }
 
     pub(crate) fn cycle_view_edit_pane_focus(&mut self, _forward: bool) {
         if let Some(state) = &mut self.view_edit_state {
-            let next = match state.pane_focus {
-                ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
-                ViewEditPaneFocus::Details | ViewEditPaneFocus::Preview => {
-                    ViewEditPaneFocus::Sections
-                }
+            let next = match (state.active_tab, state.pane_focus) {
+                (ViewEditTab::Sections, ViewEditPaneFocus::Sections) => ViewEditPaneFocus::Details,
+                (
+                    ViewEditTab::Sections,
+                    ViewEditPaneFocus::Details | ViewEditPaneFocus::Preview,
+                ) => ViewEditPaneFocus::Sections,
+                (_, ViewEditPaneFocus::Preview) => ViewEditPaneFocus::Details,
+                (_, _) if state.preview_visible => ViewEditPaneFocus::Preview,
+                (_, _) => ViewEditPaneFocus::Details,
             };
             state.pane_focus = next;
             state.name_focused = false;
@@ -120,19 +135,69 @@ impl App {
                     state.sections_view_row_selected = true;
                 }
             } else if state.pane_focus == ViewEditPaneFocus::Details
-                && state.region == ViewEditRegion::Sections
+                && state.active_tab == ViewEditTab::Sections
             {
-                if state.sections_view_row_selected {
-                    // For datebook views, default to Datebook region
-                    if state.draft.datebook_config.is_some() {
-                        state.region = ViewEditRegion::Datebook;
-                        state.datebook_field_index = 0;
-                    } else {
-                        state.region = ViewEditRegion::Criteria;
-                    }
-                }
+                state.region = ViewEditRegion::Sections;
                 state.section_details_field_index = 0;
             }
+        }
+    }
+
+    pub(crate) fn set_view_edit_tab(&mut self, tab: ViewEditTab) {
+        if let Some(state) = &mut self.view_edit_state {
+            state.active_tab = tab;
+            state.name_focused = false;
+            state.discard_confirm = false;
+            state.section_delete_confirm = None;
+            match tab {
+                ViewEditTab::Scope => {
+                    state.pane_focus = ViewEditPaneFocus::Details;
+                    state.scope_row = Self::normalized_scope_row(state);
+                    Self::sync_scope_row_to_legacy(state);
+                }
+                ViewEditTab::Sections => {
+                    state.pane_focus = ViewEditPaneFocus::Sections;
+                    state.region = ViewEditRegion::Sections;
+                    if state.draft.sections.is_empty() || state.draft.datebook_config.is_some() {
+                        state.sections_view_row_selected = true;
+                    } else {
+                        state.sections_view_row_selected = state.sections_view_row_selected
+                            || state.section_index >= state.draft.sections.len();
+                        state.section_index = state
+                            .section_index
+                            .min(state.draft.sections.len().saturating_sub(1));
+                    }
+                    state.sections_settings_row = if state.draft.datebook_config.is_some() {
+                        ViewSectionsSettingsRow::DatebookPreview
+                    } else if matches!(
+                        state.sections_settings_row,
+                        ViewSectionsSettingsRow::ShowUnmatched
+                            | ViewSectionsSettingsRow::UnmatchedLabel
+                    ) {
+                        state.sections_settings_row
+                    } else {
+                        ViewSectionsSettingsRow::ShowUnmatched
+                    };
+                    Self::sync_sections_settings_row_to_legacy(state);
+                }
+                ViewEditTab::Appearance => {
+                    state.pane_focus = ViewEditPaneFocus::Details;
+                    Self::sync_appearance_row_to_legacy(state);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn cycle_view_edit_tab(&mut self, forward: bool) {
+        let next = self.view_edit_state.as_ref().map(|state| {
+            if forward {
+                state.active_tab.next()
+            } else {
+                state.active_tab.previous()
+            }
+        });
+        if let Some(tab) = next {
+            self.set_view_edit_tab(tab);
         }
     }
 
@@ -140,7 +205,11 @@ impl App {
         if let Some(state) = &mut self.view_edit_state {
             state.preview_visible = !state.preview_visible;
             if !state.preview_visible && state.pane_focus == ViewEditPaneFocus::Preview {
-                state.pane_focus = ViewEditPaneFocus::Sections;
+                state.pane_focus = if state.active_tab == ViewEditTab::Sections {
+                    ViewEditPaneFocus::Sections
+                } else {
+                    ViewEditPaneFocus::Details
+                };
             }
             state.preview_scroll = 0;
             self.status = if state.preview_visible {
@@ -319,6 +388,26 @@ impl App {
                 self.cycle_view_edit_pane_focus(false);
                 return Ok(true);
             }
+            KeyCode::Char('H') => {
+                self.cycle_view_edit_tab(false);
+                return Ok(true);
+            }
+            KeyCode::Char('L') => {
+                self.cycle_view_edit_tab(true);
+                return Ok(true);
+            }
+            KeyCode::Char('1') => {
+                self.set_view_edit_tab(ViewEditTab::Scope);
+                return Ok(true);
+            }
+            KeyCode::Char('2') => {
+                self.set_view_edit_tab(ViewEditTab::Sections);
+                return Ok(true);
+            }
+            KeyCode::Char('3') => {
+                self.set_view_edit_tab(ViewEditTab::Appearance);
+                return Ok(true);
+            }
             KeyCode::Char('S') => {
                 return self.handle_view_edit_save(agenda);
             }
@@ -337,6 +426,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 if let Some(state) = &mut self.view_edit_state {
+                    state.active_tab = ViewEditTab::Sections;
                     state.pane_focus = ViewEditPaneFocus::Sections;
                     state.inline_input = Some(ViewEditInlineInput::SectionsFilter);
                     state.sections_view_row_selected = state.sections_view_row_selected
@@ -352,21 +442,23 @@ impl App {
             return Ok(false);
         };
 
-        match state.pane_focus {
-            ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(code),
-            ViewEditPaneFocus::Details => {
-                if Self::view_edit_showing_view_details(state) {
-                    match state.region {
-                        ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),
-                        ViewEditRegion::Unmatched => self.handle_view_edit_unmatched_key(code),
-                        ViewEditRegion::Sections => self.handle_view_edit_criteria_key(code),
-                        ViewEditRegion::Datebook => self.handle_view_edit_datebook_key(code),
-                    }
+        match (state.active_tab, state.pane_focus) {
+            (_, ViewEditPaneFocus::Preview) => self.handle_view_edit_preview_key(code),
+            (ViewEditTab::Scope, _) => self.handle_view_edit_scope_key(code),
+            (ViewEditTab::Appearance, _) => self.handle_view_edit_appearance_key(code),
+            (ViewEditTab::Sections, ViewEditPaneFocus::Sections) => {
+                self.handle_view_edit_sections_key(code)
+            }
+            (ViewEditTab::Sections, ViewEditPaneFocus::Details) => {
+                if state.sections_view_row_selected
+                    || state.draft.sections.get(state.section_index).is_none()
+                    || state.draft.datebook_config.is_some()
+                {
+                    self.handle_view_edit_sections_view_details_key(code)
                 } else {
                     self.handle_view_edit_section_details_key(code)
                 }
             }
-            ViewEditPaneFocus::Preview => self.handle_view_edit_preview_key(code),
         }
     }
 
