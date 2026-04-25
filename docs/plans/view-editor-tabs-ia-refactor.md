@@ -61,13 +61,32 @@ This gives the editor a simple conceptual rhythm:
 - Good, but `Appearance` is more user-facing than `Display` for aliases,
   presentation, and layout choices.
 
+## Design Decisions
+
+These decisions supersede the first PR 125 tab split and should guide the
+implementation:
+
+- **Datebook config lives in Scope.** Proximity wins: when the user changes
+  View type to Datebook, the next question is period/interval/anchor/date
+  source. Putting that configuration in another tab breaks the creation flow.
+- **Hide dependent lives in Scope.** Membership wins: this option changes which
+  items appear in the view, so it belongs with the other filters.
+- **Unmatched lives in Sections.** It is an implicit fallback section, not an
+  appearance setting.
+- **`Tab` remains local focus navigation.** Consistency wins: `Tab` moves
+  between panes/preview inside the active tab; `H` / `L` changes tabs.
+- **Row state should use enums, not magic numbers.** Exhaustive matching gives
+  compiler help when rows move between tabs.
+
 ## Field Ownership
 
 ### Scope
 
-Scope answers: "What items can appear in this view?"
+Scope answers: "What gets into the view, and what kind of view is it?"
 
 - View type: Board or Datebook.
+- Datebook period, interval, anchor, and date source, shown inline when the view
+  type is Datebook.
 - View name.
 - Category criteria: require, exclude, match-any.
 - Date range include/exclude filters.
@@ -76,6 +95,8 @@ Scope answers: "What items can appear in this view?"
 Rationale:
 
 - Name and type are part of defining the lens, not presentation.
+- Datebook configuration stays near the View type control because it is the next
+  step after choosing Datebook.
 - Hide dependent items changes membership, so it belongs with filters rather
   than Appearance.
 
@@ -98,17 +119,16 @@ For board views:
 
 For datebook views:
 
-- Read-only/generated sections explanation.
-- Datebook period.
-- Datebook interval.
-- Datebook anchor.
-- Date source.
+- Read-only generated-section explanation.
+- Summary of the current Datebook settings from Scope.
+- Preview of generated section names, ideally with counts when cheap.
+- Wayfinding action back to Scope's Datebook controls.
 
 Rationale:
 
 - Unmatched is a generated section, so it belongs here instead of Appearance.
-- Datebook period/interval controls define generated section structure, not
-  visual presentation.
+- Datebook configuration belongs in Scope for action proximity, but Datebook
+  users still need Sections to explain what will be generated.
 - Section columns are stored per section, so they belong with section editing
   even though they affect visible output.
 
@@ -163,8 +183,17 @@ Do not make `Tab` switch tabs in this editor.
 - Overlay keymaps keep their local meanings. For example, `1` / `2` / `3` still
   mean require/exclude/or inside criteria pickers.
 - `Tab` and `Shift-Tab` remain pane/focus movement inside the active tab.
+- For Datebook views, `Enter` on the read-only generated-section summary may
+  jump to Scope and focus the Datebook configuration. This is an edit affordance,
+  not tab navigation.
 
 ## Implementation Plan
+
+Preferred implementation base: rebuild on the clean v2 worktree/branch if it is
+still the flat single-pane editor, then port only the useful PR 125 patterns
+(tab enum shape, header rendering, and Sections two-pane geometry). Avoid
+porting the shared `unmatched_field_index` encoding or the monolithic
+tab-conditional renderer.
 
 ### Phase 1: Rename The Tabs
 
@@ -179,7 +208,11 @@ Do not make `Tab` switch tabs in this editor.
 
 - Move Hide dependent into Scope.
 - Move Show unmatched and Unmatched label into Sections.
-- Move Datebook period/interval/anchor/date-source controls into Sections.
+- Move Datebook period/interval/anchor/date-source controls into Scope,
+  immediately below View type when the view is Datebook.
+- Add a useful Datebook state to the Sections tab: generated-section
+  explanation, current config summary, generated section preview, and a local
+  wayfinding action back to Scope.
 - Keep Display mode, Section flow, Empty sections, and Aliases in Appearance.
 - Confirm new-view creation starts on the Scope tab with View type focused.
 
@@ -187,7 +220,8 @@ Do not make `Tab` switch tabs in this editor.
 
 Short-term goal:
 
-- Introduce explicit row enums or row-list helpers for Scope and Appearance.
+- Introduce explicit row enums for Scope, Sections view-settings, and
+  Appearance.
 - Use the same row list for rendering, navigation, and `Enter`/`Space` dispatch.
 - Stop using `unmatched_field_index` as a shared row identifier across unrelated
   tab concepts.
@@ -197,11 +231,21 @@ Possible row types:
 ```rust
 enum ViewScopeRow {
     ViewType,
+    DatebookPeriod,
+    DatebookInterval,
+    DatebookAnchor,
+    DatebookDateSource,
     Name,
     Criterion(usize),
     DateInclude,
     DateExclude,
     HideDependent,
+}
+
+enum ViewSectionsSettingsRow {
+    ShowUnmatched,
+    UnmatchedLabel,
+    DatebookGeneratedPreview,
 }
 
 enum ViewAppearanceRow {
@@ -212,6 +256,10 @@ enum ViewAppearanceRow {
 }
 ```
 
+The Datebook-specific Scope rows should be absent from the row list when the
+draft is a Board view. The Datebook generated-preview row should be absent from
+manual Board section settings.
+
 Longer-term follow-up:
 
 - Consider replacing `active_tab + region + pane_focus + numeric indexes` with a
@@ -219,45 +267,61 @@ Longer-term follow-up:
 - Do this only after the tab IA is stable; it is not required to ship the PR 125
   refactor safely.
 
-### Phase 4: Fix Known Review Findings
+### Phase 4: Split Rendering By Tab
+
+- Keep a small `render_view_edit_screen` shell for layout, overlay placement,
+  and tab dispatch.
+- Extract `render_view_edit_tab_header`.
+- Extract `render_view_edit_scope_tab`.
+- Extract `render_view_edit_sections_tab`.
+- Extract `render_view_edit_appearance_tab`.
+- Each tab renderer should build rows from the same enum/list used by navigation
+  and dispatch.
+
+### Phase 5: Fix Known Review Findings
 
 - Align Appearance focus order with rendered row order.
 - Remove hidden cross-tab mutations from Scope. Keys like `m` and `w` should not
   change Appearance-only state while the user is on Scope.
 - Fix datebook Appearance navigation so there are no inert bottom rows.
 
-### Phase 5: Tests
+### Phase 6: Tests
 
 Add or update focused TUI tests:
 
 - `H` / `L` cycles `Scope -> Sections -> Appearance` and back.
 - `1` / `2` / `3` jump directly to the expected tabs.
 - `Tab` changes pane or preview focus, not tabs.
+- Datebook config rows appear in Scope immediately under View type.
 - Scope row order matches the rendered order.
 - Appearance row order matches the rendered order.
 - Pressing `m` or `w` on Scope does not dirty or mutate Appearance fields.
-- Datebook views show generated section controls under Sections.
+- Datebook views show generated-section explanation/preview under Sections.
+- `Enter` on the Datebook generated-section summary jumps back to Scope's
+  Datebook controls if that affordance is implemented.
 - Datebook Appearance has no inert focus positions.
 - Unmatched visibility and label are reachable from Sections.
 - Hide dependent is reachable from Scope.
 
-### Phase 6: Manual Smoke Test
+### Phase 7: Manual Smoke Test
 
 When implementation is complete, use a worktree/branch-specific smoke test:
 
 1. Run `cargo run --bin agenda-tui -- --db aglet-features.ag`.
 2. Press `v`, then `n`.
 3. Confirm the editor opens on Scope with View type focused.
-4. Toggle Board/Datebook and confirm generated section controls appear under
-   Sections for Datebook.
+4. Toggle Board/Datebook and confirm Datebook config rows appear inline under
+   View type in Scope.
 5. Add a category/date filter under Scope.
 6. Switch tabs with `H` / `L`; jump with `1` / `2` / `3`.
 7. Confirm `Tab` changes local focus instead of switching tabs.
-8. Create or edit a board section under Sections.
-9. Toggle unmatched visibility and edit unmatched label under Sections.
-10. Change display mode, section flow, empty-section presentation, and aliases
+8. On a Datebook view, open Sections and confirm the generated-section preview
+   explains that sections come from Scope Datebook settings.
+9. Create or edit a board section under Sections.
+10. Toggle unmatched visibility and edit unmatched label under Sections.
+11. Change display mode, section flow, empty-section presentation, and aliases
     under Appearance.
-11. Press `S` to save and verify the rendered view matches the draft.
+12. Press `S` to save and verify the rendered view matches the draft.
 
 ## Acceptance Criteria
 
@@ -268,6 +332,10 @@ When implementation is complete, use a worktree/branch-specific smoke test:
 - `H` / `L` and `1` / `2` / `3` are documented in the header/footer.
 - `Tab` remains local pane/focus navigation.
 - Board and Datebook views both have coherent tab content.
+- Datebook configuration is edited in Scope, while Sections provides a useful
+  read-only generated-section preview and path back to the Scope config.
+- Row focus is represented by named row enum variants, not shared magic numeric
+  indexes.
 - Existing view model persistence remains unchanged.
 - Focused tests cover the navigation and row-order contracts.
 
