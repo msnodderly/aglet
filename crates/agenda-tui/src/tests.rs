@@ -16948,6 +16948,7 @@ fn view_edit_scope_enter_on_view_type_toggles_board_datebook() {
 
     if let Some(state) = &mut app.view_edit_state {
         state.scope_row = ScopeRow::ViewType;
+        state.is_new_view = true;
     }
     assert!(app
         .view_edit_state
@@ -16985,6 +16986,65 @@ fn view_edit_scope_enter_on_view_type_toggles_board_datebook() {
 }
 
 #[test]
+fn view_edit_scope_view_type_locked_for_existing_view() {
+    let (store, db_path) = make_test_store_with_view("scope-view-type-locked");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view); // is_new_view = false
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.scope_row = ScopeRow::ViewType;
+    }
+    assert!(!app.view_edit_state.as_ref().unwrap().is_new_view);
+    assert!(app
+        .view_edit_state
+        .as_ref()
+        .unwrap()
+        .draft
+        .datebook_config
+        .is_none());
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("enter on view type");
+    assert!(
+        app.view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .datebook_config
+            .is_none(),
+        "Enter on ViewType must NOT toggle when view already exists"
+    );
+    assert!(
+        !app.view_edit_state.as_ref().unwrap().dirty,
+        "Locked toggle attempt should not mark draft dirty"
+    );
+    assert!(
+        app.status.contains("locked"),
+        "Status should explain why toggle was rejected, got: {}",
+        app.status
+    );
+
+    app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+        .expect("space on view type");
+    assert!(
+        app.view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .datebook_config
+            .is_none(),
+        "Space on ViewType must NOT toggle when view already exists"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn view_edit_scope_tab_datebook_fields_inline_under_view_type() {
     let (store, db_path) = make_test_store_with_view("scope-datebook-inline");
     let classifier = SubstringClassifier;
@@ -16997,6 +17057,7 @@ fn view_edit_scope_tab_datebook_fields_inline_under_view_type() {
 
     if let Some(state) = &mut app.view_edit_state {
         state.scope_row = ScopeRow::ViewType;
+        state.is_new_view = true;
     }
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
         .expect("toggle to datebook");

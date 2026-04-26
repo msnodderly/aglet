@@ -251,16 +251,23 @@ impl App {
 
     /// Toggle View type between Board (no datebook config) and Datebook
     /// (with default DatebookConfig). Used by the Scope tab's ViewType row.
+    /// View type is locked once the view exists — only mutable during creation.
     pub(crate) fn toggle_view_edit_view_type(&mut self) {
-        if let Some(state) = &mut self.view_edit_state {
-            if state.draft.datebook_config.is_some() {
-                state.draft.datebook_config = None;
-            } else {
-                state.draft.datebook_config = Some(DatebookConfig::default());
-            }
-            state.dirty = true;
-            state.discard_confirm = false;
+        let Some(state) = &mut self.view_edit_state else {
+            return;
+        };
+        if !state.is_new_view {
+            self.status =
+                "View type is locked after creation — create a new view to switch type".to_string();
+            return;
         }
+        if state.draft.datebook_config.is_some() {
+            state.draft.datebook_config = None;
+        } else {
+            state.draft.datebook_config = Some(DatebookConfig::default());
+        }
+        state.dirty = true;
+        state.discard_confirm = false;
         self.refresh_view_edit_preview();
     }
 

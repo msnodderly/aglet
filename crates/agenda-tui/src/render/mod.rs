@@ -8427,10 +8427,15 @@ impl App {
 
         // View type row
         let view_type_active = row_active(ScopeRow::ViewType);
-        let view_type_value = if state.draft.datebook_config.is_some() {
+        let view_type_base = if state.draft.datebook_config.is_some() {
             "Datebook"
         } else {
             "Board"
+        };
+        let view_type_value = if state.is_new_view {
+            view_type_base.to_string()
+        } else {
+            format!("{}  (locked)", view_type_base)
         };
         let view_type_style = if view_type_active {
             selected_line = Some(items.len());
