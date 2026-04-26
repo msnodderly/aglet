@@ -396,10 +396,10 @@ impl App {
                 self.settings.ollama_model_picker = None;
                 self.status = "Model selection cancelled".to_string();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if picker.selected_index + 1 < picker.models.len() {
-                    picker.selected_index += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j')
+                if picker.selected_index + 1 < picker.models.len() =>
+            {
+                picker.selected_index += 1;
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 picker.selected_index = picker.selected_index.saturating_sub(1);

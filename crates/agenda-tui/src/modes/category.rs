@@ -2953,11 +2953,9 @@ impl App {
             KeyCode::Esc => {
                 self.close_condition_edit();
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                if condition_count > 0 {
-                    if let Some(e) = self.category_manager_condition_edit_mut() {
-                        e.list_index = (e.list_index + 1).min(condition_count.saturating_sub(1));
-                    }
+            KeyCode::Char('j') | KeyCode::Down if condition_count > 0 => {
+                if let Some(e) = self.category_manager_condition_edit_mut() {
+                    e.list_index = (e.list_index + 1).min(condition_count.saturating_sub(1));
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -3000,10 +2998,8 @@ impl App {
                     self.open_condition_edit_picker(None);
                 }
             }
-            KeyCode::Char('x') => {
-                if condition_count > 0 && edit.list_index < condition_count {
-                    self.delete_condition_at_list_index(agenda)?;
-                }
+            KeyCode::Char('x') if condition_count > 0 && edit.list_index < condition_count => {
+                self.delete_condition_at_list_index(agenda)?;
             }
             _ => {}
         }
@@ -3513,11 +3509,9 @@ impl App {
 
         match code {
             KeyCode::Esc => self.close_action_edit(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                if action_count > 0 {
-                    if let Some(e) = self.category_manager_action_edit_mut() {
-                        e.list_index = (e.list_index + 1).min(action_count.saturating_sub(1));
-                    }
+            KeyCode::Char('j') | KeyCode::Down if action_count > 0 => {
+                if let Some(e) = self.category_manager_action_edit_mut() {
+                    e.list_index = (e.list_index + 1).min(action_count.saturating_sub(1));
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -3533,10 +3527,10 @@ impl App {
                     self.open_action_edit_picker(None);
                 }
             }
-            KeyCode::Char('x') | KeyCode::Char('d') => {
-                if action_count > 0 && edit.list_index < action_count {
-                    self.delete_action_at_list_index(agenda)?;
-                }
+            KeyCode::Char('x') | KeyCode::Char('d')
+                if action_count > 0 && edit.list_index < action_count =>
+            {
+                self.delete_action_at_list_index(agenda)?;
             }
             _ => {}
         }

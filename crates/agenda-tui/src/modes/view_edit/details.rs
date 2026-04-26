@@ -140,6 +140,461 @@ impl App {
     /// The Name row sits at flat index 0 before the criteria rows.
     const NAME_ROW_COUNT: usize = 1;
 
+    pub(crate) fn scope_row_next(state: &ViewEditState) -> Option<ScopeRow> {
+        let n_criteria = state.draft.criteria.criteria.len();
+        let has_datebook = state.draft.datebook_config.is_some();
+        let after_criteria = if has_datebook {
+            ScopeRow::Datebook(DatebookField::Period)
+        } else {
+            ScopeRow::DateInclude
+        };
+        Some(match state.scope_row {
+            ScopeRow::Name => ScopeRow::ViewType,
+            // Always include at least one Criterion row (placeholder when empty).
+            ScopeRow::ViewType => ScopeRow::Criterion(0),
+            ScopeRow::Criterion(i) => {
+                if i + 1 < n_criteria {
+                    ScopeRow::Criterion(i + 1)
+                } else {
+                    after_criteria
+                }
+            }
+            ScopeRow::Datebook(DatebookField::Period) => {
+                ScopeRow::Datebook(DatebookField::Interval)
+            }
+            ScopeRow::Datebook(DatebookField::Interval) => {
+                ScopeRow::Datebook(DatebookField::Anchor)
+            }
+            ScopeRow::Datebook(DatebookField::Anchor) => {
+                ScopeRow::Datebook(DatebookField::DateSource)
+            }
+            ScopeRow::Datebook(DatebookField::DateSource) => ScopeRow::DateInclude,
+            ScopeRow::DateInclude => ScopeRow::DateExclude,
+            ScopeRow::DateExclude => ScopeRow::HideDependent,
+            ScopeRow::HideDependent => return None,
+        })
+    }
+
+    pub(crate) fn scope_row_prev(state: &ViewEditState) -> Option<ScopeRow> {
+        let n_criteria = state.draft.criteria.criteria.len();
+        let has_datebook = state.draft.datebook_config.is_some();
+        let last_criterion = ScopeRow::Criterion(n_criteria.saturating_sub(1));
+        let before_date_include = if has_datebook {
+            ScopeRow::Datebook(DatebookField::DateSource)
+        } else {
+            last_criterion
+        };
+        Some(match state.scope_row {
+            ScopeRow::Name => return None,
+            ScopeRow::ViewType => ScopeRow::Name,
+            ScopeRow::Criterion(0) => ScopeRow::ViewType,
+            ScopeRow::Criterion(i) => ScopeRow::Criterion(i - 1),
+            ScopeRow::Datebook(DatebookField::Period) => last_criterion,
+            ScopeRow::Datebook(DatebookField::Interval) => {
+                ScopeRow::Datebook(DatebookField::Period)
+            }
+            ScopeRow::Datebook(DatebookField::Anchor) => {
+                ScopeRow::Datebook(DatebookField::Interval)
+            }
+            ScopeRow::Datebook(DatebookField::DateSource) => {
+                ScopeRow::Datebook(DatebookField::Anchor)
+            }
+            ScopeRow::DateInclude => before_date_include,
+            ScopeRow::DateExclude => ScopeRow::DateInclude,
+            ScopeRow::HideDependent => ScopeRow::DateExclude,
+        })
+    }
+
+    /// Bring legacy state fields (region/criteria_index/datebook_field_index/
+    /// unmatched_field_index/name_focused) in line with `state.scope_row`.
+    /// Used during the migration so legacy code paths stay coherent.
+    pub(crate) fn sync_legacy_from_scope_row(state: &mut ViewEditState) {
+        let n_criteria = state.draft.criteria.criteria.len();
+        match state.scope_row {
+            ScopeRow::Name => {
+                state.region = ViewEditRegion::Criteria;
+                state.criteria_index = 0;
+                state.name_focused = true;
+            }
+            ScopeRow::ViewType => {
+                state.region = ViewEditRegion::Criteria;
+                state.criteria_index = 0;
+                state.name_focused = false;
+            }
+            ScopeRow::Criterion(i) => {
+                state.region = ViewEditRegion::Criteria;
+                state.criteria_index = i.min(n_criteria.saturating_sub(1));
+                state.name_focused = false;
+            }
+            ScopeRow::Datebook(field) => {
+                state.region = ViewEditRegion::Datebook;
+                state.datebook_field_index = field.index();
+                state.name_focused = false;
+            }
+            ScopeRow::DateInclude => {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = 0;
+                state.name_focused = false;
+            }
+            ScopeRow::DateExclude => {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = 1;
+                state.name_focused = false;
+            }
+            ScopeRow::HideDependent => {
+                state.region = ViewEditRegion::Unmatched;
+                state.unmatched_field_index = 6;
+                state.name_focused = false;
+            }
+        }
+    }
+
+    /// Toggle View type between Board (no datebook config) and Datebook
+    /// (with default DatebookConfig). Used by the Scope tab's ViewType row.
+    pub(crate) fn toggle_view_edit_view_type(&mut self) {
+        if let Some(state) = &mut self.view_edit_state {
+            if state.draft.datebook_config.is_some() {
+                state.draft.datebook_config = None;
+            } else {
+                state.draft.datebook_config = Some(DatebookConfig::default());
+            }
+            state.dirty = true;
+            state.discard_confirm = false;
+        }
+        self.refresh_view_edit_preview();
+    }
+
+    pub(crate) fn handle_view_edit_scope_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+        let Some(state) = &self.view_edit_state else {
+            return Ok(false);
+        };
+        let scope_row = state.scope_row;
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(state) = &self.view_edit_state {
+                    if let Some(next) = Self::scope_row_next(state) {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.scope_row = next;
+                            Self::sync_legacy_from_scope_row(state);
+                        }
+                    }
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(state) = &self.view_edit_state {
+                    if let Some(prev) = Self::scope_row_prev(state) {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.scope_row = prev;
+                            Self::sync_legacy_from_scope_row(state);
+                        }
+                    }
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.scope_row = ScopeRow::Name;
+                    Self::sync_legacy_from_scope_row(state);
+                }
+                self.begin_view_edit_name_input();
+                return Ok(true);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    if !matches!(state.scope_row, ScopeRow::Criterion(_)) {
+                        state.scope_row = if state.draft.criteria.criteria.is_empty() {
+                            ScopeRow::Criterion(0)
+                        } else {
+                            ScopeRow::Criterion(state.draft.criteria.criteria.len() - 1)
+                        };
+                        Self::sync_legacy_from_scope_row(state);
+                    }
+                }
+                self.open_view_edit_view_criteria_picker();
+                return Ok(true);
+            }
+            KeyCode::Char('x') => {
+                if let ScopeRow::Criterion(i) = scope_row {
+                    let mut changed = false;
+                    if let Some(state) = &mut self.view_edit_state {
+                        if i < state.draft.criteria.criteria.len() {
+                            state.draft.criteria.criteria.remove(i);
+                            let new_len = state.draft.criteria.criteria.len();
+                            if new_len == 0 {
+                                state.scope_row = ScopeRow::ViewType;
+                            } else if i >= new_len {
+                                state.scope_row = ScopeRow::Criterion(new_len - 1);
+                            }
+                            Self::sync_legacy_from_scope_row(state);
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        self.set_view_edit_dirty();
+                        self.refresh_view_edit_preview();
+                    }
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.scope_row = ScopeRow::HideDependent;
+                    Self::sync_legacy_from_scope_row(state);
+                    state.draft.hide_dependent_items = !state.draft.hide_dependent_items;
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char(']') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.scope_row = ScopeRow::DateInclude;
+                    Self::sync_legacy_from_scope_row(state);
+                    state.overlay = Some(ViewEditOverlay::BucketPicker {
+                        target: BucketEditTarget::ViewVirtualInclude,
+                    });
+                    state.picker_index = 0;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('[') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.scope_row = ScopeRow::DateExclude;
+                    Self::sync_legacy_from_scope_row(state);
+                    state.overlay = Some(ViewEditOverlay::BucketPicker {
+                        target: BucketEditTarget::ViewVirtualExclude,
+                    });
+                    state.picker_index = 0;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let is_enter = matches!(code, KeyCode::Enter);
+                match scope_row {
+                    ScopeRow::Name => {
+                        self.begin_view_edit_name_input();
+                    }
+                    ScopeRow::ViewType => {
+                        self.toggle_view_edit_view_type();
+                    }
+                    ScopeRow::Criterion(_) => {
+                        // Enter always opens the picker; Space cycles the
+                        // mode on an existing criterion or opens the picker
+                        // when the row is the empty placeholder.
+                        if is_enter {
+                            self.open_view_edit_view_criteria_picker();
+                        } else {
+                            let mut cycled = false;
+                            if let Some(state) = &mut self.view_edit_state {
+                                let idx = match state.scope_row {
+                                    ScopeRow::Criterion(i) => i,
+                                    _ => 0,
+                                };
+                                if let Some(criterion) = state.draft.criteria.criteria.get_mut(idx)
+                                {
+                                    criterion.mode = match criterion.mode {
+                                        CriterionMode::And => CriterionMode::Not,
+                                        CriterionMode::Not => CriterionMode::Or,
+                                        CriterionMode::Or => CriterionMode::And,
+                                    };
+                                    cycled = true;
+                                }
+                            }
+                            if cycled {
+                                self.set_view_edit_dirty();
+                                self.refresh_view_edit_preview();
+                            } else {
+                                self.open_view_edit_view_criteria_picker();
+                            }
+                        }
+                    }
+                    ScopeRow::Datebook(field) => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            if let Some(config) = &mut state.draft.datebook_config {
+                                match field {
+                                    DatebookField::Period => config.period = config.period.next(),
+                                    DatebookField::Interval => {
+                                        config.interval = config.interval.next()
+                                    }
+                                    DatebookField::Anchor => config.anchor = config.anchor.next(),
+                                    DatebookField::DateSource => {
+                                        config.date_source = config.date_source.next()
+                                    }
+                                }
+                                while !config.is_valid() {
+                                    config.interval = config.interval.next();
+                                }
+                                state.dirty = true;
+                                state.discard_confirm = false;
+                            }
+                        }
+                        self.refresh_view_edit_preview();
+                    }
+                    ScopeRow::DateInclude => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.overlay = Some(ViewEditOverlay::BucketPicker {
+                                target: BucketEditTarget::ViewVirtualInclude,
+                            });
+                            state.picker_index = 0;
+                        }
+                    }
+                    ScopeRow::DateExclude => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.overlay = Some(ViewEditOverlay::BucketPicker {
+                                target: BucketEditTarget::ViewVirtualExclude,
+                            });
+                            state.picker_index = 0;
+                        }
+                    }
+                    ScopeRow::HideDependent => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.hide_dependent_items = !state.draft.hide_dependent_items;
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                }
+                return Ok(true);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn appearance_row_next(current: AppearanceRow) -> Option<AppearanceRow> {
+        Some(match current {
+            AppearanceRow::DisplayMode => AppearanceRow::SectionFlow,
+            AppearanceRow::SectionFlow => AppearanceRow::EmptySections,
+            AppearanceRow::EmptySections => AppearanceRow::Aliases,
+            AppearanceRow::Aliases => return None,
+        })
+    }
+
+    pub(crate) fn appearance_row_prev(current: AppearanceRow) -> Option<AppearanceRow> {
+        Some(match current {
+            AppearanceRow::DisplayMode => return None,
+            AppearanceRow::SectionFlow => AppearanceRow::DisplayMode,
+            AppearanceRow::EmptySections => AppearanceRow::SectionFlow,
+            AppearanceRow::Aliases => AppearanceRow::EmptySections,
+        })
+    }
+
+    /// Bring legacy `unmatched_field_index` in line with `state.appearance_row`.
+    /// Used during the migration so legacy code paths stay coherent.
+    pub(crate) fn sync_legacy_from_appearance_row(state: &mut ViewEditState) {
+        state.region = ViewEditRegion::Unmatched;
+        state.name_focused = false;
+        state.unmatched_field_index = match state.appearance_row {
+            AppearanceRow::DisplayMode => 2,
+            AppearanceRow::SectionFlow => 3,
+            AppearanceRow::EmptySections => 4,
+            AppearanceRow::Aliases => 8,
+        };
+    }
+
+    pub(crate) fn handle_view_edit_appearance_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+        let Some(state) = &self.view_edit_state else {
+            return Ok(false);
+        };
+        let appearance_row = state.appearance_row;
+
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(next) = Self::appearance_row_next(appearance_row) {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.appearance_row = next;
+                        Self::sync_legacy_from_appearance_row(state);
+                    }
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(prev) = Self::appearance_row_prev(appearance_row) {
+                    if let Some(state) = &mut self.view_edit_state {
+                        state.appearance_row = prev;
+                        Self::sync_legacy_from_appearance_row(state);
+                    }
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.appearance_row = AppearanceRow::DisplayMode;
+                    Self::sync_legacy_from_appearance_row(state);
+                    state.draft.board_display_mode = match state.draft.board_display_mode {
+                        BoardDisplayMode::SingleLine => BoardDisplayMode::MultiLine,
+                        BoardDisplayMode::MultiLine => BoardDisplayMode::SingleLine,
+                    };
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('w') | KeyCode::Char('W') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.appearance_row = AppearanceRow::SectionFlow;
+                    Self::sync_legacy_from_appearance_row(state);
+                    state.draft.section_flow =
+                        Self::cycle_view_section_flow(state.draft.section_flow);
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                if let Some(state) = &mut self.view_edit_state {
+                    state.appearance_row = AppearanceRow::EmptySections;
+                    Self::sync_legacy_from_appearance_row(state);
+                    state.draft.empty_sections = state.draft.empty_sections.next();
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+                return Ok(true);
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.open_view_edit_alias_picker();
+                return Ok(true);
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                match appearance_row {
+                    AppearanceRow::DisplayMode => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.board_display_mode = match state.draft.board_display_mode {
+                                BoardDisplayMode::SingleLine => BoardDisplayMode::MultiLine,
+                                BoardDisplayMode::MultiLine => BoardDisplayMode::SingleLine,
+                            };
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                    AppearanceRow::SectionFlow => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.section_flow =
+                                Self::cycle_view_section_flow(state.draft.section_flow);
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                    AppearanceRow::EmptySections => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.draft.empty_sections = state.draft.empty_sections.next();
+                            state.dirty = true;
+                            state.discard_confirm = false;
+                        }
+                    }
+                    AppearanceRow::Aliases => {
+                        self.open_view_edit_alias_picker();
+                    }
+                }
+                return Ok(true);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
     /// Check if the current flat focus index is the Name row.
     pub(crate) fn view_details_on_name_row(state: &ViewEditState) -> bool {
         state.name_focused
@@ -416,9 +871,11 @@ impl App {
             "Criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done".to_string();
     }
 
-    fn open_view_edit_alias_picker(&mut self) {
+    pub(crate) fn open_view_edit_alias_picker(&mut self) {
         let first = first_non_reserved_category_index(&self.category_rows);
         if let Some(state) = &mut self.view_edit_state {
+            state.active_tab = ViewEditTab::Appearance;
+            state.appearance_row = AppearanceRow::Aliases;
             state.region = ViewEditRegion::Unmatched;
             state.unmatched_field_index = 8;
             state.overlay = Some(ViewEditOverlay::CategoryPicker {

@@ -434,7 +434,7 @@ impl App {
         let mut review_items: Vec<ClassificationReviewItem> = grouped
             .into_iter()
             .map(|(item_id, mut suggestions)| {
-                suggestions.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+                suggestions.sort_by_key(|s| s.created_at);
                 if let Some(item) = self.all_items.iter().find(|item| item.id == item_id) {
                     ClassificationReviewItem {
                         item_id,

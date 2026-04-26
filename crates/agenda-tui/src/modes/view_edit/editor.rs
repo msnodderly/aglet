@@ -61,6 +61,12 @@ impl App {
         self.view_edit_state = Some(ViewEditState {
             draft: view,
             is_new_view,
+            active_tab: ViewEditTab::Scope,
+            // Existing-view default lands on the first Criterion row to match
+            // the old IA's default focus. The new-view flow overrides this
+            // back to Name with the inline name editor open.
+            scope_row: ScopeRow::Criterion(0),
+            appearance_row: AppearanceRow::DisplayMode,
             region: ViewEditRegion::Criteria,
             pane_focus: ViewEditPaneFocus::Details,
             criteria_index: 0,
@@ -97,11 +103,61 @@ impl App {
             state.sections_view_row_selected = true;
             state.region = ViewEditRegion::Criteria;
             state.pane_focus = ViewEditPaneFocus::Details;
+            state.scope_row = ScopeRow::Name;
+            state.name_focused = true;
             state.inline_input = Some(ViewEditInlineInput::ViewName);
             state.inline_buf = text_buffer::TextBuffer::new(String::new());
             state.discard_confirm = false;
         }
         self.status = "New view: type name, Enter to confirm, Esc to cancel".to_string();
+    }
+
+    pub(crate) fn set_view_edit_tab(&mut self, tab: ViewEditTab) {
+        let Some(state) = &mut self.view_edit_state else {
+            return;
+        };
+        if state.active_tab == tab {
+            return;
+        }
+        state.active_tab = tab;
+        state.discard_confirm = false;
+        state.section_delete_confirm = None;
+        state.name_focused = false;
+        state.pane_focus = match tab {
+            ViewEditTab::Sections => {
+                if state.draft.sections.is_empty() {
+                    ViewEditPaneFocus::Details
+                } else {
+                    ViewEditPaneFocus::Sections
+                }
+            }
+            ViewEditTab::Scope | ViewEditTab::Appearance => ViewEditPaneFocus::Details,
+        };
+        match tab {
+            ViewEditTab::Scope => {
+                Self::sync_legacy_from_scope_row(state);
+            }
+            ViewEditTab::Appearance => {
+                Self::sync_legacy_from_appearance_row(state);
+            }
+            ViewEditTab::Sections => {
+                state.region = ViewEditRegion::Sections;
+                state.sections_view_row_selected = state.draft.sections.is_empty()
+                    || state.section_index >= state.draft.sections.len();
+            }
+        }
+    }
+
+    pub(crate) fn cycle_view_edit_tab(&mut self, forward: bool) {
+        let Some(state) = &self.view_edit_state else {
+            return;
+        };
+        let next = if forward {
+            state.active_tab.next()
+        } else {
+            state.active_tab.previous()
+        };
+        self.set_view_edit_tab(next);
     }
 
     pub(crate) fn cycle_view_edit_pane_focus(&mut self, _forward: bool) {
@@ -322,6 +378,26 @@ impl App {
             KeyCode::Char('S') => {
                 return self.handle_view_edit_save(agenda);
             }
+            KeyCode::Char('H') => {
+                self.cycle_view_edit_tab(false);
+                return Ok(true);
+            }
+            KeyCode::Char('L') => {
+                self.cycle_view_edit_tab(true);
+                return Ok(true);
+            }
+            KeyCode::Char('1') => {
+                self.set_view_edit_tab(ViewEditTab::Scope);
+                return Ok(true);
+            }
+            KeyCode::Char('2') => {
+                self.set_view_edit_tab(ViewEditTab::Sections);
+                return Ok(true);
+            }
+            KeyCode::Char('3') => {
+                self.set_view_edit_tab(ViewEditTab::Appearance);
+                return Ok(true);
+            }
             KeyCode::Char('p') => {
                 self.toggle_view_edit_preview_visible();
                 return Ok(true);
@@ -355,6 +431,16 @@ impl App {
         match state.pane_focus {
             ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(code),
             ViewEditPaneFocus::Details => {
+                if state.active_tab == ViewEditTab::Scope
+                    && Self::view_edit_showing_view_details(state)
+                {
+                    return self.handle_view_edit_scope_key(code);
+                }
+                if state.active_tab == ViewEditTab::Appearance
+                    && Self::view_edit_showing_view_details(state)
+                {
+                    return self.handle_view_edit_appearance_key(code);
+                }
                 if Self::view_edit_showing_view_details(state) {
                     match state.region {
                         ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),

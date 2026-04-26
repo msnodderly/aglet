@@ -7,6 +7,7 @@ mod sections;
 mod state;
 
 pub(crate) use state::{
-    BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
-    ViewEditRegion, ViewEditState,
+    AppearanceRow, BucketEditTarget, CategoryEditTarget, DatebookField, ScopeRow,
+    SectionDetailsRow, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus, ViewEditRegion,
+    ViewEditState, ViewEditTab,
 };

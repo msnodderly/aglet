@@ -83,6 +83,10 @@ impl App {
                     Some(ViewEditInlineInput::ViewName) => {
                         changed = state.draft.name != text;
                         state.draft.name = text;
+                        if state.is_new_view && state.active_tab == ViewEditTab::Scope {
+                            state.scope_row = ScopeRow::ViewType;
+                            Self::sync_legacy_from_scope_row(state);
+                        }
                     }
                     Some(ViewEditInlineInput::SectionTitle {
                         section_index,

@@ -7,12 +7,13 @@ use super::{
     first_non_reserved_category_index, format_category_action, input_panel, input_panel_popup_area,
     item_assignment_labels, list_scroll_for_selected_line, next_index, next_index_clamped,
     should_render_unmatched_lane, text_buffer, truncate_board_cell, when_bucket_options,
-    AddColumnDirection, App, AutoRefreshInterval, BucketEditTarget, CategoryDirectEditAnchor,
-    CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
-    CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, DateConditionDraftKind,
-    DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext,
-    OllamaModelPickerState, SectionBorderMode, SlotSortDirection, SuggestionDecision,
-    ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
+    AddColumnDirection, App, AppearanceRow, AutoRefreshInterval, BucketEditTarget,
+    CategoryDirectEditAnchor, CategoryDirectEditFocus, CategoryDirectEditRow,
+    CategoryDirectEditState, CategoryInlineAction, CategoryListRow, CategoryManagerDetailsFocus,
+    CategoryManagerFocus, DateConditionDraftKind, DateConditionField, DatebookField,
+    GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext, OllamaModelPickerState, ScopeRow,
+    SectionBorderMode, SlotSortDirection, SuggestionDecision, ViewAssignRow, ViewEditPaneFocus,
+    ViewEditRegion, ViewEditTab, WorkflowRolePickerOrigin,
 };
 use agenda_core::agenda::Agenda;
 use agenda_core::classification::{
@@ -16254,6 +16255,7 @@ fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
     });
     app.open_view_edit(view);
     if let Some(state) = &mut app.view_edit_state {
+        state.active_tab = ViewEditTab::Sections;
         state.pane_focus = ViewEditPaneFocus::Details;
         state.region = ViewEditRegion::Sections;
         state.section_index = 0;
@@ -16275,6 +16277,7 @@ fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
     );
 
     if let Some(state) = &mut app.view_edit_state {
+        state.active_tab = ViewEditTab::Sections;
         state.section_details_field_index = 2;
     }
     let backend = TestBackend::new(140, 35);
@@ -16678,6 +16681,96 @@ fn view_edit_picker_space_cycles_criterion_mode() {
 }
 
 #[test]
+fn view_edit_tab_header_renders_scope_sections_appearance() {
+    let (store, db_path) = make_test_store_with_view("tab-header-render");
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("1: Scope"),
+        "tab header should advertise Scope as tab 1: {rendered}"
+    );
+    assert!(
+        rendered.contains("2: Sections"),
+        "tab header should advertise Sections as tab 2: {rendered}"
+    );
+    assert!(
+        rendered.contains("3: Appearance"),
+        "tab header should advertise Appearance as tab 3: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_tab_keys_switch_active_tab() {
+    let (store, db_path) = make_test_store_with_view("tab-keys");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Scope
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("L");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Sections
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("L");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Appearance
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("L wraps");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Scope
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('H'), &agenda)
+        .expect("H wraps backwards");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Appearance
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('1'), &agenda)
+        .expect("1 jumps to Scope");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Scope
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("3 jumps to Appearance");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Appearance
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn view_edit_tab_cycles_panes() {
     let (store, db_path) = make_test_store_with_view("tab-cycle");
     let classifier = SubstringClassifier;
@@ -16775,6 +16868,336 @@ fn view_edit_esc_returns_to_view_picker() {
 }
 
 #[test]
+fn view_edit_scope_jk_navigates_through_all_scope_rows() {
+    let (store, db_path) = make_test_store_with_view("scope-jk-nav");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.scope_row = ScopeRow::Name;
+    }
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::ViewType
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::Criterion(0)
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::DateInclude
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::DateExclude
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::HideDependent
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j (no further)");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::HideDependent,
+        "j at HideDependent should stay (last row)"
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("k");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::DateExclude
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_scope_enter_on_view_type_toggles_board_datebook() {
+    let (store, db_path) = make_test_store_with_view("scope-view-type-toggle");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.scope_row = ScopeRow::ViewType;
+    }
+    assert!(app
+        .view_edit_state
+        .as_ref()
+        .unwrap()
+        .draft
+        .datebook_config
+        .is_none());
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("enter on view type");
+    assert!(
+        app.view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .datebook_config
+            .is_some(),
+        "Enter on ViewType should toggle to Datebook"
+    );
+
+    app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
+        .expect("space on view type");
+    assert!(
+        app.view_edit_state
+            .as_ref()
+            .unwrap()
+            .draft
+            .datebook_config
+            .is_none(),
+        "Space on ViewType should toggle back to Board"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_scope_tab_datebook_fields_inline_under_view_type() {
+    let (store, db_path) = make_test_store_with_view("scope-datebook-inline");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.scope_row = ScopeRow::ViewType;
+    }
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle to datebook");
+
+    assert!(app
+        .view_edit_state
+        .as_ref()
+        .unwrap()
+        .draft
+        .datebook_config
+        .is_some());
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j past view type");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::Criterion(0),
+        "after view type comes criteria"
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j past criteria");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::Datebook(DatebookField::Period),
+        "datebook config rows should appear right after criteria when datebook"
+    );
+
+    for expected in [
+        DatebookField::Interval,
+        DatebookField::Anchor,
+        DatebookField::DateSource,
+    ] {
+        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+            .expect("j");
+        assert_eq!(
+            app.view_edit_state.as_ref().unwrap().scope_row,
+            ScopeRow::Datebook(expected)
+        );
+    }
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j past last datebook");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().scope_row,
+        ScopeRow::DateInclude,
+        "after datebook fields comes date range"
+    );
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Datebook config:"),
+        "Scope tab should render Datebook config header inline: {rendered}"
+    );
+    assert!(
+        rendered.contains("Period"),
+        "Scope tab should render Period field inline: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_scope_hide_dependent_row_present() {
+    let (store, db_path) = make_test_store_with_view("scope-hide-dep");
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Hide dependent"),
+        "Scope tab should render Hide dependent row: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_sections_tab_shows_unmatched_controls_in_view_settings() {
+    let (store, db_path) = make_test_store_with_view("sections-unmatched-vis");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("L to Sections");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Sections
+    );
+    if let Some(state) = &mut app.view_edit_state {
+        state.sections_view_row_selected = true;
+        state.pane_focus = ViewEditPaneFocus::Details;
+    }
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Show unmatched"),
+        "Sections tab view-settings should expose Show unmatched: {rendered}"
+    );
+    assert!(
+        rendered.contains("Unmatched label"),
+        "Sections tab view-settings should expose Unmatched label: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_sections_unmatched_toggle_and_label_edit() {
+    let (store, db_path) = make_test_store_with_view("sections-unmatched-toggle");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("L to Sections");
+    if let Some(state) = &mut app.view_edit_state {
+        state.sections_view_row_selected = true;
+        state.pane_focus = ViewEditPaneFocus::Details;
+        state.region = ViewEditRegion::Unmatched;
+    }
+
+    let initial = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
+    app.handle_view_edit_key(KeyCode::Char('t'), &agenda)
+        .expect("t toggle");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.show_unmatched,
+        !initial
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
+        .expect("l label");
+    if let Some(state) = &mut app.view_edit_state {
+        state.inline_buf = text_buffer::TextBuffer::new(String::new());
+    }
+    for ch in "Misc".chars() {
+        app.handle_view_edit_key(KeyCode::Char(ch), &agenda)
+            .expect("type ch");
+    }
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("confirm");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().draft.unmatched_label,
+        "Misc"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_sections_datebook_shows_wayfinder_note() {
+    let (store, db_path) = make_test_store_with_view("sections-datebook-wayfinder");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    view.datebook_config = Some(agenda_core::model::DatebookConfig::default());
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('L'), &agenda)
+        .expect("L to Sections");
+    if let Some(state) = &mut app.view_edit_state {
+        state.sections_view_row_selected = true;
+        state.pane_focus = ViewEditPaneFocus::Details;
+    }
+
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("auto-generated from the Datebook config"),
+        "Sections tab on datebook view should show wayfinder note: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn view_edit_esc_on_dirty_prompts_save_confirm() {
     let (store, db_path) = make_test_store_with_view("esc-dirty-confirm");
     let classifier = SubstringClassifier;
@@ -16785,8 +17208,9 @@ fn view_edit_esc_on_dirty_prompts_save_confirm() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
-        .expect("toggle view display mode");
+    // Hide-dependent toggle is a Scope-tab dirtying action in the v2 IA.
+    app.handle_view_edit_key(KeyCode::Char('d'), &agenda)
+        .expect("toggle hide-dependent");
 
     // Esc on dirty state should show confirm dialog, not close
     app.handle_view_edit_key(KeyCode::Esc, &agenda)
@@ -16907,6 +17331,12 @@ fn view_edit_overlay_intercepts_keys_before_region() {
     let _ = std::fs::remove_file(&db_path);
 }
 
+// Replaced by per-tab navigation tests in Phases 3–5:
+// `view_edit_scope_jk_navigates_through_all_scope_rows`,
+// `view_edit_appearance_jk_navigates_rows`, and
+// `view_edit_sections_tab_shows_unmatched_controls_in_view_settings` cover the
+// per-tab walks that this old flat-row test used to assert in one block.
+#[ignore]
 #[test]
 fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     let (store, db_path) = make_test_store_with_view("details-jk-view-rows");
@@ -17036,6 +17466,10 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     let _ = std::fs::remove_file(&db_path);
 }
 
+// Replaced by Phase 4's `view_edit_sections_unmatched_toggle_and_label_edit`,
+// which exercises the same toggle + label edit through the Sections tab's
+// view-settings details pane.
+#[ignore]
 #[test]
 fn view_edit_unmatched_enter_uses_selected_details_row() {
     let (store, db_path) = make_test_store_with_view("unmatched-enter-detail-row");
@@ -17111,19 +17545,16 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
+    // Switch to Appearance tab and navigate to Empty sections row.
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump to Appearance");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to empty sections row");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        4
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::EmptySections
     );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.empty_sections,
@@ -17158,17 +17589,14 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
+    // Switch to Appearance tab and navigate to Section flow row.
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump to Appearance");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to section flow row");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        3
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::SectionFlow
     );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.section_flow,
@@ -17206,14 +17634,17 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    // Move focus to Aliases row in view details.
-    for _ in 0..9 {
+    // Switch to the Appearance tab and move to the Aliases row
+    // (DisplayMode → SectionFlow → EmptySections → Aliases).
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump to appearance tab");
+    for _ in 0..3 {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("move details selection");
+            .expect("move appearance selection");
     }
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        8
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::Aliases
     );
 
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
@@ -17275,10 +17706,10 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
         .insert(category.id, "Client".to_string());
     app.open_view_edit(view);
 
-    // Enter unmatched details, then open aliases picker.
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("move to unmatched details");
-    app.handle_view_edit_key(KeyCode::Char('A'), &agenda)
+    // Switch to Appearance tab and open the aliases picker via shortcut.
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump to appearance tab");
+    app.handle_view_edit_key(KeyCode::Char('a'), &agenda)
         .expect("open aliases picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -17314,8 +17745,8 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
 }
 
 #[test]
-fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
-    let (store, db_path) = make_test_store_with_view("view-details-enter-actions");
+fn view_edit_appearance_display_mode_row_enter_toggles_display_mode() {
+    let (store, db_path) = make_test_store_with_view("appearance-display-mode-toggle");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
 
@@ -17324,31 +17755,13 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump to appearance tab");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        0
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::DisplayMode
     );
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
-        .expect("open when include picker");
-    assert!(matches!(
-        app.view_edit_state.as_ref().unwrap().overlay,
-        Some(super::ViewEditOverlay::BucketPicker {
-            target: super::BucketEditTarget::ViewVirtualInclude
-        })
-    ));
-    app.handle_view_edit_key(KeyCode::Esc, &agenda)
-        .expect("close bucket picker");
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        2
-    );
     let before = app
         .view_edit_state
         .as_ref()
@@ -17356,7 +17769,7 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
         .draft
         .board_display_mode;
     app.handle_view_edit_key(KeyCode::Enter, &agenda)
-        .expect("toggle display mode via details row");
+        .expect("toggle display mode via appearance row");
     assert_ne!(
         app.view_edit_state
             .as_ref()
@@ -17364,6 +17777,154 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
             .draft
             .board_display_mode,
         before
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_appearance_jk_navigates_rows() {
+    let (store, db_path) = make_test_store_with_view("appearance-jk-nav");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('3'), &agenda)
+        .expect("jump to appearance tab");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::DisplayMode
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j to section flow");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::SectionFlow
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j to empty sections");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::EmptySections
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j to aliases");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::Aliases
+    );
+
+    // j past the end stays at Aliases.
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("j past end");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::Aliases
+    );
+
+    // k walks back up.
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("k to empty sections");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::EmptySections
+    );
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("k to section flow");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("k to display mode");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::DisplayMode
+    );
+
+    // k past the start stays at DisplayMode.
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("k past start");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().appearance_row,
+        AppearanceRow::DisplayMode
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_appearance_alias_picker_sets_tab() {
+    let (store, db_path) = make_test_store_with_view("appearance-alias-picker-sets-tab");
+    let classifier = SubstringClassifier;
+    let _agenda = Agenda::new(&store, &classifier);
+
+    let category = Category::new("Project".to_string());
+    store.create_category(&category).expect("create category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    // Start on Scope tab; opening alias picker should jump us to Appearance.
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().active_tab,
+        ViewEditTab::Scope
+    );
+    app.open_view_edit_alias_picker();
+    let state = app.view_edit_state.as_ref().unwrap();
+    assert_eq!(state.active_tab, ViewEditTab::Appearance);
+    assert_eq!(state.appearance_row, AppearanceRow::Aliases);
+    assert!(matches!(
+        state.overlay,
+        Some(super::ViewEditOverlay::CategoryPicker {
+            target: super::CategoryEditTarget::ViewAliases
+        })
+    ));
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_new_view_name_entry_then_auto_advances_to_view_type() {
+    let (store, db_path) = make_test_store_with_view("new-view-name-then-view-type");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit_new_view_focus_name(view);
+
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert!(state.is_new_view, "is_new_view should be true");
+    assert_eq!(state.active_tab, ViewEditTab::Scope);
+    assert_eq!(state.scope_row, ScopeRow::Name);
+    assert!(matches!(
+        state.inline_input,
+        Some(super::ViewEditInlineInput::ViewName)
+    ));
+
+    if let Some(state) = &mut app.view_edit_state {
+        state.inline_buf = super::text_buffer::TextBuffer::new("My Test View".to_string());
+    }
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("confirm view name");
+
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert_eq!(state.draft.name, "My Test View");
+    assert_eq!(
+        state.scope_row,
+        ScopeRow::ViewType,
+        "after confirming new-view name, scope_row should auto-advance to ViewType"
+    );
+    assert!(
+        state.inline_input.is_none(),
+        "inline input should be closed"
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -18823,16 +19384,16 @@ fn view_edit_save_persists_view() {
         ViewEditRegion::Criteria
     );
 
-    // Toggle view default display mode in Criteria details
-    app.handle_view_edit_key(KeyCode::Char('m'), &agenda)
-        .expect("toggle view display mode");
-    assert_eq!(
+    // Toggle a Scope-tab view-level setting (hide-dependent) — Display mode
+    // moved to the Appearance tab in the v2 IA, so use a Scope action here.
+    app.handle_view_edit_key(KeyCode::Char('d'), &agenda)
+        .expect("toggle hide-dependent items");
+    assert!(
         app.view_edit_state
             .as_ref()
             .unwrap()
             .draft
-            .board_display_mode,
-        BoardDisplayMode::MultiLine
+            .hide_dependent_items
     );
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
         .expect("tab to sections");
@@ -18893,7 +19454,7 @@ fn view_edit_save_persists_view() {
         .find(|v| v.name == "TestView")
         .expect("saved view");
     assert_eq!(saved.sections.len(), 1);
-    assert_eq!(saved.board_display_mode, BoardDisplayMode::MultiLine);
+    assert!(saved.hide_dependent_items);
     assert_eq!(
         saved.sections[0].board_display_mode_override,
         Some(BoardDisplayMode::SingleLine)
