@@ -15253,16 +15253,29 @@ fn bucket_target_set_mut_supports_view_targets() {
         board_display_mode_override: None,
     });
 
-    let view_virtual = bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualInclude)
-        .expect("view virtual include set");
+    let view_virtual =
+        bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualInclude, None)
+            .expect("view virtual include set");
     view_virtual.insert(WhenBucket::Today);
     assert!(view.criteria.virtual_include.contains(&WhenBucket::Today));
 
     let view_virtual_exclude =
-        bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualExclude)
+        bucket_target_set_mut(&mut view, BucketEditTarget::ViewVirtualExclude, None)
             .expect("view virtual exclude set");
     view_virtual_exclude.insert(WhenBucket::NoDate);
     assert!(view.criteria.virtual_exclude.contains(&WhenBucket::NoDate));
+
+    let section_virtual = bucket_target_set_mut(
+        &mut view,
+        BucketEditTarget::SectionVirtualInclude,
+        Some(0),
+    )
+    .expect("section virtual include set");
+    section_virtual.insert(WhenBucket::ThisYear);
+    assert!(view.sections[0]
+        .criteria
+        .virtual_include
+        .contains(&WhenBucket::ThisYear));
 }
 
 #[test]
@@ -15270,7 +15283,10 @@ fn when_bucket_options_exposes_expected_bucket_set() {
     let options = when_bucket_options();
     assert!(options.contains(&WhenBucket::Today));
     assert!(options.contains(&WhenBucket::NoDate));
-    assert_eq!(options.len(), 8);
+    assert!(options.contains(&WhenBucket::ThisYear));
+    assert!(options.contains(&WhenBucket::NextMonth));
+    assert!(options.contains(&WhenBucket::Next12Months));
+    assert_eq!(options.len(), 11);
 }
 
 #[test]
@@ -17527,7 +17543,7 @@ fn view_edit_empty_criteria_enter_opens_category_picker() {
 }
 
 #[test]
-fn view_edit_section_details_field_count_is_seven() {
+fn view_edit_section_details_field_count_is_nine() {
     let (store, db_path) = make_test_store_with_view("section-details-field-count");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -17563,8 +17579,8 @@ fn view_edit_section_details_field_count_is_seven() {
         ViewEditPaneFocus::Details
     );
 
-    // Navigate to the last field (index 6 with 7 fields)
-    for _ in 0..10 {
+    // Navigate to the last field (index 8 with 9 fields)
+    for _ in 0..15 {
         app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
             .expect("advance details field");
     }
@@ -17573,11 +17589,53 @@ fn view_edit_section_details_field_count_is_seven() {
             .as_ref()
             .unwrap()
             .section_details_field_index,
-        6,
-        "max section details field index should be 6 (7 fields: 0-6)"
+        8,
+        "max section details field index should be 8 (9 fields: 0-8)"
     );
 
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn visible_slot_window_keeps_all_sections_visible_regardless_of_order() {
+    // Regression test: a tall slot (e.g., 60-item Overdue) should not crowd
+    // out later slots. Constraint::Fill(1) shares the viewport equally among
+    // visible slots, so windowing must use min-slot-height (not full estimated
+    // height) to decide visibility.
+    let viewport: u16 = 50;
+    let min_slot: u16 = 4; // 2 borders + header + 1 item
+    let small_a: u16 = 12; // 9 items + 3 chrome
+    let small_b: u16 = 11; // 8 items + 3 chrome
+    let huge: u16 = 65; // 62 items + 3 chrome
+
+    // Original order: small, small, huge — all 3 should be visible.
+    let visible = App::visible_slot_window(&[small_a, small_b, huge], 0, viewport, min_slot);
+    assert_eq!(visible, vec![0, 1, 2]);
+
+    // Reordered: small, huge, small — all 3 should *still* be visible.
+    // (Before the fix, the huge slot's full estimated height consumed the
+    // budget and the trailing small slot was clipped.)
+    let visible = App::visible_slot_window(&[small_a, huge, small_b], 0, viewport, min_slot);
+    assert_eq!(visible, vec![0, 1, 2]);
+
+    // Huge in front: also keeps all visible.
+    let visible = App::visible_slot_window(&[huge, small_a, small_b], 0, viewport, min_slot);
+    assert_eq!(visible, vec![0, 1, 2]);
+}
+
+#[test]
+fn visible_slot_window_skips_zero_height_hidden_slots() {
+    // Hidden (height=0) slots are skipped without consuming budget.
+    let visible = App::visible_slot_window(&[8, 0, 8, 0, 8], 0, 50, 4);
+    assert_eq!(visible, vec![0, 2, 4]);
+}
+
+#[test]
+fn visible_slot_window_clips_when_truly_too_many_slots() {
+    // With min_slot_height=4 and viewport=20, only 5 slots fit.
+    let heights = vec![6u16; 10];
+    let visible = App::visible_slot_window(&heights, 0, 20, 4);
+    assert_eq!(visible, vec![0, 1, 2, 3, 4]);
 }
 
 #[test]

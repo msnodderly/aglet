@@ -14,6 +14,17 @@ pub(crate) enum CategoryEditTarget {
 pub(crate) enum BucketEditTarget {
     ViewVirtualInclude,
     ViewVirtualExclude,
+    SectionVirtualInclude,
+    SectionVirtualExclude,
+}
+
+impl BucketEditTarget {
+    pub(crate) fn is_section(self) -> bool {
+        matches!(
+            self,
+            BucketEditTarget::SectionVirtualInclude | BucketEditTarget::SectionVirtualExclude
+        )
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

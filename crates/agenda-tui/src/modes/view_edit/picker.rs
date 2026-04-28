@@ -135,15 +135,11 @@ impl App {
                     self.status = "No selected view to delete".to_string();
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.views.is_empty() {
-                    self.picker_index = next_index_clamped(self.picker_index, self.views.len(), 1);
-                }
+            KeyCode::Down | KeyCode::Char('j') if !self.views.is_empty() => {
+                self.picker_index = next_index_clamped(self.picker_index, self.views.len(), 1);
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !self.views.is_empty() {
-                    self.picker_index = next_index_clamped(self.picker_index, self.views.len(), -1);
-                }
+            KeyCode::Up | KeyCode::Char('k') if !self.views.is_empty() => {
+                self.picker_index = next_index_clamped(self.picker_index, self.views.len(), -1);
             }
             _ => {}
         }

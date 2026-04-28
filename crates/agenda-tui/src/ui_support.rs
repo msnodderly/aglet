@@ -33,6 +33,9 @@ pub(super) fn when_bucket_options() -> &'static [WhenBucket] {
         WhenBucket::ThisWeek,
         WhenBucket::NextWeek,
         WhenBucket::ThisMonth,
+        WhenBucket::NextMonth,
+        WhenBucket::ThisYear,
+        WhenBucket::Next12Months,
         WhenBucket::Future,
         WhenBucket::NoDate,
     ]
@@ -46,6 +49,9 @@ pub(super) fn when_bucket_label(bucket: WhenBucket) -> &'static str {
         WhenBucket::ThisWeek => "This Week",
         WhenBucket::NextWeek => "Next Week",
         WhenBucket::ThisMonth => "This Month",
+        WhenBucket::NextMonth => "Next Month",
+        WhenBucket::ThisYear => "This Year",
+        WhenBucket::Next12Months => "Next 12 Months",
         WhenBucket::Future => "Future",
         WhenBucket::NoDate => "No Date",
     }
@@ -54,10 +60,19 @@ pub(super) fn when_bucket_label(bucket: WhenBucket) -> &'static str {
 pub(super) fn bucket_target_set_mut(
     view: &mut View,
     target: BucketEditTarget,
+    section_index: Option<usize>,
 ) -> Option<&mut HashSet<WhenBucket>> {
     match target {
         BucketEditTarget::ViewVirtualInclude => Some(&mut view.criteria.virtual_include),
         BucketEditTarget::ViewVirtualExclude => Some(&mut view.criteria.virtual_exclude),
+        BucketEditTarget::SectionVirtualInclude => view
+            .sections
+            .get_mut(section_index?)
+            .map(|s| &mut s.criteria.virtual_include),
+        BucketEditTarget::SectionVirtualExclude => view
+            .sections
+            .get_mut(section_index?)
+            .map(|s| &mut s.criteria.virtual_exclude),
     }
 }
 

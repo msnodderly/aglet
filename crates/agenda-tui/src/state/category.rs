@@ -120,6 +120,7 @@ pub(crate) struct CategoryManagerDetailsInlineInput {
 }
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum CategoryInlineAction {
     Rename {
         category_id: CategoryId,
