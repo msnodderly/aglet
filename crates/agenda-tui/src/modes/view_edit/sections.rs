@@ -411,7 +411,7 @@ impl App {
                         });
                         state.picker_index = first;
                     }
-                    self.status = "Edit section columns: j/k select  Space/Enter:toggle  Esc:done  (leaf tags hidden)"
+                    self.status = "Edit section columns: j/k select  Space/Enter:toggle  Esc:done"
                         .to_string();
                 }
             }

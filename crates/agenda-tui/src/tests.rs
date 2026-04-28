@@ -18757,9 +18757,10 @@ fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
     let mut terminal = Terminal::new(backend).expect("test terminal");
     terminal.draw(|frame| app.draw(frame)).expect("render");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(rendered.contains("OrphanTag"));
     assert!(
-        rendered.contains("OrphanTag") && rendered.contains("leaf tag"),
-        "ineligible column heading should render with its reason: {rendered}"
+        !rendered.contains("leaf tag"),
+        "ineligible reason should not be rendered inline: {rendered}"
     );
 
     // Attempt to toggle the ineligible leaf category.
