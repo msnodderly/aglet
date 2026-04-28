@@ -18713,12 +18713,12 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
 }
 
 #[test]
-fn section_column_picker_excludes_leaf_tag_headings() {
+fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
     let (store, db_path) = make_test_store_with_view("col-picker-leaf-tag");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
 
-    // Leaf tag category — should be hidden from column picker.
+    // Leaf tag category — should be visible but ineligible in the column picker.
     let leaf = Category::new("OrphanTag".to_string());
     store.create_category(&leaf).expect("create leaf");
 
@@ -18739,12 +18739,30 @@ fn section_column_picker_excludes_leaf_tag_headings() {
     app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
         .unwrap();
 
-    // Attempt to toggle the leaf category via its raw index.
     let leaf_idx = app
         .category_rows
         .iter()
         .position(|r| r.name == "OrphanTag")
         .unwrap();
+    let visible_indices = app
+        .view_edit_state
+        .as_ref()
+        .map(|state| app.view_edit_filtered_category_row_indices(state))
+        .unwrap();
+    assert!(
+        visible_indices.contains(&leaf_idx),
+        "leaf tag category should remain visible in column picker"
+    );
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("OrphanTag") && rendered.contains("leaf tag"),
+        "ineligible column heading should render with its reason: {rendered}"
+    );
+
+    // Attempt to toggle the ineligible leaf category.
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = leaf_idx;
     }
@@ -18756,7 +18774,11 @@ fn section_column_picker_excludes_leaf_tag_headings() {
             .columns
             .iter()
             .any(|c| c.heading == leaf.id),
-        "leaf tag category should be excluded from column picker"
+        "leaf tag category should not be selectable as a column heading"
+    );
+    assert!(
+        app.status.contains("leaf tag"),
+        "ineligible toggle should explain why it is blocked"
     );
 
     let _ = std::fs::remove_file(&db_path);

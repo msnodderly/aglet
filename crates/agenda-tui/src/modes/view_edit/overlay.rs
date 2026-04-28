@@ -51,6 +51,13 @@ impl App {
                         {
                             section.columns.remove(existing_index);
                         } else if let Some(cat) = self.categories.iter().find(|c| c.id == cat_id) {
+                            if let Some(reason) = column_heading_ineligibility_reason(cat) {
+                                self.status = format!(
+                                    "Cannot use \"{}\" as a column heading: {reason}",
+                                    cat.name
+                                );
+                                return;
+                            }
                             section.columns.push(Column {
                                 kind: column_kind_for_heading(cat),
                                 heading: cat_id,

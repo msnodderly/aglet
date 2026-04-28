@@ -81,14 +81,8 @@ impl App {
                         return None;
                     }
                 }
-                if is_column_picker {
-                    if let Some(cat) = cat_by_id.get(&row.id) {
-                        if !is_valid_column_heading(cat) {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                if is_column_picker && !cat_by_id.contains_key(&row.id) {
+                    return None;
                 }
                 Some(i)
             })

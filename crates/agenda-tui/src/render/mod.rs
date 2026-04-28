@@ -9948,12 +9948,52 @@ impl App {
                                         .unwrap_or(false),
                                     _ => false,
                                 };
-                                let label = format!(
-                                    "{indent}[{}] {}",
-                                    if checked { "x" } else { " " },
-                                    row.name
-                                );
-                                ListItem::new(Line::from(label)).style(selected_style)
+                                let invalid_reason =
+                                    if matches!(target, CategoryEditTarget::SectionColumns) {
+                                        self.categories
+                                            .iter()
+                                            .find(|cat| cat.id == row.id)
+                                            .and_then(column_heading_ineligibility_reason)
+                                    } else {
+                                        None
+                                    };
+                                let checkbox = if invalid_reason.is_some() {
+                                    "-"
+                                } else if checked {
+                                    "x"
+                                } else {
+                                    " "
+                                };
+                                let mut spans = vec![
+                                    Span::raw(indent.to_string()),
+                                    Span::styled(
+                                        format!("[{checkbox}] "),
+                                        if invalid_reason.is_some() && i != state.picker_index {
+                                            Style::default().fg(dim)
+                                        } else {
+                                            Style::default()
+                                        },
+                                    ),
+                                    Span::styled(
+                                        row.name.clone(),
+                                        if invalid_reason.is_some() && i != state.picker_index {
+                                            Style::default().fg(dim)
+                                        } else {
+                                            Style::default()
+                                        },
+                                    ),
+                                ];
+                                if let Some(reason) = invalid_reason {
+                                    spans.push(Span::styled(
+                                        format!("  ({reason})"),
+                                        if i == state.picker_index {
+                                            Style::default().fg(Color::Black)
+                                        } else {
+                                            Style::default().fg(dim).add_modifier(Modifier::DIM)
+                                        },
+                                    ));
+                                }
+                                ListItem::new(Line::from(spans)).style(selected_style)
                             }
                         })
                         .collect();
