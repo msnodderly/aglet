@@ -82,6 +82,7 @@ impl App {
             section_delete_confirm: None,
             datebook_field_index: 0,
             name_focused: false,
+            view_type_focused: false,
         });
         self.mode = Mode::ViewEdit;
         self.status = Self::view_edit_default_status();
@@ -104,34 +105,61 @@ impl App {
         self.status = "New view: type name, Enter to confirm, Esc to cancel".to_string();
     }
 
-    pub(crate) fn cycle_view_edit_pane_focus(&mut self, _forward: bool) {
+    pub(crate) fn cycle_view_edit_pane_focus(&mut self, forward: bool) {
         if let Some(state) = &mut self.view_edit_state {
-            let next = match state.pane_focus {
-                ViewEditPaneFocus::Sections => ViewEditPaneFocus::Details,
-                ViewEditPaneFocus::Details | ViewEditPaneFocus::Preview => {
-                    ViewEditPaneFocus::Sections
+            let next = if state.pane_focus == ViewEditPaneFocus::Preview {
+                if forward { 0 } else { 2 }
+            } else {
+                let current = match state.pane_focus {
+                    ViewEditPaneFocus::Details if state.region == ViewEditRegion::Sections => 2,
+                    ViewEditPaneFocus::Details => 0,
+                    ViewEditPaneFocus::Sections => 1,
+                    ViewEditPaneFocus::Preview => unreachable!(),
+                };
+                if forward {
+                    (current + 1) % 3
+                } else {
+                    (current + 3 - 1) % 3
                 }
             };
-            state.pane_focus = next;
-            state.name_focused = false;
 
-            if state.pane_focus == ViewEditPaneFocus::Sections {
-                if state.region != ViewEditRegion::Sections {
-                    state.sections_view_row_selected = true;
-                }
-            } else if state.pane_focus == ViewEditPaneFocus::Details
-                && state.region == ViewEditRegion::Sections
-            {
-                if state.sections_view_row_selected {
-                    // For datebook views, default to Datebook region
-                    if state.draft.datebook_config.is_some() {
-                        state.region = ViewEditRegion::Datebook;
-                        state.datebook_field_index = 0;
-                    } else {
+            state.name_focused = false;
+            state.view_type_focused = false;
+
+            match next {
+                0 => {
+                    state.pane_focus = ViewEditPaneFocus::Details;
+                    if state.region == ViewEditRegion::Sections
+                        || state.region == ViewEditRegion::Datebook
+                    {
                         state.region = ViewEditRegion::Criteria;
                     }
+                    state.sections_view_row_selected = false;
                 }
-                state.section_details_field_index = 0;
+                1 => {
+                    state.pane_focus = ViewEditPaneFocus::Sections;
+                    if state.draft.datebook_config.is_some() {
+                        state.region = ViewEditRegion::Datebook;
+                        state.datebook_field_index =
+                            state.datebook_field_index.min(Self::DATEBOOK_FIELD_COUNT - 1);
+                    } else {
+                        state.region = ViewEditRegion::Sections;
+                        if state.section_index >= state.draft.sections.len() {
+                            state.section_index = state.draft.sections.len().saturating_sub(1);
+                        }
+                    }
+                    state.sections_view_row_selected = false;
+                }
+                2 => {
+                    state.pane_focus = ViewEditPaneFocus::Details;
+                    state.region = ViewEditRegion::Sections;
+                    state.sections_view_row_selected = false;
+                    if state.section_index >= state.draft.sections.len() {
+                        state.section_index = state.draft.sections.len().saturating_sub(1);
+                    }
+                    state.section_details_field_index = 0;
+                }
+                _ => unreachable!(),
             }
         }
     }
@@ -353,15 +381,17 @@ impl App {
         };
 
         match state.pane_focus {
+            ViewEditPaneFocus::Sections if state.draft.datebook_config.is_some() => {
+                self.handle_view_edit_datebook_key(code)
+            }
             ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(code),
             ViewEditPaneFocus::Details => {
-                if Self::view_edit_showing_view_details(state) {
-                    match state.region {
-                        ViewEditRegion::Criteria => self.handle_view_edit_criteria_key(code),
-                        ViewEditRegion::Unmatched => self.handle_view_edit_unmatched_key(code),
-                        ViewEditRegion::Sections => self.handle_view_edit_criteria_key(code),
-                        ViewEditRegion::Datebook => self.handle_view_edit_datebook_key(code),
-                    }
+                if state.draft.datebook_config.is_some()
+                    && state.region == ViewEditRegion::Sections
+                {
+                    self.handle_view_edit_preview_key(code)
+                } else if Self::view_edit_showing_view_details(state) {
+                    self.handle_view_edit_settings_key(code)
                 } else {
                     self.handle_view_edit_section_details_key(code)
                 }

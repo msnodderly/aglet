@@ -252,8 +252,9 @@ impl App {
                     if !state.sections_view_row_selected {
                         let at_first_visible = current_visible_pos.map(|p| p == 0).unwrap_or(true);
                         if at_first_visible || visible_indices.is_empty() {
-                            state.sections_view_row_selected = true;
-                            state.region = ViewEditRegion::Sections;
+                            state.sections_view_row_selected = false;
+                            state.region = ViewEditRegion::Criteria;
+                            state.pane_focus = ViewEditPaneFocus::Details;
                         } else {
                             state.region = ViewEditRegion::Sections;
                             if let Some(pos) = current_visible_pos {

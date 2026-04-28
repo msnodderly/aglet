@@ -62,6 +62,30 @@ impl App {
                     Self::view_edit_default_status()
                 };
             }
+            KeyCode::Tab | KeyCode::BackTab if matches!(inline, Some(ViewEditInlineInput::ViewName)) => {
+                let Some(state) = &mut self.view_edit_state else {
+                    return Ok(false);
+                };
+                let text = state.inline_buf.trimmed().to_string();
+                let changed = state.draft.name != text;
+                state.draft.name = text;
+                state.inline_input = None;
+                state.inline_buf.clear();
+                state.pane_focus = ViewEditPaneFocus::Details;
+                state.region = ViewEditRegion::Criteria;
+                state.sections_view_row_selected = false;
+                state.name_focused = false;
+                state.view_type_focused = code == KeyCode::Tab;
+                if changed {
+                    state.dirty = true;
+                    state.discard_confirm = false;
+                }
+                if code == KeyCode::BackTab {
+                    let _ = state;
+                    self.cycle_view_edit_pane_focus(false);
+                }
+                self.status = Self::view_edit_default_status();
+            }
             KeyCode::Enter => {
                 let Some(state) = &mut self.view_edit_state else {
                     return Ok(false);

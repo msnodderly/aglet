@@ -71,4 +71,5 @@ pub(crate) struct ViewEditState {
     pub(crate) section_delete_confirm: Option<usize>,
     pub(crate) datebook_field_index: usize,
     pub(crate) name_focused: bool,
+    pub(crate) view_type_focused: bool,
 }
