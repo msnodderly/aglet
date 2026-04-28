@@ -104,6 +104,11 @@ impl App {
                     .position(|&actual_idx| actual_idx == picker_index)
                     .unwrap_or(0);
                 match code {
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        let forward = code == KeyCode::Tab;
+                        self.close_view_edit_overlay();
+                        self.cycle_view_edit_pane_focus(forward);
+                    }
                     KeyCode::Char('j') | KeyCode::Down => {
                         if let Some(state) = &mut self.view_edit_state {
                             if let Some(&actual_idx) = filtered_indices.get(
@@ -122,6 +127,9 @@ impl App {
                                 state.picker_index = actual_idx;
                             }
                         }
+                    }
+                    KeyCode::Enter if is_criteria_picker => {
+                        self.close_view_edit_overlay();
                     }
                     KeyCode::Char('a') | KeyCode::Char('A')
                         if matches!(target, CategoryEditTarget::ViewAliases) =>

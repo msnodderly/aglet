@@ -379,7 +379,7 @@ impl App {
                         });
                         state.picker_index = first;
                     }
-                    self.status = "Section criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Esc:done"
+                    self.status = "Section criteria: Space:cycle  +/1:require  -/2:exclude  3:or  0:clear  Enter/Tab:done"
                         .to_string();
                 }
             }

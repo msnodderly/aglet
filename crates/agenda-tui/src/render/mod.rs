@@ -8312,9 +8312,8 @@ impl App {
         let dim = Color::Rgb(110, 118, 138); // visible mid-gray for dimmed text
 
         if let Some(view_settings_area) = view_settings_area {
-            let settings_focused =
-                state.pane_focus == ViewEditPaneFocus::Details
-                    && state.region != ViewEditRegion::Sections;
+            let settings_focused = state.pane_focus == ViewEditPaneFocus::Details
+                && state.region != ViewEditRegion::Sections;
             let settings_border = if settings_focused {
                 focused_border
             } else {
@@ -9752,10 +9751,7 @@ impl App {
 
         // ── Picker overlay ───────────────────────────────────────────────────
         if let Some(overlay) = &state.overlay {
-            let overlay_area = {
-                let w = details_area.width.max(1);
-                Rect::new(details_area.x, details_area.y, w, details_area.height)
-            };
+            let overlay_area = centered_rect(64, 72, area);
             frame.render_widget(Clear, overlay_area);
             match overlay {
                 ViewEditOverlay::CategoryPicker { target } => {
@@ -9772,7 +9768,7 @@ impl App {
                     let toggle_hint = if is_alias_picker {
                         "A/Enter edit alias"
                     } else if is_criteria_picker {
-                        "Sp:cycle +/-:req/exc 0:clr"
+                        "Sp:cycle +/-:req/exc 0:clr Enter/Tab done"
                     } else {
                         "Space/Enter toggle"
                     };
@@ -9821,8 +9817,11 @@ impl App {
                         (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
                         filtered_indices.len()
                     );
-                    let title =
-                        format!(" {context_label}  {pos_label}  ({toggle_hint}, Esc done) ",);
+                    let title = if is_criteria_picker {
+                        format!(" {context_label}  {pos_label}  ({toggle_hint}) ")
+                    } else {
+                        format!(" {context_label}  {pos_label}  ({toggle_hint}, Esc done) ")
+                    };
                     let section_index = state.section_index;
                     let items: Vec<ListItem<'_>> = self
                         .category_rows

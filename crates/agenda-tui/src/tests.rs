@@ -16883,7 +16883,7 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
 }
 
 #[test]
-fn view_edit_overlay_intercepts_keys_before_region() {
+fn view_edit_category_picker_tab_closes_and_cycles_panes() {
     let (store, db_path) = make_test_store_with_view("overlay-precedence");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -16901,19 +16901,52 @@ fn view_edit_overlay_intercepts_keys_before_region() {
         .expect("N");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
-    // Tab should not cycle regions while overlay is open
-    let region_before = app.view_edit_state.as_ref().unwrap().region;
+    // Tab finishes the picker and continues through the editable pane loop.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
         .expect("tab during overlay");
-    // Tab in category picker is not handled, overlay stays open
-    assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
-    assert_eq!(app.view_edit_state.as_ref().unwrap().region, region_before);
-
-    // Esc closes overlay, stays in ViewEdit
-    app.handle_view_edit_key(KeyCode::Esc, &agenda)
-        .expect("esc overlay");
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().pane_focus,
+        ViewEditPaneFocus::Sections
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().region,
+        ViewEditRegion::Sections
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_criteria_picker_enter_closes_without_toggling() {
+    let (store, db_path) = make_test_store_with_view("criteria-picker-enter-done");
+
+    let work = Category::new("Work".to_string());
+    store.create_category(&work).expect("create category");
+
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.open_view_edit_view_criteria_picker();
+    let work_picker_idx = app
+        .category_rows
+        .iter()
+        .position(|r| r.id == work.id)
+        .expect("Work in category rows");
+    app.view_edit_state.as_mut().unwrap().picker_index = work_picker_idx;
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("enter closes criteria picker");
+    let state = app.view_edit_state.as_ref().unwrap();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.draft.criteria.mode_for(work.id), None);
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
+    assert_eq!(state.region, ViewEditRegion::Criteria);
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -17914,7 +17947,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
 }
 
 #[test]
-fn view_edit_category_picker_allows_multi_select_with_enter() {
+fn view_edit_category_picker_allows_multi_select_with_space() {
     let (store, db_path) = make_test_store_with_view("picker-multi");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -17952,7 +17985,7 @@ fn view_edit_category_picker_allows_multi_select_with_enter() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = work_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+    app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
         .expect("toggle work");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
     assert!(app
@@ -17967,7 +18000,7 @@ fn view_edit_category_picker_allows_multi_select_with_enter() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = home_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+    app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
         .expect("toggle home");
     assert!(app
         .view_edit_state
@@ -17979,7 +18012,7 @@ fn view_edit_category_picker_allows_multi_select_with_enter() {
         .is_some());
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
-    app.handle_view_edit_key(KeyCode::Esc, &agenda)
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
         .expect("close category picker");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
     assert_eq!(app.mode, Mode::ViewEdit);

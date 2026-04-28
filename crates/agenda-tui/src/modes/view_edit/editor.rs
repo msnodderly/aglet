@@ -108,7 +108,11 @@ impl App {
     pub(crate) fn cycle_view_edit_pane_focus(&mut self, forward: bool) {
         if let Some(state) = &mut self.view_edit_state {
             let next = if state.pane_focus == ViewEditPaneFocus::Preview {
-                if forward { 0 } else { 2 }
+                if forward {
+                    0
+                } else {
+                    2
+                }
             } else {
                 let current = match state.pane_focus {
                     ViewEditPaneFocus::Details if state.region == ViewEditRegion::Sections => 2,
@@ -140,8 +144,9 @@ impl App {
                     state.pane_focus = ViewEditPaneFocus::Sections;
                     if state.draft.datebook_config.is_some() {
                         state.region = ViewEditRegion::Datebook;
-                        state.datebook_field_index =
-                            state.datebook_field_index.min(Self::DATEBOOK_FIELD_COUNT - 1);
+                        state.datebook_field_index = state
+                            .datebook_field_index
+                            .min(Self::DATEBOOK_FIELD_COUNT - 1);
                     } else {
                         state.region = ViewEditRegion::Sections;
                         if state.section_index >= state.draft.sections.len() {
@@ -386,8 +391,7 @@ impl App {
             }
             ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(code),
             ViewEditPaneFocus::Details => {
-                if state.draft.datebook_config.is_some()
-                    && state.region == ViewEditRegion::Sections
+                if state.draft.datebook_config.is_some() && state.region == ViewEditRegion::Sections
                 {
                     self.handle_view_edit_preview_key(code)
                 } else if Self::view_edit_showing_view_details(state) {

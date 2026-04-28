@@ -62,7 +62,9 @@ impl App {
                     Self::view_edit_default_status()
                 };
             }
-            KeyCode::Tab | KeyCode::BackTab if matches!(inline, Some(ViewEditInlineInput::ViewName)) => {
+            KeyCode::Tab | KeyCode::BackTab
+                if matches!(inline, Some(ViewEditInlineInput::ViewName)) =>
+            {
                 let Some(state) = &mut self.view_edit_state else {
                     return Ok(false);
                 };
