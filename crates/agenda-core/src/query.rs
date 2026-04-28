@@ -7,7 +7,11 @@ use crate::model::{
     DatebookInterval, DatebookPeriod, Item, Query, Section, View, WhenBucket,
 };
 
-/// Resolve a `when_date` into its virtual `WhenBucket` for a given reference date.
+/// Resolve a `when_date` into its most-specific virtual `WhenBucket` for a given reference date.
+///
+/// Used for grouping/display where a single bucket label is needed. For *filter matching*
+/// against a set of buckets (where buckets can overlap, e.g. `ThisMonth` ⊂ `ThisYear`),
+/// use [`bucket_contains`] instead.
 pub fn resolve_when_bucket(when_date: Option<DateTime>, reference_date: Date) -> WhenBucket {
     let Some(when_datetime) = when_date else {
         return WhenBucket::NoDate;
@@ -54,6 +58,66 @@ pub fn resolve_when_bucket(when_date: Option<DateTime>, reference_date: Date) ->
     }
 
     WhenBucket::Future
+}
+
+/// Returns true if `when_date` falls within the date range described by `bucket`,
+/// for the given reference date. Unlike [`resolve_when_bucket`], buckets here are
+/// treated as overlapping ranges — a Today date is also in `ThisWeek`, `ThisMonth`,
+/// `ThisYear`, `Next12Months`, and `Future`.
+pub fn bucket_contains(
+    bucket: WhenBucket,
+    when_date: Option<DateTime>,
+    reference_date: Date,
+) -> bool {
+    let Some(when_datetime) = when_date else {
+        return matches!(bucket, WhenBucket::NoDate);
+    };
+    let when_day = when_datetime.date();
+
+    match bucket {
+        WhenBucket::NoDate => false,
+        WhenBucket::Overdue => when_day < reference_date,
+        WhenBucket::Today => when_day == reference_date,
+        WhenBucket::Tomorrow => reference_date
+            .checked_add(Span::new().days(1))
+            .map(|d| when_day == d)
+            .unwrap_or(false),
+        WhenBucket::ThisWeek => {
+            let start = start_of_iso_week(reference_date);
+            let end = start
+                .checked_add(Span::new().days(6))
+                .expect("valid week range");
+            when_day >= start && when_day <= end
+        }
+        WhenBucket::NextWeek => {
+            let start = start_of_iso_week(reference_date)
+                .checked_add(Span::new().days(7))
+                .expect("valid next week start");
+            let end = start
+                .checked_add(Span::new().days(6))
+                .expect("valid next week range");
+            when_day >= start && when_day <= end
+        }
+        WhenBucket::ThisMonth => {
+            when_day.year() == reference_date.year() && when_day.month() == reference_date.month()
+        }
+        WhenBucket::NextMonth => {
+            let (year, month) = if reference_date.month() == 12 {
+                (reference_date.year() + 1, 1u8)
+            } else {
+                (reference_date.year(), reference_date.month() as u8 + 1)
+            };
+            when_day.year() == year && when_day.month() as u8 == month
+        }
+        WhenBucket::ThisYear => when_day.year() == reference_date.year(),
+        WhenBucket::Next12Months => {
+            let end = reference_date
+                .checked_add(Span::new().months(12))
+                .unwrap_or(reference_date);
+            when_day >= reference_date && when_day < end
+        }
+        WhenBucket::Future => when_day > reference_date,
+    }
 }
 
 /// Evaluate a query against a slice of items, preserving input order.
@@ -279,26 +343,22 @@ fn item_matches_query(
         return false;
     }
 
-    let bucket = if query.virtual_include.is_empty() && query.virtual_exclude.is_empty() {
-        None
-    } else {
-        Some(resolve_when_bucket(item.when_date, reference_date))
-    };
-
-    if let Some(item_bucket) = bucket {
-        let virtual_include_matches = query
+    if !query.virtual_include.is_empty() {
+        let any_include_match = query
             .virtual_include
             .iter()
-            .all(|required_bucket| *required_bucket == item_bucket);
-        if !virtual_include_matches {
+            .any(|bucket| bucket_contains(*bucket, item.when_date, reference_date));
+        if !any_include_match {
             return false;
         }
+    }
 
-        let virtual_exclude_matches = query
+    if !query.virtual_exclude.is_empty() {
+        let any_exclude_match = query
             .virtual_exclude
             .iter()
-            .all(|blocked_bucket| *blocked_bucket != item_bucket);
-        if !virtual_exclude_matches {
+            .any(|bucket| bucket_contains(*bucket, item.when_date, reference_date));
+        if any_exclude_match {
             return false;
         }
     }
@@ -602,7 +662,9 @@ mod tests {
     use jiff::Timestamp;
     use uuid::Uuid;
 
-    use super::{evaluate_query, matches_text_search, resolve_view, resolve_when_bucket};
+    use super::{
+        bucket_contains, evaluate_query, matches_text_search, resolve_view, resolve_when_bucket,
+    };
     use crate::model::{
         Assignment, AssignmentSource, Category, CategoryId, CriterionMode, Item, Query, Section,
         View, WhenBucket,
@@ -979,11 +1041,12 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_query_virtual_include_with_multiple_buckets_matches_none() {
+    fn evaluate_query_virtual_include_multi_bucket_is_or() {
         let reference = day(2026, 2, 11);
         let items = vec![
             item_with_assignments("today", None, Some(datetime(2026, 2, 11, 9, 0)), &[]),
             item_with_assignments("tomorrow", None, Some(datetime(2026, 2, 12, 9, 0)), &[]),
+            item_with_assignments("future", None, Some(datetime(2026, 6, 1, 9, 0)), &[]),
         ];
 
         let mut query = Query::default();
@@ -992,7 +1055,29 @@ mod tests {
             .extend([WhenBucket::Today, WhenBucket::Tomorrow]);
 
         let result = evaluate_query(&query, &items, reference);
-        assert!(result.is_empty());
+        assert_eq!(ids(&result), vec![items[0].id, items[1].id]);
+    }
+
+    #[test]
+    fn evaluate_query_virtual_include_overlapping_buckets() {
+        // ThisMonth ⊂ ThisYear: a today item should match either bucket alone.
+        let reference = day(2026, 2, 11);
+        let items = vec![item_with_assignments(
+            "today",
+            None,
+            Some(datetime(2026, 2, 11, 9, 0)),
+            &[],
+        )];
+
+        let mut query = Query::default();
+        query.virtual_include.insert(WhenBucket::ThisYear);
+        let result = evaluate_query(&query, &items, reference);
+        assert_eq!(ids(&result), vec![items[0].id]);
+
+        let mut query = Query::default();
+        query.virtual_include.insert(WhenBucket::ThisMonth);
+        let result = evaluate_query(&query, &items, reference);
+        assert_eq!(ids(&result), vec![items[0].id]);
     }
 
     #[test]
@@ -1795,6 +1880,62 @@ mod tests {
 
         assert_eq!(resolve_when_bucket(sunday, reference), WhenBucket::Tomorrow);
         assert_eq!(resolve_when_bucket(monday, reference), WhenBucket::NextWeek);
+    }
+
+    // ── bucket_contains tests ──
+
+    #[test]
+    fn bucket_contains_today_overlaps_this_year_and_this_month() {
+        let reference = day(2026, 2, 11);
+        let today = Some(datetime(2026, 2, 11, 9, 0));
+        assert!(bucket_contains(WhenBucket::Today, today, reference));
+        assert!(bucket_contains(WhenBucket::ThisWeek, today, reference));
+        assert!(bucket_contains(WhenBucket::ThisMonth, today, reference));
+        assert!(bucket_contains(WhenBucket::ThisYear, today, reference));
+        assert!(bucket_contains(WhenBucket::Next12Months, today, reference));
+        assert!(!bucket_contains(WhenBucket::Tomorrow, today, reference));
+        assert!(!bucket_contains(WhenBucket::Future, today, reference));
+        assert!(!bucket_contains(WhenBucket::NoDate, today, reference));
+    }
+
+    #[test]
+    fn bucket_contains_next_month_handles_year_rollover() {
+        let reference = day(2026, 12, 15);
+        let jan_next = Some(datetime(2027, 1, 5, 9, 0));
+        assert!(bucket_contains(WhenBucket::NextMonth, jan_next, reference));
+        assert!(!bucket_contains(WhenBucket::ThisYear, jan_next, reference));
+    }
+
+    #[test]
+    fn bucket_contains_next_12_months_excludes_past() {
+        let reference = day(2026, 2, 11);
+        let yesterday = Some(datetime(2026, 2, 10, 9, 0));
+        let in_six_months = Some(datetime(2026, 8, 11, 9, 0));
+        let in_two_years = Some(datetime(2028, 2, 11, 9, 0));
+        assert!(!bucket_contains(
+            WhenBucket::Next12Months,
+            yesterday,
+            reference
+        ));
+        assert!(bucket_contains(
+            WhenBucket::Next12Months,
+            in_six_months,
+            reference
+        ));
+        assert!(!bucket_contains(
+            WhenBucket::Next12Months,
+            in_two_years,
+            reference
+        ));
+    }
+
+    #[test]
+    fn bucket_contains_no_date_only_matches_no_date() {
+        let reference = day(2026, 2, 11);
+        let today = Some(datetime(2026, 2, 11, 9, 0));
+        assert!(bucket_contains(WhenBucket::NoDate, None, reference));
+        assert!(!bucket_contains(WhenBucket::NoDate, today, reference));
+        assert!(!bucket_contains(WhenBucket::Today, None, reference));
     }
 
     // ── matches_text_search tests ──

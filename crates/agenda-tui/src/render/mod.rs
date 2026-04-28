@@ -2336,11 +2336,21 @@ impl App {
 
     /// Given pre-computed slot heights and a scroll offset, return the logical
     /// slot indices that fit within `viewport_height` rows.
-    fn visible_slot_window(
+    ///
+    /// Each visible slot is rendered with `Constraint::Fill(1)`, so the viewport
+    /// is shared equally among the included slots regardless of their item
+    /// counts. We therefore decide inclusion using a minimum per-slot height
+    /// (borders + header + 1 item row), not each slot's full estimated height —
+    /// otherwise a tall section like a 60-item Overdue would consume the entire
+    /// visibility budget and hide later sections that would have fit fine
+    /// under equal-share rendering.
+    pub(crate) fn visible_slot_window(
         heights: &[u16],
         scroll_offset: usize,
         viewport_height: u16,
+        min_slot_height: u16,
     ) -> Vec<usize> {
+        let min_slot_height = min_slot_height.max(1);
         let mut remaining = viewport_height;
         let mut visible = Vec::new();
         for (i, &h) in heights.iter().enumerate().skip(scroll_offset) {
@@ -2349,13 +2359,21 @@ impl App {
                 // skip them in the visible list.
                 continue;
             }
-            if remaining == 0 {
+            if remaining < min_slot_height {
                 break;
             }
             visible.push(i);
-            remaining = remaining.saturating_sub(h);
+            remaining = remaining.saturating_sub(min_slot_height);
         }
         visible
+    }
+
+    fn min_slot_height(&self) -> u16 {
+        let border_rows: u16 = match self.section_border_mode {
+            SectionBorderMode::Full => 2,
+            SectionBorderMode::Compact => 1,
+        };
+        border_rows + 1 /* header */ + 1 /* one item row */
     }
 
     /// Adjust `board_scroll_offset` so the focused slot (`self.slot_index`) is
@@ -2380,16 +2398,20 @@ impl App {
         }
 
         // Check if focused slot is within the current visible window.
-        let visible =
-            Self::visible_slot_window(&heights, self.board_scroll_offset, viewport_height);
+        let min_slot_height = self.min_slot_height();
+        let visible = Self::visible_slot_window(
+            &heights,
+            self.board_scroll_offset,
+            viewport_height,
+            min_slot_height,
+        );
         if visible.contains(&self.slot_index) {
             return;
         }
 
-        // Focused slot is below the visible window. Scroll forward until
-        // the focused slot fits as the last visible slot.
-        // Walk backward from the focused slot, accumulating heights until
-        // the viewport is full, to find the new scroll offset.
+        // Focused slot is below the visible window. Walk backward from the
+        // focused slot using min_slot_height (matching the windowing logic) to
+        // find the new scroll offset that keeps the focused slot visible.
         let mut remaining = viewport_height;
         let mut new_offset = self.slot_index;
         for i in (0..=self.slot_index).rev() {
@@ -2397,10 +2419,10 @@ impl App {
             if h == 0 {
                 continue; // hidden slots don't consume space
             }
-            if h > remaining {
+            if min_slot_height > remaining {
                 break;
             }
-            remaining -= h;
+            remaining = remaining.saturating_sub(min_slot_height);
             new_offset = i;
         }
         self.board_scroll_offset = new_offset;
@@ -2476,8 +2498,12 @@ impl App {
 
         // ── Vertical board: windowed slot rendering ──────────────────────
         let slot_heights = self.estimate_slot_heights(empty_sections_mode, has_any_non_empty);
-        let visible_slots =
-            Self::visible_slot_window(&slot_heights, self.board_scroll_offset, area.height);
+        let visible_slots = Self::visible_slot_window(
+            &slot_heights,
+            self.board_scroll_offset,
+            area.height,
+            self.min_slot_height(),
+        );
 
         if visible_slots.is_empty() {
             frame.render_widget(
@@ -9376,6 +9402,74 @@ impl App {
                         help_style,
                     ))));
                 }
+
+                // ── Group 4: Date range (subset of view's date range) ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                let format_buckets =
+                    |set: &std::collections::HashSet<WhenBucket>, empty_label: &str| -> String {
+                        if set.is_empty() {
+                            empty_label.to_string()
+                        } else {
+                            when_bucket_options()
+                                .iter()
+                                .filter(|b| set.contains(*b))
+                                .map(|b| when_bucket_label(*b).to_string())
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        }
+                    };
+                let section_include_label = format_buckets(
+                    &section.criteria.virtual_include,
+                    "(inherit view)",
+                );
+                let section_exclude_label =
+                    format_buckets(&section.criteria.virtual_exclude, "(none)");
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(7)),
+                        "Date range (include)",
+                        section_include_label,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(7, &items, &mut selected_line)),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(8)),
+                        "Date range (exclude)",
+                        section_exclude_label,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(8, &items, &mut selected_line)),
+                );
+                if details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && (state.section_details_field_index == 7
+                        || state.section_details_field_index == 8)
+                {
+                    let help_style = Style::default().fg(Color::Rgb(170, 178, 198));
+                    let view_include = &state.draft.criteria.virtual_include;
+                    let view_summary = if view_include.is_empty() {
+                        "any".to_string()
+                    } else {
+                        when_bucket_options()
+                            .iter()
+                            .filter(|b| view_include.contains(*b))
+                            .map(|b| when_bucket_label(*b).to_string())
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    };
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        format!("    Section options limited to view range: {view_summary}"),
+                        help_style,
+                    ))));
+                }
             } else {
                 items.push(ListItem::new(Line::from("  No selection")));
             }
@@ -10037,13 +10131,46 @@ impl App {
                         }
                     }
                 }
-                ViewEditOverlay::BucketPicker { .. } => {
-                    let options = when_bucket_options();
+                ViewEditOverlay::BucketPicker { target } => {
+                    let view_include = &state.draft.criteria.virtual_include;
+                    let options: Vec<WhenBucket> = if target.is_section()
+                        && !view_include.is_empty()
+                    {
+                        when_bucket_options()
+                            .iter()
+                            .copied()
+                            .filter(|b| view_include.contains(b))
+                            .collect()
+                    } else {
+                        when_bucket_options().to_vec()
+                    };
+                    let selected_set: Option<&std::collections::HashSet<WhenBucket>> = match target {
+                        BucketEditTarget::ViewVirtualInclude => {
+                            Some(&state.draft.criteria.virtual_include)
+                        }
+                        BucketEditTarget::ViewVirtualExclude => {
+                            Some(&state.draft.criteria.virtual_exclude)
+                        }
+                        BucketEditTarget::SectionVirtualInclude => state
+                            .draft
+                            .sections
+                            .get(state.section_index)
+                            .map(|s| &s.criteria.virtual_include),
+                        BucketEditTarget::SectionVirtualExclude => state
+                            .draft
+                            .sections
+                            .get(state.section_index)
+                            .map(|s| &s.criteria.virtual_exclude),
+                    };
                     let items: Vec<ListItem<'_>> = options
                         .iter()
                         .enumerate()
                         .map(|(i, bucket)| {
-                            let label = format!("  {}", when_bucket_label(*bucket));
+                            let checked = selected_set
+                                .map(|set| set.contains(bucket))
+                                .unwrap_or(false);
+                            let mark = if checked { "[x]" } else { "[ ]" };
+                            let label = format!("  {} {}", mark, when_bucket_label(*bucket));
                             let style = if i == state.picker_index {
                                 Style::default()
                                     .fg(Color::Black)
@@ -10055,8 +10182,19 @@ impl App {
                             ListItem::new(Line::from(label)).style(style)
                         })
                         .collect();
+                    let title = match target {
+                        BucketEditTarget::ViewVirtualInclude => " View date range — include ",
+                        BucketEditTarget::ViewVirtualExclude => " View date range — exclude ",
+                        BucketEditTarget::SectionVirtualInclude => {
+                            " Section date range — include "
+                        }
+                        BucketEditTarget::SectionVirtualExclude => {
+                            " Section date range — exclude "
+                        }
+                    };
                     let block = Block::default()
-                        .title(" Pick bucket ")
+                        .title(title)
+                        .title_bottom(" Space:toggle  C:clear  Esc:close ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::Yellow));
                     let mut list_state =

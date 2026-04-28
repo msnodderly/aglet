@@ -6111,17 +6111,13 @@ impl App {
                 self.mode = Mode::Normal;
                 self.status = "Unassign canceled".to_string();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !rows.is_empty() {
-                    self.inspect_assignment_index =
-                        next_index(self.inspect_assignment_index, rows.len(), 1);
-                }
+            KeyCode::Down | KeyCode::Char('j') if !rows.is_empty() => {
+                self.inspect_assignment_index =
+                    next_index(self.inspect_assignment_index, rows.len(), 1);
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !rows.is_empty() {
-                    self.inspect_assignment_index =
-                        next_index(self.inspect_assignment_index, rows.len(), -1);
-                }
+            KeyCode::Up | KeyCode::Char('k') if !rows.is_empty() => {
+                self.inspect_assignment_index =
+                    next_index(self.inspect_assignment_index, rows.len(), -1);
             }
             KeyCode::Enter => {
                 let Some(item_id) = self.selected_item_id() else {

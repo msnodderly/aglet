@@ -159,7 +159,7 @@ impl App {
         &mut self,
         code: KeyCode,
     ) -> TuiResult<bool> {
-        let field_count = 7usize;
+        let field_count = 9usize;
         let section_index = self
             .view_edit_state
             .as_ref()
@@ -187,22 +187,48 @@ impl App {
                 }
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
-                let mapped = match current_index {
-                    0 => Some(KeyCode::Char('e')),
-                    1 => Some(KeyCode::Char('f')),
-                    2 => Some(KeyCode::Char('c')),
-                    3 => Some(KeyCode::Char('m')),
-                    4 => Some(KeyCode::Char('a')),
-                    5 => Some(KeyCode::Char('r')),
-                    6 => None,
-                    _ => None,
-                };
-                if let Some(mapped) = mapped {
-                    return self.handle_view_edit_sections_key(mapped);
-                }
-                if current_index == 6 {
-                    self.toggle_view_edit_section_show_children(section_index);
-                    return Ok(true);
+                match current_index {
+                    0 => {
+                        return self.handle_view_edit_sections_key(KeyCode::Char('e'));
+                    }
+                    1 => {
+                        return self.handle_view_edit_sections_key(KeyCode::Char('f'));
+                    }
+                    2 => {
+                        return self.handle_view_edit_sections_key(KeyCode::Char('c'));
+                    }
+                    3 => {
+                        return self.handle_view_edit_sections_key(KeyCode::Char('m'));
+                    }
+                    4 => {
+                        return self.handle_view_edit_sections_key(KeyCode::Char('a'));
+                    }
+                    5 => {
+                        return self.handle_view_edit_sections_key(KeyCode::Char('r'));
+                    }
+                    6 => {
+                        self.toggle_view_edit_section_show_children(section_index);
+                        return Ok(true);
+                    }
+                    7 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.overlay = Some(ViewEditOverlay::BucketPicker {
+                                target: BucketEditTarget::SectionVirtualInclude,
+                            });
+                            state.picker_index = 0;
+                        }
+                        return Ok(true);
+                    }
+                    8 => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            state.overlay = Some(ViewEditOverlay::BucketPicker {
+                                target: BucketEditTarget::SectionVirtualExclude,
+                            });
+                            state.picker_index = 0;
+                        }
+                        return Ok(true);
+                    }
+                    _ => {}
                 }
             }
             _ => {

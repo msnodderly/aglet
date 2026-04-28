@@ -256,7 +256,28 @@ impl App {
                 }
             }
             Some(ViewEditOverlay::BucketPicker { target }) => {
-                let options = when_bucket_options();
+                let section_index = self
+                    .view_edit_state
+                    .as_ref()
+                    .map(|s| s.section_index);
+                let options: Vec<WhenBucket> = if target.is_section() {
+                    let view_include = self
+                        .view_edit_state
+                        .as_ref()
+                        .map(|s| s.draft.criteria.virtual_include.clone())
+                        .unwrap_or_default();
+                    if view_include.is_empty() {
+                        when_bucket_options().to_vec()
+                    } else {
+                        when_bucket_options()
+                            .iter()
+                            .copied()
+                            .filter(|b| view_include.contains(b))
+                            .collect()
+                    }
+                } else {
+                    when_bucket_options().to_vec()
+                };
                 match code {
                     KeyCode::Char('j') | KeyCode::Down => {
                         if let Some(state) = &mut self.view_edit_state {
@@ -269,13 +290,28 @@ impl App {
                                 next_index_clamped(picker_index, options.len(), -1);
                         }
                     }
+                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                        if let Some(state) = &mut self.view_edit_state {
+                            if let Some(set) =
+                                bucket_target_set_mut(&mut state.draft, target, section_index)
+                            {
+                                if !set.is_empty() {
+                                    set.clear();
+                                }
+                            }
+                        }
+                        self.set_view_edit_dirty();
+                        self.refresh_view_edit_preview();
+                    }
                     KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Esc => {
                         if matches!(code, KeyCode::Char(' ') | KeyCode::Enter) {
                             if let Some(&bucket) = options.get(picker_index) {
                                 if let Some(state) = &mut self.view_edit_state {
-                                    if let Some(set) =
-                                        bucket_target_set_mut(&mut state.draft, target)
-                                    {
+                                    if let Some(set) = bucket_target_set_mut(
+                                        &mut state.draft,
+                                        target,
+                                        section_index,
+                                    ) {
                                         if set.contains(&bucket) {
                                             set.remove(&bucket);
                                         } else {

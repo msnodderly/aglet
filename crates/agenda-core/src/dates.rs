@@ -2583,9 +2583,8 @@ mod tests {
         // "every" alone should not match
         let result = parser.parse_with_recurrence("review every student", date(2026, 4, 1));
         // Should not produce a Recurring result (may produce OneTime or None)
-        match result {
-            Some(DateParseResult::Recurring { .. }) => panic!("unexpected Recurring"),
-            _ => {} // OK
+        if let Some(DateParseResult::Recurring { .. }) = result {
+            panic!("unexpected Recurring");
         }
     }
 

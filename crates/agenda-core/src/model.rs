@@ -1236,6 +1236,9 @@ pub enum WhenBucket {
     ThisWeek,
     NextWeek,
     ThisMonth,
+    NextMonth,
+    ThisYear,
+    Next12Months,
     Future,
     NoDate,
 }
