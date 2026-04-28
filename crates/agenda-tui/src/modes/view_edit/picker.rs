@@ -45,6 +45,7 @@ impl App {
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 let mut view = View::new("Untitled View".to_string());
+                view.show_unmatched = false;
                 if view.sections.is_empty() {
                     view.sections.push(Self::view_edit_default_section(
                         Self::DEFAULT_VIEW_EDIT_SECTION_TITLE,
@@ -53,9 +54,8 @@ impl App {
                 self.open_view_edit_new_view_focus_name(view);
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
-                let mut view = View::new("Untitled Datebook".to_string());
-                view.datebook_config = Some(DatebookConfig::default());
-                self.open_view_edit_new_view_focus_name(view);
+                self.status =
+                    "Use n:new, then set View type to Datebook in View Settings".to_string();
             }
             KeyCode::Char('r') => {
                 if let Some(view) = self.selected_view_from_picker() {

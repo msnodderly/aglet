@@ -4675,10 +4675,13 @@ fn view_picker_delete_uses_x_and_removes_selected_view() {
         .iter()
         .position(|view| view.name == "Keep Me")
         .expect("keep view should exist");
-    // 'd' now creates a new datebook view (opens ViewEdit), not delete
+    // 'd' is no longer a separate datebook-creation shortcut.
     app.handle_view_picker_key(KeyCode::Char('d'), &agenda)
-        .expect("d key should open datebook creation");
-    assert_eq!(app.mode, Mode::ViewEdit);
+        .expect("d key should not delete");
+    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(app
+        .status
+        .contains("Use n:new, then set View type to Datebook"));
     assert!(store
         .list_views()
         .expect("list views")
@@ -16705,7 +16708,7 @@ fn view_edit_tab_cycles_panes() {
     );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
+        ViewEditRegion::Sections
     );
 
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
@@ -16716,14 +16719,18 @@ fn view_edit_tab_cycles_panes() {
     );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Criteria
+        ViewEditRegion::Sections
     );
 
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab wraps");
+        .expect("tab wraps to top settings");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
+        ViewEditPaneFocus::Details
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().region,
+        ViewEditRegion::Criteria
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -16748,7 +16755,11 @@ fn view_edit_shift_tab_cycles_panes_backwards() {
         .expect("shift-tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
+        ViewEditPaneFocus::Details
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().region,
+        ViewEditRegion::Sections
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -16872,7 +16883,7 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
 }
 
 #[test]
-fn view_edit_overlay_intercepts_keys_before_region() {
+fn view_edit_category_picker_tab_closes_and_cycles_panes() {
     let (store, db_path) = make_test_store_with_view("overlay-precedence");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -16890,19 +16901,52 @@ fn view_edit_overlay_intercepts_keys_before_region() {
         .expect("N");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
-    // Tab should not cycle regions while overlay is open
-    let region_before = app.view_edit_state.as_ref().unwrap().region;
+    // Tab finishes the picker and continues through the editable pane loop.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
         .expect("tab during overlay");
-    // Tab in category picker is not handled, overlay stays open
-    assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
-    assert_eq!(app.view_edit_state.as_ref().unwrap().region, region_before);
-
-    // Esc closes overlay, stays in ViewEdit
-    app.handle_view_edit_key(KeyCode::Esc, &agenda)
-        .expect("esc overlay");
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().pane_focus,
+        ViewEditPaneFocus::Sections
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().region,
+        ViewEditRegion::Sections
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_criteria_picker_enter_closes_without_toggling() {
+    let (store, db_path) = make_test_store_with_view("criteria-picker-enter-done");
+
+    let work = Category::new("Work".to_string());
+    store.create_category(&work).expect("create category");
+
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.open_view_edit_view_criteria_picker();
+    let work_picker_idx = app
+        .category_rows
+        .iter()
+        .position(|r| r.id == work.id)
+        .expect("Work in category rows");
+    app.view_edit_state.as_mut().unwrap().picker_index = work_picker_idx;
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("enter closes criteria picker");
+    let state = app.view_edit_state.as_ref().unwrap();
+    assert!(state.overlay.is_none());
+    assert_eq!(state.draft.criteria.mode_for(work.id), None);
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
+    assert_eq!(state.region, ViewEditRegion::Criteria);
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -16945,12 +16989,36 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
         1
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("when exclude -> display mode");
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
+        .expect("when exclude -> show unmatched");
     assert_eq!(
-        app.view_edit_state.as_ref().unwrap().region,
-        ViewEditRegion::Unmatched
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        5
     );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("show unmatched -> aliases");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        8
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("aliases -> empty sections");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        4
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("empty sections -> section flow");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        3
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("section flow -> display mode");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         2
@@ -16971,49 +17039,42 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("empty sections -> unmatched visible");
+        .expect("empty sections -> aliases");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
+        8
+    );
+
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("aliases -> show unmatched");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         5
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("unmatched visible -> hide dependent");
+        .expect("show unmatched -> hide dependent");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         6
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("hide dependent -> unmatched visible");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("hide dependent -> unmatched label");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        5
+        7
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("unmatched visible -> empty sections");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("unmatched label stays at bottom");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        4
+        7
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("empty sections -> section flow");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        3
-    );
-
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("section flow -> display mode");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().unmatched_field_index,
-        2
-    );
-
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("display mode -> when exclude");
+    app.handle_view_edit_key(KeyCode::Char('h'), &agenda)
+        .expect("unmatched label -> date exclude");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         1
@@ -17060,13 +17121,7 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
         .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to section flow row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to empty sections row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
         .expect("to unmatched visible row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -17082,9 +17137,9 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     );
 
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("move to unmatched label row");
+        .expect("move to hide dependent row");
     app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("move past hide dependent to unmatched label row");
+        .expect("move to unmatched label row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         7
@@ -17111,15 +17166,7 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to section flow row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
         .expect("to empty sections row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -17158,13 +17205,9 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when include row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to display mode row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
+        .expect("to empty sections row");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
         .expect("to section flow row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -17206,11 +17249,10 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    // Move focus to Aliases row in view details.
-    for _ in 0..9 {
-        app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-            .expect("move details selection");
-    }
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
+        .expect("to empty sections row");
+    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+        .expect("to aliases row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         8
@@ -17341,9 +17383,13 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
     app.handle_view_edit_key(KeyCode::Esc, &agenda)
         .expect("close bucket picker");
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
-        .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &agenda)
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("back to criteria row");
+    app.handle_view_edit_key(KeyCode::Char('l'), &agenda)
+        .expect("to empty sections row");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("to section flow row");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
         .expect("to display mode row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -17365,6 +17411,81 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
             .board_display_mode,
         before
     );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_view_type_row_toggles_board_and_datebook() {
+    let (store, db_path) = make_test_store_with_view("view-type-row-toggle");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = View::new("Scratch".to_string());
+    view.sections
+        .push(App::view_edit_default_section("New section"));
+    app.open_view_edit_new_view_focus_name(view);
+    app.handle_view_edit_key(KeyCode::Esc, &agenda)
+        .expect("close name input");
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("move from criteria to view type");
+    assert!(app
+        .view_edit_state
+        .as_ref()
+        .is_some_and(|state| state.view_type_focused));
+    assert!(app
+        .view_edit_state
+        .as_ref()
+        .unwrap()
+        .draft
+        .datebook_config
+        .is_none());
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle to datebook");
+    assert!(app
+        .view_edit_state
+        .as_ref()
+        .unwrap()
+        .draft
+        .datebook_config
+        .is_some());
+
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("toggle back to board");
+    let state = app.view_edit_state.as_ref().unwrap();
+    assert!(state.draft.datebook_config.is_none());
+    assert!(
+        !state.draft.sections.is_empty(),
+        "board views should retain or receive at least one editable section"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_view_type_row_is_locked_for_saved_views() {
+    let (store, db_path) = make_test_store_with_view("view-type-row-locked");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = test_view_from_app(&app);
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("move from criteria to view type");
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+        .expect("attempt locked toggle");
+
+    let state = app.view_edit_state.as_ref().unwrap();
+    assert!(state.view_type_focused);
+    assert!(state.draft.datebook_config.is_none());
+    assert_eq!(app.status, "View type is locked after view creation");
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -17826,7 +17947,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
 }
 
 #[test]
-fn view_edit_category_picker_allows_multi_select_with_enter() {
+fn view_edit_category_picker_allows_multi_select_with_space() {
     let (store, db_path) = make_test_store_with_view("picker-multi");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -17864,7 +17985,7 @@ fn view_edit_category_picker_allows_multi_select_with_enter() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = work_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+    app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
         .expect("toggle work");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
     assert!(app
@@ -17879,7 +18000,7 @@ fn view_edit_category_picker_allows_multi_select_with_enter() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = home_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
+    app.handle_view_edit_key(KeyCode::Char(' '), &agenda)
         .expect("toggle home");
     assert!(app
         .view_edit_state
@@ -17891,7 +18012,7 @@ fn view_edit_category_picker_allows_multi_select_with_enter() {
         .is_some());
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
-    app.handle_view_edit_key(KeyCode::Esc, &agenda)
+    app.handle_view_edit_key(KeyCode::Enter, &agenda)
         .expect("close category picker");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -18216,7 +18337,7 @@ fn view_edit_section_uppercase_jk_reorders_sections() {
 }
 
 #[test]
-fn view_edit_sections_can_select_view_properties_row_and_enter_opens_criteria() {
+fn view_edit_sections_up_from_first_row_focuses_view_settings() {
     let (store, db_path) = make_test_store_with_view("view-props-row-select");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
@@ -18248,11 +18369,16 @@ fn view_edit_sections_can_select_view_properties_row_and_enter_opens_criteria() 
         ViewEditPaneFocus::Sections
     );
     let state = app.view_edit_state.as_ref().unwrap();
-    assert!(state.sections_view_row_selected);
+    assert!(!state.sections_view_row_selected);
+    assert_eq!(state.region, ViewEditRegion::Sections);
     assert_eq!(state.section_index, 0, "section cursor is preserved");
 
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
-        .expect("enter should open criteria details");
+    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
+        .expect("up should focus view settings");
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().pane_focus,
+        ViewEditPaneFocus::Details
+    );
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
         ViewEditRegion::Criteria
@@ -18277,15 +18403,6 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections");
-    assert!(
-        app.view_edit_state
-            .as_ref()
-            .expect("state")
-            .sections_view_row_selected
-    );
-
     app.handle_view_edit_key(KeyCode::Char('r'), &agenda)
         .expect("start view rename");
     assert!(matches!(
@@ -18302,6 +18419,42 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
     let state = app.view_edit_state.as_ref().expect("state");
     assert_eq!(state.draft.name, "UX Board");
     assert!(state.dirty, "renaming view should mark draft dirty");
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_name_tab_commits_and_moves_to_view_type() {
+    let (store, db_path) = make_test_store_with_view("view-name-tab");
+    let classifier = SubstringClassifier;
+    let agenda = Agenda::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let view = app
+        .views
+        .iter()
+        .find(|v| v.name == "TestView")
+        .cloned()
+        .expect("TestView should exist");
+    app.open_view_edit(view);
+
+    app.handle_view_edit_key(KeyCode::Char('r'), &agenda)
+        .expect("start view rename");
+    if let Some(state) = &mut app.view_edit_state {
+        state.inline_buf = super::text_buffer::TextBuffer::new("Tabbed Name".to_string());
+    }
+    app.handle_view_edit_key(KeyCode::Tab, &agenda)
+        .expect("tab commits name and moves focus");
+
+    let state = app.view_edit_state.as_ref().expect("state");
+    assert_eq!(state.draft.name, "Tabbed Name");
+    assert!(state.dirty, "tabbing out of changed name should mark dirty");
+    assert!(state.inline_input.is_none());
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
+    assert_eq!(state.region, ViewEditRegion::Criteria);
+    assert!(!state.name_focused);
+    assert!(state.view_type_focused);
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -18422,7 +18575,7 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
         .expect("show preview again");
     assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
 
-    // Tab skips preview — goes Details -> Sections (not Preview)
+    // Tab moves through the pane loop: top settings -> sections.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
         .expect("details -> sections");
     assert_eq!(
@@ -18438,12 +18591,16 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
         ViewEditPaneFocus::Preview
     );
 
-    // Tab from preview returns to sections
+    // Tab from an explicitly focused preview returns to the editable pane loop.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("preview -> sections via tab");
+        .expect("preview -> top settings via tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
+        ViewEditPaneFocus::Details
+    );
+    assert_eq!(
+        app.view_edit_state.as_ref().unwrap().region,
+        ViewEditRegion::Criteria
     );
 
     // Focus preview again, then hide it with p
@@ -18493,6 +18650,47 @@ fn view_edit_preview_renders_on_narrow_terminal_without_panic() {
     terminal
         .draw(|frame| app.draw(frame))
         .expect("narrow preview render should not panic");
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn view_edit_settings_focus_still_shows_first_section_details() {
+    let (store, db_path) = make_test_store_with_view("settings-focus-section-preview");
+
+    let todo = Category::new("TODO".to_string());
+    store.create_category(&todo).expect("create todo category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    let mut first = App::view_edit_default_section("TODOs");
+    first.criteria.set_criterion(CriterionMode::And, todo.id);
+    view.sections.push(first);
+    view.sections.push(App::view_edit_default_section("Done"));
+    app.open_view_edit(view);
+
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
+    assert_eq!(state.region, ViewEditRegion::Criteria);
+
+    let backend = TestBackend::new(180, 44);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("SECTION: TODOs"),
+        "settings focus should still preview first section details: {rendered}"
+    );
+    assert!(
+        rendered.contains("Require: TODO"),
+        "first section filter should remain visible while settings are focused: {rendered}"
+    );
+    assert!(
+        !rendered.contains("No selection"),
+        "settings focus should not blank section details: {rendered}"
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -18556,12 +18754,12 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
 }
 
 #[test]
-fn section_column_picker_excludes_leaf_tag_headings() {
+fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
     let (store, db_path) = make_test_store_with_view("col-picker-leaf-tag");
     let classifier = SubstringClassifier;
     let agenda = Agenda::new(&store, &classifier);
 
-    // Leaf tag category — should be hidden from column picker.
+    // Leaf tag category — should be visible but ineligible in the column picker.
     let leaf = Category::new("OrphanTag".to_string());
     store.create_category(&leaf).expect("create leaf");
 
@@ -18582,12 +18780,31 @@ fn section_column_picker_excludes_leaf_tag_headings() {
     app.handle_view_edit_key(KeyCode::Char('c'), &agenda)
         .unwrap();
 
-    // Attempt to toggle the leaf category via its raw index.
     let leaf_idx = app
         .category_rows
         .iter()
         .position(|r| r.name == "OrphanTag")
         .unwrap();
+    let visible_indices = app
+        .view_edit_state
+        .as_ref()
+        .map(|state| app.view_edit_filtered_category_row_indices(state))
+        .unwrap();
+    assert!(
+        visible_indices.contains(&leaf_idx),
+        "leaf tag category should remain visible in column picker"
+    );
+    let backend = TestBackend::new(140, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(rendered.contains("OrphanTag"));
+    assert!(
+        !rendered.contains("leaf tag"),
+        "ineligible reason should not be rendered inline: {rendered}"
+    );
+
+    // Attempt to toggle the ineligible leaf category.
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = leaf_idx;
     }
@@ -18599,7 +18816,11 @@ fn section_column_picker_excludes_leaf_tag_headings() {
             .columns
             .iter()
             .any(|c| c.heading == leaf.id),
-        "leaf tag category should be excluded from column picker"
+        "leaf tag category should not be selectable as a column heading"
+    );
+    assert!(
+        app.status.contains("leaf tag"),
+        "ineligible toggle should explain why it is blocked"
     );
 
     let _ = std::fs::remove_file(&db_path);
@@ -18802,18 +19023,10 @@ fn view_edit_save_persists_view() {
         Some(BoardDisplayMode::SingleLine)
     );
 
-    // Move from section details to view criteria details
-    // Tab goes Details → Sections
+    // Move from section details to view criteria details.
+    // Tab skips preview because it is read-only.
     app.handle_view_edit_key(KeyCode::Tab, &agenda)
-        .expect("tab to sections pane");
-    assert_eq!(
-        app.view_edit_state.as_ref().unwrap().pane_focus,
-        ViewEditPaneFocus::Sections
-    );
-    app.handle_view_edit_key(KeyCode::Char('k'), &agenda)
-        .expect("select view properties row");
-    app.handle_view_edit_key(KeyCode::Enter, &agenda)
-        .expect("open view criteria details");
+        .expect("focus view settings");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Details

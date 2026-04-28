@@ -51,6 +51,13 @@ impl App {
                         {
                             section.columns.remove(existing_index);
                         } else if let Some(cat) = self.categories.iter().find(|c| c.id == cat_id) {
+                            if let Some(reason) = column_heading_ineligibility_reason(cat) {
+                                self.status = format!(
+                                    "Cannot use \"{}\" as a column heading: {reason}",
+                                    cat.name
+                                );
+                                return;
+                            }
                             section.columns.push(Column {
                                 kind: column_kind_for_heading(cat),
                                 heading: cat_id,
@@ -104,6 +111,11 @@ impl App {
                     .position(|&actual_idx| actual_idx == picker_index)
                     .unwrap_or(0);
                 match code {
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        let forward = code == KeyCode::Tab;
+                        self.close_view_edit_overlay();
+                        self.cycle_view_edit_pane_focus(forward);
+                    }
                     KeyCode::Char('j') | KeyCode::Down => {
                         if let Some(state) = &mut self.view_edit_state {
                             if let Some(&actual_idx) = filtered_indices.get(
@@ -122,6 +134,9 @@ impl App {
                                 state.picker_index = actual_idx;
                             }
                         }
+                    }
+                    KeyCode::Enter if is_criteria_picker => {
+                        self.close_view_edit_overlay();
                     }
                     KeyCode::Char('a') | KeyCode::Char('A')
                         if matches!(target, CategoryEditTarget::ViewAliases) =>

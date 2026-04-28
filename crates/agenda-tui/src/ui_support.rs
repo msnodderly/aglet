@@ -318,16 +318,20 @@ pub(super) struct BoardColumnLayout {
 /// - Numeric categories are always valid (they are leaf column heads).
 /// - All other categories must be non-leaf (have children).
 pub(super) fn is_valid_column_heading(category: &Category) -> bool {
+    column_heading_ineligibility_reason(category).is_none()
+}
+
+pub(super) fn column_heading_ineligibility_reason(category: &Category) -> Option<&'static str> {
     if category.name.eq_ignore_ascii_case("Entry") {
-        return false;
+        return Some("reserved");
     }
     if category.name.eq_ignore_ascii_case("When") {
-        return category.parent.is_none();
+        return category.parent.is_some().then_some("nested When");
     }
     if category.value_kind == CategoryValueKind::Numeric {
-        return true;
+        return None;
     }
-    !category.children.is_empty()
+    category.children.is_empty().then_some("leaf tag")
 }
 
 /// Determine the ColumnKind for a given heading category.
