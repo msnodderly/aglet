@@ -18655,6 +18655,47 @@ fn view_edit_preview_renders_on_narrow_terminal_without_panic() {
 }
 
 #[test]
+fn view_edit_settings_focus_still_shows_first_section_details() {
+    let (store, db_path) = make_test_store_with_view("settings-focus-section-preview");
+
+    let todo = Category::new("TODO".to_string());
+    store.create_category(&todo).expect("create todo category");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut view = test_view_from_app(&app);
+    let mut first = App::view_edit_default_section("TODOs");
+    first.criteria.set_criterion(CriterionMode::And, todo.id);
+    view.sections.push(first);
+    view.sections.push(App::view_edit_default_section("Done"));
+    app.open_view_edit(view);
+
+    let state = app.view_edit_state.as_ref().expect("view edit state");
+    assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
+    assert_eq!(state.region, ViewEditRegion::Criteria);
+
+    let backend = TestBackend::new(180, 44);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("SECTION: TODOs"),
+        "settings focus should still preview first section details: {rendered}"
+    );
+    assert!(
+        rendered.contains("Require: TODO"),
+        "first section filter should remain visible while settings are focused: {rendered}"
+    );
+    assert!(
+        !rendered.contains("No selection"),
+        "settings focus should not blank section details: {rendered}"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
     let (store, db_path) = make_test_store_with_view("section-c-columns");
     let classifier = SubstringClassifier;

@@ -9132,9 +9132,7 @@ impl App {
                     ))
                 };
                 items.push(ListItem::new(unmatched_label_line).style(unmatched_label_style));
-            } else if state.region == ViewEditRegion::Sections
-                && !state.sections_view_row_selected
-                && state.draft.sections.get(state.section_index).is_some()
+            } else if !show_view_details && state.draft.sections.get(state.section_index).is_some()
             {
                 let section = &state.draft.sections[state.section_index];
                 let editing_title = matches!(
