@@ -23,7 +23,7 @@ shipped: 2026-03-21
 - `git worktree add /Users/mds/src/aglet-a28c9e34-textarea2 -b codex/a28c9e34-textarea2-overhaul`
 
 3. Implement in `/Users/mds/src/aglet-a28c9e34-textarea2`:
-- Update dependencies in `/Users/mds/src/aglet-a28c9e34-textarea2/crates/agenda-tui/Cargo.toml`.
+- Update dependencies in `/Users/mds/src/aglet-a28c9e34-textarea2/crates/aglet-tui/Cargo.toml`.
 - Refactor key pipeline to pass `KeyEvent` to text handlers.
 - Replace legacy text editing core with persistent `tui-textarea-2` state.
 - Migrate all text-entry surfaces (InputPanel, NoteEdit, filters, view-edit inline inputs, category-manager note/filter, etc.).

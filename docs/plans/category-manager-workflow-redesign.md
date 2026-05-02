@@ -42,7 +42,7 @@ Showing both as checkboxes in the Details pane causes two UX problems:
 This is the default view 99% of the time.
 
 ```text
-Agenda Reborn  view:Aglet  mode:CategoryManager
+  view:Aglet  mode:CategoryManager
 Categories are shared across all views. Press n to add, H/J/K/L to reorder.
 
 Filter
@@ -182,7 +182,7 @@ On clear:
 - Include `[ready-queue]` and `[claim-target]` badges for workflow role visibility.
 
 Files likely affected:
-- `crates/agenda-tui/src/render/mod.rs`
+- `crates/aglet-tui/src/render/mod.rs`
 
 #### Phase 2: Add workflow role line to Category details
 
@@ -190,7 +190,7 @@ Files likely affected:
 - Remove the current `Targets` section (checkbox-style Ready Queue / Claim Target toggles) from details.
 
 Files likely affected:
-- `crates/agenda-tui/src/render/mod.rs`
+- `crates/aglet-tui/src/render/mod.rs`
 
 #### Phase 3: Workflow setup popup
 
@@ -201,9 +201,9 @@ Files likely affected:
 - `j`/`k` selects slot, `Enter` assigns from tree selection, `x` clears, `Esc` closes.
 
 Files likely affected:
-- `crates/agenda-tui/src/lib.rs` (mode enum, state)
-- `crates/agenda-tui/src/modes/category.rs` (input handling)
-- `crates/agenda-tui/src/render/mod.rs` (popup rendering)
+- `crates/aglet-tui/src/lib.rs` (mode enum, state)
+- `crates/aglet-tui/src/modes/category.rs` (input handling)
+- `crates/aglet-tui/src/render/mod.rs` (popup rendering)
 
 #### Phase 4: Status and footer
 
@@ -212,7 +212,7 @@ Files likely affected:
 - Footer hints include `w:workflow` in CategoryManager mode.
 
 Files likely affected:
-- `crates/agenda-tui/src/render/mod.rs`
+- `crates/aglet-tui/src/render/mod.rs`
 
 ### Test Plan
 

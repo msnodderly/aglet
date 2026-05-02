@@ -43,7 +43,7 @@ Lotus Agenda's datebook view auto-generates sections from time intervals (Day/We
 
 ### 1a. New types in `model.rs`
 
-**File:** `crates/agenda-core/src/model.rs` (after `SectionFlow` ~line 766)
+**File:** `crates/aglet-core/src/model.rs` (after `SectionFlow` ~line 766)
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,7 +150,7 @@ impl Default for DatebookConfig {
 
 ### 1b. Section generation engine
 
-**File:** `crates/agenda-core/src/query.rs`
+**File:** `crates/aglet-core/src/query.rs`
 
 New public types and functions (add before the `#[cfg(test)]` block):
 
@@ -292,7 +292,7 @@ Reuse `month_name()` and `weekday_name()` already in `model.rs`.
 
 ### 1c. Integration with `resolve_view`
 
-**File:** `crates/agenda-core/src/query.rs` -- modify `resolve_view` (line 103)
+**File:** `crates/aglet-core/src/query.rs` -- modify `resolve_view` (line 103)
 
 ```rust
 pub fn resolve_view(
@@ -380,7 +380,7 @@ fn extract_item_date(item: &Item, source: DateSource) -> Option<DateTime> {
 
 ### 1d. Store schema migration (v17 -> v18)
 
-**File:** `crates/agenda-core/src/store.rs`
+**File:** `crates/aglet-core/src/store.rs`
 
 1. Bump `SCHEMA_VERSION` from 17 to 18 (line 24)
 
@@ -416,7 +416,7 @@ fn extract_item_date(item: &Item, source: DateSource) -> Option<DateTime> {
 
 ### 1e. CLI commands
 
-**File:** `crates/agenda-cli/src/main.rs`
+**File:** `crates/aglet-cli/src/main.rs`
 
 Add under `ViewCommand`:
 
@@ -449,7 +449,7 @@ Add `ValueEnum` wrapper types with `into_model()` conversions following the exis
 
 ### 1f. Tests
 
-**File:** `crates/agenda-core/src/query.rs` (test module)
+**File:** `crates/aglet-core/src/query.rs` (test module)
 
 - `test_generate_datebook_sections_week_daily` -- 7 sections, correct titles
 - `test_generate_datebook_sections_month_weekly` -- 4-5 sections, correct date ranges
@@ -463,7 +463,7 @@ Add `ValueEnum` wrapper types with `into_model()` conversions following the exis
 - `test_datebook_config_validation` -- invalid combos rejected
 - `test_datebook_month_end_clamping` -- quarter starting Jan in a leap year, etc.
 
-**File:** `crates/agenda-core/src/store.rs` (test module)
+**File:** `crates/aglet-core/src/store.rs` (test module)
 
 - `test_datebook_view_round_trip` -- create, save, reload, config identical
 - `test_migration_v17_null_datebook_config` -- old view loads with None
@@ -474,7 +474,7 @@ Add `ValueEnum` wrapper types with `into_model()` conversions following the exis
 
 ### 2a. Datebook view creation in ViewPicker
 
-**File:** `crates/agenda-tui/src/modes/view_edit/picker.rs`
+**File:** `crates/aglet-tui/src/modes/view_edit/picker.rs`
 
 Add `'d'` keybinding alongside existing `'n'`:
 
@@ -491,7 +491,7 @@ Update footer hints to show `d: new datebook`.
 
 ### 2b. ViewEdit datebook config region
 
-**File:** `crates/agenda-tui/src/modes/view_edit/state.rs`
+**File:** `crates/aglet-tui/src/modes/view_edit/state.rs`
 
 Add `Datebook` variant to `ViewEditRegion`:
 
@@ -510,7 +510,7 @@ Add field to `ViewEditState`:
 pub(crate) datebook_field_index: usize,  // 0=Period, 1=Interval, 2=Anchor, 3=DateSource
 ```
 
-**File:** `crates/agenda-tui/src/modes/view_edit/editor.rs`
+**File:** `crates/aglet-tui/src/modes/view_edit/editor.rs`
 
 When a datebook view is being edited, Tab cycles through: `Criteria -> Datebook -> Unmatched` (skipping `Sections` since sections are auto-generated).
 
@@ -570,7 +570,7 @@ impl DateSource {
 
 ### 2c. Rendering datebook config in ViewEdit details pane
 
-**File:** `crates/agenda-tui/src/render/mod.rs` (in the ViewEdit render section ~line 7888)
+**File:** `crates/aglet-tui/src/render/mod.rs` (in the ViewEdit render section ~line 7888)
 
 When `state.draft.datebook_config.is_some()`, render datebook fields in the details pane:
 
@@ -589,7 +589,7 @@ Below this, render the standard Criteria rows (category include/exclude, WhenBuc
 
 ### 2d. Browse keybindings in Normal mode
 
-**File:** `crates/agenda-tui/src/modes/board.rs` (or wherever Normal-mode keys are handled)
+**File:** `crates/aglet-tui/src/modes/board.rs` (or wherever Normal-mode keys are handled)
 
 When the active view has `datebook_config.is_some()`:
 
@@ -605,7 +605,7 @@ Persist immediately via `store.update_view()` so the offset survives restart.
 
 ### 2e. Today-section highlighting
 
-**File:** `crates/agenda-tui/src/render/mod.rs`
+**File:** `crates/aglet-tui/src/render/mod.rs`
 
 When rendering a datebook view's board, if a section's `range_start <= today_midnight < range_end`, apply a subtle highlight (e.g., `Color::Yellow` border or bold title). This provides the "current time" anchor that Lotus Agenda's datebook had visually.
 
@@ -648,16 +648,16 @@ Add `DateRangeFilter { source: DateSource, from: DateValueExpr, through: DateVal
 
 | File | Changes |
 |------|---------|
-| `crates/agenda-core/src/model.rs` | DatebookConfig, enums, View field, cycling/label methods |
-| `crates/agenda-core/src/query.rs` | Section generation, resolve_datebook_view, extract_item_date |
-| `crates/agenda-core/src/store.rs` | Schema v18, migration, view CRUD updates |
-| `crates/agenda-cli/src/main.rs` | create-datebook, datebook-browse commands |
-| `crates/agenda-tui/src/modes/view_edit/state.rs` | ViewEditRegion::Datebook, datebook_field_index |
-| `crates/agenda-tui/src/modes/view_edit/picker.rs` | 'd' keybinding for new datebook |
-| `crates/agenda-tui/src/modes/view_edit/editor.rs` | Datebook key handler, Tab cycle changes |
-| `crates/agenda-tui/src/modes/view_edit/details.rs` | Datebook config detail rendering |
-| `crates/agenda-tui/src/modes/board.rs` | Browse keybindings in Normal mode |
-| `crates/agenda-tui/src/render/mod.rs` | Datebook config pane, today highlighting |
+| `crates/aglet-core/src/model.rs` | DatebookConfig, enums, View field, cycling/label methods |
+| `crates/aglet-core/src/query.rs` | Section generation, resolve_datebook_view, extract_item_date |
+| `crates/aglet-core/src/store.rs` | Schema v18, migration, view CRUD updates |
+| `crates/aglet-cli/src/main.rs` | create-datebook, datebook-browse commands |
+| `crates/aglet-tui/src/modes/view_edit/state.rs` | ViewEditRegion::Datebook, datebook_field_index |
+| `crates/aglet-tui/src/modes/view_edit/picker.rs` | 'd' keybinding for new datebook |
+| `crates/aglet-tui/src/modes/view_edit/editor.rs` | Datebook key handler, Tab cycle changes |
+| `crates/aglet-tui/src/modes/view_edit/details.rs` | Datebook config detail rendering |
+| `crates/aglet-tui/src/modes/board.rs` | Browse keybindings in Normal mode |
+| `crates/aglet-tui/src/render/mod.rs` | Datebook config pane, today highlighting |
 
 ## Reusable Existing Code
 

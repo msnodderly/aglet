@@ -3,11 +3,11 @@
 version = 4
 
 [[package]]
-name = "agenda-cli"
+name = "aglet-cli"
 version = "0.1.0"
 dependencies = [
- "agenda-core",
- "agenda-tui",
+ "aglet-core",
+ "aglet-tui",
  "clap",
  "csv",
  "jiff",
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenda-core"
+name = "aglet-core"
 version = "0.1.0"
 dependencies = [
  "jiff",
@@ -31,10 +31,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "agenda-tui"
+name = "aglet-tui"
 version = "0.1.0"
 dependencies = [
- "agenda-core",
+ "aglet-core",
  "crossterm",
  "jiff",
  "ratatui",

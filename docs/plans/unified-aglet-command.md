@@ -37,21 +37,21 @@ The `tui` subcommand remains available for explicitness and supports `--debug`.
 
 ## Implementation Notes
 
-- `agenda-core` remains the shared model, store, engine, query, and workflow
+- `aglet-core` remains the shared model, store, engine, query, and workflow
   crate.
-- `agenda-tui` remains a library crate that owns the ratatui application and
+- `aglet-tui` remains a library crate that owns the ratatui application and
   exposes `run_with_options(db_path, debug)`.
-- `agenda-cli` remains the internal package/crate that owns the Clap command
+- `aglet-cli` remains the internal package/crate that owns the Clap command
   tree and command handlers, but its only binary target is now `aglet`.
-- `agenda-tui` has `autobins = false`, and its old standalone `src/main.rs`
+- `aglet-tui` has `autobins = false`, and its old standalone `src/main.rs`
   wrapper was removed.
-- `agenda-cli` has `autobins = false` with an explicit `[[bin]]` target named
+- `aglet-cli` has `autobins = false` with an explicit `[[bin]]` target named
   `aglet`.
 - No database paths, schema, or workflow semantics changed.
 
 ## Follow-Up Options
 
-- Consider renaming the internal `agenda-cli` package directory in a later
+- Consider renaming the internal `aglet-cli` package directory in a later
   cleanup if source names become more confusing than useful.
 - Re-render long demo transcripts if exact captured help output matters.
 - Keep examples explicit (`aglet list`) anywhere a command is intended to be

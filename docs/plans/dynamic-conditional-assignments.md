@@ -47,7 +47,7 @@ This pass also makes non-sticky subsumption assignments live so ancestors derive
   - existing persisted sticky auto-derived assignments are not retroactively converted in this pass
   - only newly created live derived assignments use `sticky = false`
 
-## Agenda / Preview Integration
+## Aglet / Preview Integration
 
 - Update agenda helper paths so structural subsumption writes use `sticky = false`.
 - Keep acceptance paths using `SuggestionAccepted` with `sticky = true`.

@@ -13,7 +13,7 @@ updated: 2026-03-30
 
 Added OpenAI as the third semantic classification provider (alongside Ollama and OpenRouter). The full provider stack is implemented end-to-end:
 
-### Core (`crates/agenda-core/src/classification.rs`)
+### Core (`crates/aglet-core/src/classification.rs`)
 - `PROVIDER_ID_OPENAI` constant
 - `OpenAiProviderSettings` struct — model (`gpt-4.1-nano` default), timeout (60s), `api_key()` reads `$OPENAI_API_KEY`
 - `OpenAiTransport` trait + `ReqwestOpenAiTransport` — `https://api.openai.com/v1/chat/completions`, Bearer auth
@@ -22,14 +22,14 @@ Added OpenAI as the third semantic classification provider (alongside Ollama and
 - `openai: OpenAiProviderSettings` on `ClassificationConfig` + wire struct + deserialization
 - `openai_transport` on `BackgroundClassificationJob`
 
-### Integration (`crates/agenda-core/src/agenda.rs`)
+### Integration (`crates/aglet-core/src/aglet.rs`)
 - `openai_transport: Arc<dyn OpenAiTransport>` on `Agenda` struct
 - Threaded through `new()`, `with_ollama_transport()`, `with_transports()`, `with_debug()`
 - `OpenAi` arm in `classification_service_inner()` match
 - `PROVIDER_ID_OPENAI` added to `is_semantic` check and `candidate_status_for_config`
 - `openai_transport` included in `BackgroundClassificationJob` construction
 
-### TUI (`crates/agenda-tui/`)
+### TUI (`crates/aglet-tui/`)
 - `async_classify.rs` — `OpenAi` arm in `run_classification_job` provider match
 - `state/category.rs` — `GlobalSettingsRow::OpenAiModel`, `OpenAiTimeout` + `visible_rows()` arm
 - `state/board.rs` — `NameInputContext::OpenAiModel`, `OpenAiTimeout`

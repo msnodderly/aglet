@@ -57,7 +57,7 @@ Primary actions in scope:
 - Selection clears on view switch
 - Selection is pruned on refresh when selected items disappear
 - Board render and footer hints now expose active selection state
-- Focused `agenda-tui` tests added for selection lifecycle and visibility
+- Focused `aglet-tui` tests added for selection lifecycle and visibility
 
 ### Phase A1 Delivered
 
@@ -160,11 +160,11 @@ link wizard semantics.
 
 ## Key Files
 
-- `/Users/mds/src/aglet-4d156d1e-phase0/crates/agenda-tui/src/app.rs`
-- `/Users/mds/src/aglet-4d156d1e-phase0/crates/agenda-tui/src/lib.rs`
-- `/Users/mds/src/aglet-4d156d1e-phase0/crates/agenda-tui/src/modes/board.rs`
-- `/Users/mds/src/aglet-4d156d1e-phase0/crates/agenda-tui/src/modes/view_edit.rs`
-- `/Users/mds/src/aglet-4d156d1e-phase0/crates/agenda-tui/src/render/mod.rs`
+- `/Users/mds/src/aglet-4d156d1e-phase0/crates/aglet-tui/src/app.rs`
+- `/Users/mds/src/aglet-4d156d1e-phase0/crates/aglet-tui/src/lib.rs`
+- `/Users/mds/src/aglet-4d156d1e-phase0/crates/aglet-tui/src/modes/board.rs`
+- `/Users/mds/src/aglet-4d156d1e-phase0/crates/aglet-tui/src/modes/view_edit.rs`
+- `/Users/mds/src/aglet-4d156d1e-phase0/crates/aglet-tui/src/render/mod.rs`
 
 ## Phase 0: Selection Foundation
 

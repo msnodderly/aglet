@@ -250,11 +250,11 @@ Notes:
 
 Files likely affected:
 
-- `crates/agenda-core/src/model.rs`
-- `crates/agenda-core/src/store.rs`
-- `crates/agenda-core/src/engine.rs`
-- `crates/agenda-tui/src/ui_support.rs`
-- `crates/agenda-tui/src/lib.rs`
+- `crates/aglet-core/src/model.rs`
+- `crates/aglet-core/src/store.rs`
+- `crates/aglet-core/src/engine.rs`
+- `crates/aglet-tui/src/ui_support.rs`
+- `crates/aglet-tui/src/lib.rs`
 
 ### Phase 2: Replace raw substring implicit matching
 
@@ -268,9 +268,9 @@ Files likely affected:
 
 Files likely affected:
 
-- `crates/agenda-core/src/matcher.rs`
-- `crates/agenda-core/src/engine.rs`
-- `crates/agenda-core/src/classification.rs`
+- `crates/aglet-core/src/matcher.rs`
+- `crates/aglet-core/src/engine.rs`
+- `crates/aglet-core/src/classification.rs`
 
 ### Phase 3: Category Manager editing
 
@@ -281,10 +281,10 @@ Files likely affected:
 
 Files likely affected:
 
-- `crates/agenda-tui/src/lib.rs`
-- `crates/agenda-tui/src/app.rs`
-- `crates/agenda-tui/src/modes/category.rs`
-- `crates/agenda-tui/src/render/mod.rs`
+- `crates/aglet-tui/src/lib.rs`
+- `crates/aglet-tui/src/app.rs`
+- `crates/aglet-tui/src/modes/category.rs`
+- `crates/aglet-tui/src/render/mod.rs`
 
 ### Phase 4: Tests
 

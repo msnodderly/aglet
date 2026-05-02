@@ -128,7 +128,7 @@ Keep colon style, shorter labels.
 ## Implementation Plan
 
 ### Step 1: Remove expand/collapse from sections list
-**Files:** `crates/agenda-tui/src/lib.rs`, `crates/agenda-tui/src/modes/view_edit/sections.rs`, `crates/agenda-tui/src/modes/view_edit/details.rs`, `crates/agenda-tui/src/render/mod.rs`
+**Files:** `crates/aglet-tui/src/lib.rs`, `crates/aglet-tui/src/modes/view_edit/sections.rs`, `crates/aglet-tui/src/modes/view_edit/details.rs`, `crates/aglet-tui/src/render/mod.rs`
 
 - Remove `section_expanded: Option<usize>` from `ViewEditState` (lib.rs ~line 348)
 - Remove all `section_expanded` references from the ViewEdit feature module (~15 occurrences in the old incremental bridge implementation: Enter toggle, tracking on add/delete/move)
@@ -137,7 +137,7 @@ Keep colon style, shorter labels.
 - Remove `7 => Some(KeyCode::Enter)` match arm from Enter/Space dispatch in the ViewEdit feature module
 
 ### Step 2: Redesign section details rendering
-**File:** `crates/agenda-tui/src/render/mod.rs` lines 3597-3715
+**File:** `crates/aglet-tui/src/render/mod.rs` lines 3597-3715
 
 New field index mapping (0-6):
 
@@ -167,7 +167,7 @@ items.push(ListItem::new(Line::from(Span::styled(
 ```
 
 ### Step 3: Redesign view details rendering
-**File:** `crates/agenda-tui/src/render/mod.rs` lines 3400-3596
+**File:** `crates/aglet-tui/src/render/mod.rs` lines 3400-3596
 
 unmatched_field_index mapping (0-5, unchanged):
 
@@ -190,7 +190,7 @@ Additional:
 - Block title: `" DETAILS: View "`
 
 ### Step 4: Footer hints
-**File:** `crates/agenda-tui/src/render/mod.rs` (~line 2350, footer_hint_text function)
+**File:** `crates/aglet-tui/src/render/mod.rs` (~line 2350, footer_hint_text function)
 
 - `S:save  n:new  x:del  Tab:pane  Esc:close` (sections pane)
 - Context-appropriate hints per pane focus (details, preview)
@@ -201,9 +201,9 @@ Additional:
 - Separate from 0e56 (wizard is different scope)
 
 ## Key Files
-- `crates/agenda-tui/src/render/mod.rs` — all rendering (~lines 3298-4240, footer ~2350)
-- `crates/agenda-tui/src/modes/view_edit/sections.rs` and `crates/agenda-tui/src/modes/view_edit/details.rs` — input handlers for field count and expand removal
-- `crates/agenda-tui/src/lib.rs` — ViewEditState struct (remove section_expanded)
+- `crates/aglet-tui/src/render/mod.rs` — all rendering (~lines 3298-4240, footer ~2350)
+- `crates/aglet-tui/src/modes/view_edit/sections.rs` and `crates/aglet-tui/src/modes/view_edit/details.rs` — input handlers for field count and expand removal
+- `crates/aglet-tui/src/lib.rs` — ViewEditState struct (remove section_expanded)
 
 ## Verification
 1. `cargo build` — compilation

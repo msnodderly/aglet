@@ -3,7 +3,7 @@ title: NLSpec v0.6 Product Specification
 updated: 2026-04-02
 ---
 
-# Agenda Reborn — NLSpec v0.6
+# Aglet — NLSpec v0.6
 
 > A modern clone of Lotus Agenda (1988–1992), the free-form personal information manager
 > designed by Mitch Kapor, Ed Belove, and Jerry Kaplan.
@@ -762,7 +762,7 @@ that takes commands and emits events/state.
 For the throwaway prototype, use the simplest possible persistence:
 
 - A single JSON or SQLite file containing all items, categories, views, and settings.
-- File path configurable. Default: `~/.agenda/default.ag`
+- File path configurable. Default: `~/.aglet/default.ag`
 - **Crash-safety requirements**:
   - **SQLite**: use WAL (Write-Ahead Logging) mode.
   - **JSON**: write to temp file + fsync + atomic rename.

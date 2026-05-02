@@ -35,7 +35,7 @@ This works because `ClassificationRequest`, `ClassificationCandidate`, `Classifi
 ## Changes
 
 ### 1. Split `collect_candidates` into prepare + execute
-**File:** `crates/agenda-core/src/classification.rs`
+**File:** `crates/aglet-core/src/classification.rs`
 
 Add to `ClassificationService`:
 ```rust
@@ -55,7 +55,7 @@ Runs provider iteration + dedup. No Store access needed.
 Refactor `collect_candidates` to call both internally (pure refactor, no behavior change).
 
 ### 2. Extract `apply_classification_results` from `classify_item_on_demand`
-**File:** `crates/agenda-core/src/agenda.rs`
+**File:** `crates/aglet-core/src/aglet.rs`
 
 Extract the candidate-processing loop (supersede old suggestions, upsert new ones based on config disposition) into:
 ```rust
@@ -66,8 +66,8 @@ pub fn apply_classification_results(
 
 Refactor `classify_item_on_demand` to call `collect_candidates` + `apply_classification_results`. No behavior change.
 
-### 3. Add `prepare_background_classification` to `Agenda`
-**File:** `crates/agenda-core/src/agenda.rs`
+### 3. Add `prepare_background_classification` to `Aglet`
+**File:** `crates/aglet-core/src/aglet.rs`
 
 ```rust
 pub fn prepare_background_classification(
@@ -77,10 +77,10 @@ pub fn prepare_background_classification(
 
 Returns `None` if no expensive providers are enabled. Otherwise returns a `BackgroundClassificationJob` containing: `item_id`, `item_revision_hash`, `ClassificationRequest`, cloned `ClassificationConfig`, cloned `OllamaProviderSettings`, cloned `Arc<dyn OllamaTransport>`, and `reference_date`. All fields are `Send`.
 
-### 4. New module: `crates/agenda-tui/src/async_classify.rs`
+### 4. New module: `crates/aglet-tui/src/async_classify.rs`
 
 Types:
-- `BackgroundClassificationJob` (from agenda-core, or defined here)
+- `BackgroundClassificationJob` (from aglet-core, or defined here)
 - `ClassifyResult { item_id, item_revision_hash, candidates, error }`
 - `ClassificationWorker` — owns `mpsc::Sender<Job>` + `mpsc::Receiver<Result>` + `JoinHandle`
 
@@ -92,7 +92,7 @@ Types:
 5. Catch panics with `std::panic::catch_unwind` to avoid killing the thread
 
 ### 5. Wire worker into the TUI event loop
-**File:** `crates/agenda-tui/src/lib.rs`
+**File:** `crates/aglet-tui/src/lib.rs`
 
 New fields on `App`:
 ```rust
@@ -100,7 +100,7 @@ classification_worker: ClassificationWorker,
 in_flight_classifications: HashSet<ItemId>,
 ```
 
-**File:** `crates/agenda-tui/src/app.rs`
+**File:** `crates/aglet-tui/src/app.rs`
 
 New method `process_classification_results(&mut self, agenda)`:
 - Called at top of each event loop iteration (before `terminal.draw`)
@@ -119,7 +119,7 @@ New method `submit_background_classification(&mut self, agenda, item_id)`:
 - If `None`: no expensive providers enabled, run sync path
 
 ### 6. Update `=` key handler to use async path
-**File:** `crates/agenda-tui/src/modes/board.rs`
+**File:** `crates/aglet-tui/src/modes/board.rs`
 
 Replace `queue_blocking_ui_action(ClassifyItems(...))` with:
 - Run cheap providers synchronously (implicit string, when parser) via existing `classify_item_on_demand` but only for cheap providers
@@ -128,7 +128,7 @@ Replace `queue_blocking_ui_action(ClassifyItems(...))` with:
 - Remove `PendingBlockingUiAction::ClassifyItems` variant
 
 ### 7. Update item save flow to use async path
-**File:** `crates/agenda-tui/src/modes/board.rs`
+**File:** `crates/aglet-tui/src/modes/board.rs`
 
 In the `SaveInputPanelAdd`/`SaveInputPanelEdit` branches:
 - Always save synchronously (no blocking overlay needed — save + cheap providers are fast)
@@ -136,7 +136,7 @@ In the `SaveInputPanelAdd`/`SaveInputPanelEdit` branches:
 - Remove the `should_show_blocking_classification_overlay()` check and `PendingBlockingUiAction::SaveInputPanelAdd/Edit` overlay path
 
 ### 8. In-flight indicator + completion notification
-**File:** `crates/agenda-tui/src/render/mod.rs`
+**File:** `crates/aglet-tui/src/render/mod.rs`
 
 **In-progress indicator**: When `in_flight_classifications` is non-empty, prepend `[classifying N...]` to the footer status line so the user always sees that background work is happening.
 
@@ -150,17 +150,17 @@ In the `SaveInputPanelAdd`/`SaveInputPanelEdit` branches:
 These status messages use the existing transient status mechanism so they're visible until the next action.
 
 ## Critical Files
-- `crates/agenda-core/src/classification.rs` — split collect_candidates
-- `crates/agenda-core/src/agenda.rs` — extract apply_classification_results, add prepare method
-- `crates/agenda-tui/src/async_classify.rs` — NEW: worker thread + channels
-- `crates/agenda-tui/src/lib.rs` — App fields, mod declaration
-- `crates/agenda-tui/src/app.rs` — event loop integration, result processing
-- `crates/agenda-tui/src/modes/board.rs` — `=` handler + save flow changes
-- `crates/agenda-tui/src/render/mod.rs` — in-flight indicator
+- `crates/aglet-core/src/classification.rs` — split collect_candidates
+- `crates/aglet-core/src/aglet.rs` — extract apply_classification_results, add prepare method
+- `crates/aglet-tui/src/async_classify.rs` — NEW: worker thread + channels
+- `crates/aglet-tui/src/lib.rs` — App fields, mod declaration
+- `crates/aglet-tui/src/app.rs` — event loop integration, result processing
+- `crates/aglet-tui/src/modes/board.rs` — `=` handler + save flow changes
+- `crates/aglet-tui/src/render/mod.rs` — in-flight indicator
 
 ## Verification
-1. `cargo build -p agenda-core -p agenda-tui`
-2. `cargo test -p agenda-core -p agenda-tui` — all existing tests pass
+1. `cargo build -p aglet-core -p aglet-tui`
+2. `cargo test -p aglet-core -p aglet-tui` — all existing tests pass
 3. Manual test: configure Ollama, press `=` on an item → UI stays responsive, status shows "classifying in background", result arrives after a few seconds
 4. Manual test: press `=`, then immediately edit the same item → stale result is discarded
 5. Manual test: multi-select 3 items, press `=` → all 3 submitted, results trickle in

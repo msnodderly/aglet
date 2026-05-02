@@ -543,7 +543,7 @@ Deterministic defaults:
 **Date**: 2026-02-16
 **Relevant tasks**: T032
 
-`Agenda` create/update flows run `BasicDateParser` before engine processing.
+`Aglet` create/update flows run `BasicDateParser` before engine processing.
 If parsing succeeds, `when_date` is set to the parsed datetime and persisted.
 If parsing fails, existing `when_date` is left unchanged (no auto-clear).
 
@@ -570,7 +570,7 @@ phrases:
 - `strict_next_week`
 - `inclusive_next`
 
-Default behavior in `Agenda` flows is `strict_next_week`.
+Default behavior in `Aglet` flows is `strict_next_week`.
 
 Policy rules:
 
@@ -669,7 +669,7 @@ Text edit behavior:
 
 - Empty text is rejected (`text cannot be empty`).
 - Save path updates the item through
-  `Agenda::update_item_with_reference_date(...)`, using local reference date.
+  `Aglet::update_item_with_reference_date(...)`, using local reference date.
 - This intentionally re-runs classification/date parsing so category/view
   placement stays consistent after text changes.
 
@@ -678,7 +678,7 @@ Note edit behavior:
 - Empty note input clears the note (`None`).
 - Non-empty note input stores the exact typed note value.
 - Save path also routes through
-  `Agenda::update_item_with_reference_date(...)` for one canonical update path.
+  `Aglet::update_item_with_reference_date(...)` for one canonical update path.
 
 Selection behavior after save:
 
@@ -714,8 +714,8 @@ Why unified checkbox picker:
 
 Current mutation path:
 
-- Assign uses `Agenda::assign_item_manual(...)`.
-- Unassign is validated through `Agenda::unassign_item_manual(...)` (see §38),
+- Assign uses `Aglet::assign_item_manual(...)`.
+- Unassign is validated through `Aglet::unassign_item_manual(...)` (see §38),
   then persisted.
 - TUI restores selection to edited item ID where possible after refresh.
 
@@ -760,7 +760,7 @@ config popup for field edits:
 - `a` toggle `is_actionable`.
 - `Enter` open config popup for checkboxes + multiline category note.
 
-All config mutations route through `Agenda::update_category(...)` so
+All config mutations route through `Aglet::update_category(...)` so
 retroactive evaluation behavior remains consistent with existing core rules.
 
 Reparent UX details:

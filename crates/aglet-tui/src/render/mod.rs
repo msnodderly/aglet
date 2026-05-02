@@ -1,0 +1,10261 @@
+use crate::modes::category::{
+    condition_match_mode_label, date_condition_draft_feedback, draft_match_label,
+    draft_uses_range_fields, draft_uses_value_field, draft_value_label, DateDraftMessageSeverity,
+};
+use crate::*;
+use aglet_core::date_rules::render_date_source;
+use aglet_core::model::ConditionMatchMode;
+
+const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
+const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
+const CATEGORY_MANAGER_PANE_FOCUS: Color = Color::LightCyan;
+const CATEGORY_MANAGER_TEXT_ENTRY: Color = Color::LightMagenta;
+const CATEGORY_MANAGER_EDIT_FOCUS: Color = Color::Yellow;
+const ITEM_NOTE_PLACEHOLDER_TEXT: &str = "Notes, context, links, ideas, next actions...";
+const CATEGORY_NOTE_PLACEHOLDER_TEXT: &str =
+    "Describe the purpose of this category.\nIncluded in AI classification context when enabled.";
+const ALSO_MATCH_PLACEHOLDER_TEXT: &str = "One term or phrase per line...";
+const FOOTER_HEIGHT: u16 = 4;
+const CATEGORY_DETAILS_INFO_HEIGHT: u16 = 5;
+const CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC: u16 = 6;
+
+fn condition_match_mode_copy(mode: ConditionMatchMode) -> &'static str {
+    match mode {
+        ConditionMatchMode::Any => "ANY",
+        ConditionMatchMode::All => "ALL",
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InlineBorderSegment {
+    start: usize,
+    width: usize,
+    text: String,
+    priority: u8,
+    active: bool,
+}
+
+fn clip_text_for_row(
+    text: &str,
+    cursor: usize,
+    width: usize,
+    around_cursor: bool,
+) -> (String, usize) {
+    if width == 0 {
+        return (String::new(), 0);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let cursor = cursor.min(len);
+    if len <= width {
+        return (text.to_string(), cursor);
+    }
+    if width == 1 {
+        return ("…".to_string(), 0);
+    }
+    if !around_cursor {
+        let keep = width.saturating_sub(1);
+        let prefix: String = chars.iter().take(keep).collect();
+        return (format!("{prefix}…"), cursor.min(keep.saturating_sub(1)));
+    }
+
+    let mut left = cursor
+        .saturating_sub(width / 2)
+        .min(len.saturating_sub(width));
+    let mut right = (left + width).min(len);
+    if cursor >= right {
+        right = (cursor + 1).min(len);
+        left = right.saturating_sub(width);
+    }
+
+    let left_ellipsis = left > 0;
+    let right_ellipsis = right < len;
+    let mut inner_width = width;
+    if left_ellipsis {
+        inner_width = inner_width.saturating_sub(1);
+    }
+    if right_ellipsis {
+        inner_width = inner_width.saturating_sub(1);
+    }
+
+    let mut inner_left = left.min(len.saturating_sub(inner_width));
+    if cursor < inner_left {
+        inner_left = cursor;
+    }
+    if cursor >= inner_left.saturating_add(inner_width) {
+        inner_left = cursor.saturating_add(1).saturating_sub(inner_width);
+    }
+    let inner_right = (inner_left + inner_width).min(len);
+
+    let mut out = String::new();
+    if left_ellipsis {
+        out.push('…');
+    }
+    out.extend(chars[inner_left..inner_right].iter());
+    if right_ellipsis {
+        out.push('…');
+    }
+    let cursor_visible = (if left_ellipsis { 1 } else { 0 })
+        + cursor
+            .saturating_sub(inner_left)
+            .min(inner_width.saturating_sub(1));
+    (out, cursor_visible)
+}
+
+/// Build spans for inline-edited text with a visible block cursor.
+/// `prefix` is rendered with `prefix_style`, the text around the cursor in `text_style`,
+/// and the cursor character itself with inverted fg/bg so it stands out against any background.
+fn inline_edit_spans<'a>(
+    prefix: &str,
+    text: &str,
+    cursor_pos: usize,
+    prefix_style: Style,
+    text_style: Style,
+) -> Vec<Span<'a>> {
+    let chars: Vec<char> = text.chars().collect();
+    let pos = cursor_pos.min(chars.len());
+    let before: String = chars[..pos].iter().collect();
+    let cursor_char: String = if pos < chars.len() {
+        chars[pos].to_string()
+    } else {
+        " ".to_string()
+    };
+    let after: String = if pos < chars.len() {
+        chars[pos + 1..].iter().collect()
+    } else {
+        String::new()
+    };
+    let cursor_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(prefix.to_string(), prefix_style)];
+    if !before.is_empty() {
+        spans.push(Span::styled(before, text_style));
+    }
+    spans.push(Span::styled(cursor_char, cursor_style));
+    if !after.is_empty() {
+        spans.push(Span::styled(after, text_style));
+    }
+    spans
+}
+
+fn board_column_offsets(widths: &[usize], spacing: usize) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(widths.len());
+    let mut cursor = 0usize;
+    for (index, width) in widths.iter().copied().enumerate() {
+        offsets.push(cursor);
+        cursor = cursor.saturating_add(width);
+        if index + 1 < widths.len() {
+            cursor = cursor.saturating_add(spacing);
+        }
+    }
+    offsets
+}
+
+fn format_inline_border_segment_text(text: &str, width: usize) -> Option<String> {
+    if width < 2 {
+        return None;
+    }
+    let label = truncate_board_cell(text.trim(), width.saturating_sub(1));
+    if label.trim().is_empty() {
+        return None;
+    }
+    let label_width = label.chars().count();
+    if label_width < width {
+        Some(format!("{label} "))
+    } else {
+        Some(label)
+    }
+}
+
+fn build_segmented_board_border_title(
+    base_label: &str,
+    segments: &[InlineBorderSegment],
+    width: usize,
+) -> String {
+    if width == 0 {
+        return String::new();
+    }
+
+    let mut chars = vec!['─'; width];
+    let mut sorted_segments = segments.to_vec();
+    sorted_segments.sort_by_key(|segment| (segment.priority, segment.start));
+    let mut rendered_ranges: Vec<(usize, usize)> = Vec::new();
+
+    for segment in sorted_segments {
+        if segment.width == 0 || segment.text.trim().is_empty() || segment.start >= width {
+            continue;
+        }
+        let zone_start = segment.start;
+        let zone_end = (segment.start + segment.width).min(width);
+        if zone_end <= zone_start {
+            continue;
+        }
+        let start = zone_start;
+        let end = zone_end;
+        if rendered_ranges
+            .iter()
+            .any(|(existing_start, existing_end)| start < *existing_end && *existing_start < end)
+        {
+            continue;
+        }
+        let Some(display) = format_inline_border_segment_text(&segment.text, end - start) else {
+            continue;
+        };
+        let display_width = display.chars().count();
+        let render_end = (start + display_width).min(width);
+        for (offset, ch) in display.chars().enumerate() {
+            let pos = start + offset;
+            if pos >= width {
+                break;
+            }
+            chars[pos] = ch;
+        }
+        rendered_ranges.push((start, render_end));
+    }
+
+    let title_budget = rendered_ranges
+        .iter()
+        .map(|(start, _)| *start)
+        .min()
+        .map(|start| start.saturating_sub(2))
+        .unwrap_or(width)
+        .min(width);
+    let left_title = truncate_board_cell(base_label, title_budget);
+    for (idx, ch) in left_title.chars().enumerate() {
+        if idx >= width {
+            break;
+        }
+        chars[idx] = ch;
+    }
+
+    chars.into_iter().collect()
+}
+
+fn build_segmented_board_border_title_line(
+    base_label: &str,
+    segments: &[InlineBorderSegment],
+    width: usize,
+    base_style: Style,
+    label_style: Style,
+    active_label_style: Style,
+) -> Line<'static> {
+    let text = build_segmented_board_border_title(base_label, segments, width);
+    let mut chars: Vec<char> = text.chars().collect();
+    let mut styles = vec![base_style; chars.len()];
+
+    let mut sorted_segments = segments.to_vec();
+    sorted_segments.sort_by_key(|segment| (segment.priority, segment.start));
+    let mut rendered_ranges: Vec<(usize, usize)> = Vec::new();
+
+    for segment in sorted_segments {
+        if segment.width == 0 || segment.text.trim().is_empty() || segment.start >= width {
+            continue;
+        }
+        let zone_start = segment.start;
+        let zone_end = (segment.start + segment.width).min(width);
+        if zone_end <= zone_start {
+            continue;
+        }
+        let start = zone_start;
+        let end = zone_end;
+        if rendered_ranges
+            .iter()
+            .any(|(existing_start, existing_end)| start < *existing_end && *existing_start < end)
+        {
+            continue;
+        }
+        let Some(display) = format_inline_border_segment_text(&segment.text, end - start) else {
+            continue;
+        };
+        let display_width = display.chars().count();
+        let render_end = (start + display_width).min(width);
+        for pos in start..render_end.min(styles.len()) {
+            styles[pos] = if segment.active {
+                active_label_style
+            } else {
+                label_style
+            };
+        }
+        rendered_ranges.push((start, render_end));
+    }
+
+    let title_budget = rendered_ranges
+        .iter()
+        .map(|(start, _)| *start)
+        .min()
+        .map(|start| start.saturating_sub(2))
+        .unwrap_or(width)
+        .min(width);
+    let left_title = truncate_board_cell(base_label, title_budget);
+    for idx in 0..left_title.chars().count().min(styles.len()) {
+        styles[idx] = base_style;
+    }
+
+    if chars.is_empty() {
+        return Line::default();
+    }
+
+    let mut spans = Vec::new();
+    let mut current_style = styles[0];
+    let mut current_text = String::new();
+    for (ch, style) in chars.drain(..).zip(styles) {
+        if style == current_style {
+            current_text.push(ch);
+        } else {
+            spans.push(Span::styled(current_text, current_style));
+            current_text = String::new();
+            current_text.push(ch);
+            current_style = style;
+        }
+    }
+    if !current_text.is_empty() {
+        spans.push(Span::styled(current_text, current_style));
+    }
+    Line::from(spans)
+}
+
+impl App {
+    fn inline_border_segment_priority(
+        &self,
+        slot_index: usize,
+        board_column_index: usize,
+        column: SlotSortColumn,
+        item_column_index: usize,
+    ) -> u8 {
+        let is_focused = slot_index == self.slot_index && self.column_index == board_column_index;
+        let is_sorted = self
+            .slot_sort_keys
+            .get(slot_index)
+            .map(|keys| keys.iter().any(|key| key.column == column))
+            .unwrap_or(false);
+        if is_focused {
+            0
+        } else if is_sorted {
+            1
+        } else if board_column_index == item_column_index {
+            2
+        } else {
+            3
+        }
+    }
+
+    fn inline_border_segment_text(&self, label: &str) -> String {
+        label.to_string()
+    }
+
+    fn list_state_for(area: Rect, selected_line: Option<usize>) -> ListState {
+        let mut state = ListState::default().with_selected(selected_line);
+        *state.offset_mut() = list_scroll_for_selected_line(area, selected_line) as usize;
+        state
+    }
+
+    fn table_state_for(area: Rect, selected_row: Option<usize>) -> TableState {
+        let mut state = TableState::default().with_selected(selected_row);
+        *state.offset_mut() = list_scroll_for_selected_line(area, selected_row) as usize;
+        state
+    }
+
+    fn stable_table_offset(
+        area: Rect,
+        selected_row: Option<usize>,
+        preferred_offset: usize,
+        item_count: usize,
+    ) -> usize {
+        if item_count == 0 {
+            return 0;
+        }
+        let clamped_preferred = preferred_offset.min(item_count.saturating_sub(1));
+        let Some(selected_row) = selected_row else {
+            return clamped_preferred;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 {
+            return 0;
+        }
+        let selected_visible = selected_row >= clamped_preferred
+            && selected_row < clamped_preferred.saturating_add(viewport_rows);
+        if selected_visible {
+            clamped_preferred
+        } else {
+            list_scroll_for_selected_line(area, Some(selected_row)) as usize
+        }
+    }
+
+    fn stable_list_offset(
+        area: Rect,
+        selected_line: Option<usize>,
+        preferred_offset: usize,
+        item_count: usize,
+    ) -> usize {
+        if item_count == 0 {
+            return 0;
+        }
+        let clamped_preferred = preferred_offset.min(item_count.saturating_sub(1));
+        let Some(selected_line) = selected_line else {
+            return clamped_preferred;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 {
+            return 0;
+        }
+        let selected_visible = selected_line >= clamped_preferred
+            && selected_line < clamped_preferred.saturating_add(viewport_rows);
+        if selected_visible {
+            clamped_preferred
+        } else {
+            list_scroll_for_selected_line(area, Some(selected_line)) as usize
+        }
+    }
+
+    fn effective_board_display_mode_for_slot(&self, slot: &Slot) -> BoardDisplayMode {
+        let current_view = self.current_view();
+        match (&slot.context, current_view) {
+            (SlotContext::Section { section_index }, Some(view))
+            | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                .sections
+                .get(*section_index)
+                .and_then(|section| section.board_display_mode_override)
+                .unwrap_or(view.board_display_mode),
+            _ => current_view
+                .map(|view| view.board_display_mode)
+                .unwrap_or(BoardDisplayMode::SingleLine),
+        }
+    }
+
+    fn variable_height_list_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: Option<usize>,
+    ) -> usize {
+        let Some(selected_index) = selected_index else {
+            return 0;
+        };
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 || item_heights.is_empty() {
+            return 0;
+        }
+
+        let mut offset = selected_index.min(item_heights.len().saturating_sub(1));
+        let mut used_rows = item_heights[offset].max(1);
+        while offset > 0 {
+            let next_rows = item_heights[offset - 1].max(1);
+            if used_rows + next_rows > viewport_rows {
+                break;
+            }
+            used_rows += next_rows;
+            offset -= 1;
+        }
+        offset
+    }
+
+    fn selected_item_visible_with_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: usize,
+        offset: usize,
+    ) -> bool {
+        let viewport_rows = area.height.saturating_sub(2) as usize;
+        if viewport_rows == 0 || item_heights.is_empty() || selected_index < offset {
+            return false;
+        }
+
+        let row_start = item_heights
+            .iter()
+            .skip(offset)
+            .take(selected_index.saturating_sub(offset))
+            .sum::<usize>();
+        let row_end = row_start + item_heights[selected_index].max(1);
+        row_end <= viewport_rows
+    }
+
+    fn stable_variable_height_list_offset(
+        area: Rect,
+        item_heights: &[usize],
+        selected_index: Option<usize>,
+        preferred_offset: usize,
+    ) -> usize {
+        let Some(selected_index) = selected_index else {
+            return preferred_offset.min(item_heights.len().saturating_sub(1));
+        };
+        let clamped_preferred = preferred_offset.min(item_heights.len().saturating_sub(1));
+        if Self::selected_item_visible_with_offset(
+            area,
+            item_heights,
+            selected_index,
+            clamped_preferred,
+        ) {
+            clamped_preferred
+        } else {
+            Self::variable_height_list_offset(area, item_heights, Some(selected_index))
+        }
+    }
+
+    fn render_vertical_scrollbar(
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        content_len: usize,
+        position: usize,
+    ) {
+        let mut scrollbar_state = ScrollbarState::new(content_len.max(1))
+            .position(position.min(content_len.saturating_sub(1)));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            area,
+            &mut scrollbar_state,
+        );
+    }
+
+    pub(crate) fn draw(&mut self, frame: &mut ratatui::Frame<'_>) {
+        let show_search_bar = !(matches!(
+            self.mode,
+            Mode::ViewEdit | Mode::CategoryManager | Mode::GlobalSettings
+        ) || self.mode == Mode::InputPanel
+            && self.name_input_context == Some(NameInputContext::CategoryCreate));
+
+        let layout = if show_search_bar {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(FOOTER_HEIGHT),
+                ])
+                .split(frame.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(FOOTER_HEIGHT),
+                ])
+                .split(frame.area())
+        };
+
+        let header = self.render_header();
+        frame.render_widget(header, layout[0]);
+
+        let (main_area, footer_area) = if show_search_bar {
+            self.render_search_bar(frame, layout[1]);
+            (layout[2], layout[3])
+        } else {
+            (layout[1], layout[2])
+        };
+
+        // Auto-scroll the board so the focused slot is visible.
+        let board_viewport_height = if self.show_preview {
+            // Preview splits main_area 60/40; board gets the top 60%.
+            main_area.height * 60 / 100
+        } else {
+            main_area.height
+        };
+        self.ensure_focused_slot_visible(board_viewport_height);
+
+        self.render_main(frame, main_area);
+
+        let footer = self.render_footer(footer_area.width);
+        frame.render_widget(footer, footer_area);
+        if let Some((x, y)) = self.input_cursor_position(footer_area) {
+            frame.set_cursor_position((x, y));
+        }
+        if self.mode == Mode::InputPanel {
+            if let Some(mut panel) = self.input_panel.take() {
+                let popup_area = input_panel_popup_area(frame.area(), panel.kind);
+                self.render_input_panel(frame, popup_area, &mut panel);
+                if panel.details_popup_open {
+                    self.render_input_panel_details_popup(
+                        frame,
+                        centered_rect(58, 68, frame.area()),
+                        &panel,
+                    );
+                } else if let Some((x, y)) = self.input_panel_cursor_position(popup_area, &panel) {
+                    frame.set_cursor_position((x, y));
+                }
+                self.input_panel = Some(panel);
+            }
+        }
+        if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
+            self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
+        }
+        if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
+            self.render_item_assign_picker(frame, centered_rect(88, 72, frame.area()));
+        }
+        if self.mode == Mode::LinkWizard {
+            let popup_area = centered_rect(72, 72, frame.area());
+            self.render_link_wizard(frame, popup_area);
+            if let Some((x, y)) = self.link_wizard_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
+        if self.mode == Mode::CategoryDirectEdit {
+            let popup_area = centered_rect(64, 62, frame.area());
+            self.render_category_direct_edit_picker(frame, popup_area);
+            if let Some((x, y)) = self.category_direct_edit_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
+        if self.mode == Mode::CategoryColumnPicker {
+            let popup_area = centered_rect(62, 58, frame.area());
+            self.render_category_column_picker(frame, popup_area);
+            if let Some((x, y)) = self.category_column_picker_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
+        if self.mode == Mode::BoardAddColumnPicker {
+            let popup_area = centered_rect(58, 56, frame.area());
+            self.render_board_add_column_picker(frame, popup_area);
+            if let Some((x, y)) = self.board_add_column_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
+        }
+        if self.mode == Mode::HelpPanel {
+            self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
+        }
+        if self.mode == Mode::SuggestionReview {
+            self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
+        }
+    }
+
+    fn is_category_direct_edit_dirty(&self) -> bool {
+        self.category_direct_edit
+            .as_ref()
+            .map(|state| {
+                let current: Vec<Option<CategoryId>> =
+                    state.rows.iter().map(|r| r.category_id).collect();
+                current != state.original_category_ids
+            })
+            .unwrap_or(false)
+    }
+
+    fn render_category_direct_edit_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let dirty_marker = if self.is_category_direct_edit_dirty() {
+            " *"
+        } else {
+            ""
+        };
+        let title = format!("Set Category{dirty_marker}");
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+
+        if area.width < 4 || area.height < 6 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // context
+                Constraint::Length(1), // scope/context details
+                Constraint::Length(6), // row list
+                Constraint::Length(3), // active input
+                Constraint::Min(6),    // suggestions / create confirm
+                Constraint::Length(2), // help/actions
+            ])
+            .split(inner);
+
+        let direct_state = self.category_direct_edit_state();
+        let context_text = direct_state
+            .map(|state| {
+                let focus_label = match state.focus {
+                    CategoryDirectEditFocus::Entries => "Entries",
+                    CategoryDirectEditFocus::Input => "Input",
+                    CategoryDirectEditFocus::Suggestions => "Suggestions",
+                };
+                format!(
+                    "Column: {}  Item: {}  Row: {}/{}  Focus: {}",
+                    state.parent_name,
+                    truncate_board_cell(&state.item_label, 28),
+                    state.active_row.saturating_add(1),
+                    state.rows.len(),
+                    focus_label,
+                )
+            })
+            .or_else(|| {
+                self.current_view().and_then(|view| {
+                    self.current_slot().and_then(|slot| {
+                        let section = match slot.context {
+                            SlotContext::Section { section_index }
+                            | SlotContext::GeneratedSection { section_index, .. } => {
+                                view.sections.get(section_index)
+                            }
+                            _ => None,
+                        }?;
+                        let section_column_index =
+                            Self::board_column_to_section_column_index(section, self.column_index)?;
+                        let column = section.columns.get(section_column_index)?;
+                        let heading = view
+                            .category_aliases
+                            .get(&column.heading)
+                            .map(|alias| alias.trim())
+                            .filter(|alias| !alias.is_empty())
+                            .map(|alias| alias.to_string())
+                            .or_else(|| {
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == column.heading)
+                                    .map(|c| c.name.clone())
+                            })
+                            .unwrap_or_else(|| "?".to_string());
+                        let item_label = self
+                            .selected_item()
+                            .map(|item| truncate_board_cell(&board_item_label(item), 40))
+                            .unwrap_or_else(|| "(no item)".to_string());
+                        Some(format!("Column: {heading}  Item: {item_label}"))
+                    })
+                })
+            })
+            .unwrap_or_else(|| "Set category".to_string());
+        frame.render_widget(
+            Paragraph::new(context_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[0],
+        );
+
+        let scope_text = self
+            .category_direct_edit_state()
+            .map(|state| {
+                let exclusive = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == state.parent_id)
+                    .map(|c| if c.is_exclusive { "yes" } else { "no" })
+                    .unwrap_or("?");
+                format!(
+                    "Scope: This column only  Parent: {} (exclusive: {exclusive})",
+                    state.parent_name
+                )
+            })
+            .unwrap_or_else(|| "Scope: This column only".to_string());
+        frame.render_widget(
+            Paragraph::new(scope_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
+
+        let focus = direct_state
+            .map(|state| state.focus)
+            .unwrap_or(CategoryDirectEditFocus::Input);
+        let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
+        let active_row_index = direct_state.map(|s| s.active_row).unwrap_or(0);
+        let rows: Vec<ListItem<'_>> = direct_state
+            .map(|state| {
+                state
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, row)| {
+                        let label = if row.input.trimmed().is_empty() {
+                            "(new row)".to_string()
+                        } else {
+                            row.input.text().to_string()
+                        };
+                        let resolved_marker = if row.category_id.is_some() { "" } else { " *" };
+                        let prefix = format!("{:>2}. ", idx + 1);
+                        let style = if idx == state.active_row
+                            && focus != CategoryDirectEditFocus::Entries
+                        {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        };
+                        ListItem::new(format!("{prefix}{label}{resolved_marker}")).style(style)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let entries_border = if focus == CategoryDirectEditFocus::Entries {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        let mut entries_state = Self::list_state_for(chunks[2], Some(active_row_index));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Assigned In This Column")
+                        .border_style(entries_border),
+                ),
+            chunks[2],
+            &mut entries_state,
+        );
+
+        let input_border = if focus == CategoryDirectEditFocus::Input {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::raw(active_input),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Edit Active Row")
+                    .border_style(input_border),
+            ),
+            chunks[3],
+        );
+
+        let inline_create_name = self
+            .category_direct_edit_state()
+            .and_then(|state| state.create_confirm_name.as_deref());
+        if let Some(name) = inline_create_name {
+            self.render_category_create_confirm_panel(
+                frame,
+                chunks[4],
+                name,
+                "as a new child category in this column?",
+            );
+            frame.render_widget(
+                Paragraph::new("S save draft  Esc cancel draft")
+                    .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                chunks[5],
+            );
+            return;
+        }
+
+        let matches = self.get_current_suggest_matches();
+        let has_matches = !matches.is_empty();
+        let help_text = if active_input.trim().is_empty() {
+            "Empty row: Enter removes row (or keeps one blank). S saves draft. Esc cancels draft."
+        } else if has_matches {
+            match focus {
+                CategoryDirectEditFocus::Entries => {
+                    "Entries: Up/Down move rows | Tab/Shift-Tab focus | n/a add | x remove | S save"
+                }
+                CategoryDirectEditFocus::Input => {
+                    "Input: type edits active row | Enter resolve/create | Tab focus-next | S save"
+                }
+                CategoryDirectEditFocus::Suggestions => {
+                    "Suggestions: Up/Down move | Tab copies name | Enter resolves row | S save"
+                }
+            }
+        } else {
+            "No match: Enter opens create confirm. S saves only resolved rows. Esc cancels draft."
+        };
+
+        if matches.is_empty() {
+            let empty_msg = if active_input.trim().is_empty() {
+                "(no suggestions yet)"
+            } else {
+                "(no matches)"
+            };
+            frame.render_widget(
+                Paragraph::new(empty_msg).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Suggested Categories")
+                        .border_style(if focus == CategoryDirectEditFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
+                ),
+                chunks[4],
+            );
+            frame.render_widget(
+                Paragraph::new(help_text)
+                    .style(Style::default().fg(MUTED_TEXT_COLOR))
+                    .wrap(Wrap { trim: true }),
+                chunks[5],
+            );
+            return;
+        }
+
+        let selected_idx = self
+            .category_direct_edit_state()
+            .map(|s| s.suggest_index.min(matches.len() - 1))
+            .unwrap_or(0);
+
+        let items: Vec<ListItem<'_>> = matches
+            .iter()
+            .map(|id| {
+                let name = self
+                    .categories
+                    .iter()
+                    .find(|c| c.id == *id)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("?");
+                ListItem::new(name)
+            })
+            .collect();
+        let item_count = items.len();
+        let mut state = Self::list_state_for(chunks[4], Some(selected_idx));
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Suggested Categories")
+                        .border_style(if focus == CategoryDirectEditFocus::Suggestions {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
+                ),
+            chunks[4],
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, chunks[4], item_count, state.offset());
+        frame.render_widget(
+            Paragraph::new(help_text)
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .wrap(Wrap { trim: true }),
+            chunks[5],
+        );
+    }
+
+    fn render_link_wizard(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Link Wizard")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 6 || area.height < 8 {
+            return;
+        }
+
+        let Some(state) = self.link_wizard_state() else {
+            return;
+        };
+        let action = LinkWizardAction::from_index(state.action_index);
+        let anchor = self.link_wizard_anchor_item();
+        let anchor_label = anchor
+            .map(board_item_label)
+            .unwrap_or_else(|| state.anchor_item_id.to_string());
+        let source_count = self.link_wizard_source_count();
+        let matches = self.link_wizard_target_matches();
+        let selected_target_id = self.link_wizard_selected_target_id();
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // anchor
+                Constraint::Length(7), // actions
+                Constraint::Length(3), // target query
+                Constraint::Min(5),    // target matches
+                Constraint::Length(4), // preview
+                Constraint::Length(2), // help
+            ])
+            .split(inner);
+
+        let anchor_lines = vec![
+            Line::from(if source_count > 1 {
+                format!("Source set ({source_count} items)")
+            } else {
+                "Anchor item".to_string()
+            }),
+            Line::from(if source_count > 1 {
+                format!("  {} (focused)", truncate_board_cell(&anchor_label, 72))
+            } else {
+                format!("  {}", truncate_board_cell(&anchor_label, 72))
+            }),
+        ];
+        frame.render_widget(
+            Paragraph::new(anchor_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            ),
+            rows[0],
+        );
+
+        let mut action_items = Vec::new();
+        for (idx, candidate) in LinkWizardAction::ALL.iter().enumerate() {
+            let selected = idx == state.action_index;
+            let marker = if selected { ">" } else { " " };
+            action_items.push(ListItem::new(format!(
+                "{marker} {:<18} {}",
+                candidate.label(),
+                candidate.description()
+            )));
+        }
+        let action_block = Block::default()
+            .title(if state.focus == LinkWizardFocus::ScopeAction {
+                "Relationship *"
+            } else {
+                "Relationship"
+            })
+            .borders(Borders::ALL)
+            .border_style(if state.focus == LinkWizardFocus::ScopeAction {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            });
+        frame.render_widget(List::new(action_items).block(action_block), rows[1]);
+
+        let target_title = if state.focus == LinkWizardFocus::Target {
+            "Target *"
+        } else {
+            "Target"
+        };
+        let target_block = Block::default()
+            .title(target_title)
+            .borders(Borders::ALL)
+            .border_style(if state.focus == LinkWizardFocus::Target {
+                Style::default().fg(Color::Yellow)
+            } else if !action.requires_target() {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            });
+        let target_text = if action.requires_target() {
+            format!("Search> {}", state.target_filter.text())
+        } else {
+            "(not used for clear dependencies)".to_string()
+        };
+        frame.render_widget(Paragraph::new(target_text).block(target_block), rows[2]);
+
+        let mut target_items: Vec<ListItem> = Vec::new();
+        if action.requires_target() {
+            for item_id in &matches {
+                let label = self
+                    .all_items
+                    .iter()
+                    .find(|item| item.id == *item_id)
+                    .map(|item| {
+                        let status = if item.is_done { "done" } else { "open" };
+                        format!("{status} | {}", item.text)
+                    })
+                    .unwrap_or_else(|| format!("missing | {item_id}"));
+                target_items.push(ListItem::new(truncate_board_cell(&label, 72)));
+            }
+            if target_items.is_empty() {
+                target_items.push(ListItem::new("  (no matches)"));
+            }
+        } else {
+            target_items.push(ListItem::new(
+                "  Clear dependencies removes prereqs and blocked items",
+            ));
+        }
+        let matches_block = Block::default()
+            .title("Matches")
+            .borders(Borders::ALL)
+            .border_style(if state.focus == LinkWizardFocus::Target {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            });
+        if action.requires_target() {
+            let selected = if matches.is_empty() {
+                None
+            } else {
+                Some(state.target_index.min(matches.len().saturating_sub(1)))
+            };
+            let mut list_state = Self::list_state_for(rows[3], selected);
+            let item_count = target_items.len();
+            frame.render_stateful_widget(
+                List::new(target_items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(matches_block),
+                rows[3],
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, rows[3], item_count, list_state.offset());
+        } else {
+            frame.render_widget(List::new(target_items).block(matches_block), rows[3]);
+        }
+
+        let preview_lines = {
+            let mut lines = vec![Line::from("Preview")];
+            match action {
+                LinkWizardAction::BlockedBy => {
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items blocked by {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(
+                                "  (applies one depends-on link per selected item)",
+                            ));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} blocked by {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(format!(
+                                "  (stores: {} depends-on {})",
+                                truncate_board_cell(&anchor_label, 22),
+                                truncate_board_cell(&target.text, 22)
+                            )));
+                        }
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::DependsOn => {
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items depend on {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} depends on {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                        }
+                        lines.push(Line::from(""));
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::Blocks => {
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items block {}",
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(
+                                "  (adds one blocked relation per selected item)",
+                            ));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} blocks {}",
+                                truncate_board_cell(&anchor_label, 28),
+                                truncate_board_cell(&target.text, 28)
+                            )));
+                            lines.push(Line::from(format!(
+                                "  (stores: {} depends-on {})",
+                                truncate_board_cell(&target.text, 22),
+                                truncate_board_cell(&anchor_label, 22)
+                            )));
+                        }
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::RelatedTo => {
+                    let target = selected_target_id
+                        .and_then(|id| self.all_items.iter().find(|item| item.id == id));
+                    if let Some(target) = target {
+                        if source_count > 1 {
+                            lines.push(Line::from(format!(
+                                "  {source_count} selected items related to {}",
+                                truncate_board_cell(&target.text, 26)
+                            )));
+                            lines.push(Line::from(
+                                "  (adds one symmetric relation per selected item)",
+                            ));
+                        } else {
+                            lines.push(Line::from(format!(
+                                "  {} related to {}",
+                                truncate_board_cell(&anchor_label, 26),
+                                truncate_board_cell(&target.text, 26)
+                            )));
+                            lines.push(Line::from("  (symmetric)"));
+                        }
+                    } else {
+                        lines.push(Line::from("  Select a target item"));
+                        lines.push(Line::from(""));
+                    }
+                }
+                LinkWizardAction::ClearDependencies => {
+                    if source_count > 1 {
+                        lines.push(Line::from(
+                            "  Remove immediate prereqs and dependents for all selected items",
+                        ));
+                    } else {
+                        lines.push(Line::from("  Remove all immediate prereqs and dependents"));
+                    }
+                    lines.push(Line::from("  (does not remove related links)"));
+                }
+            }
+            while lines.len() < 4 {
+                lines.push(Line::from(""));
+            }
+            lines
+        };
+        frame.render_widget(
+            Paragraph::new(preview_lines).block(
+                Block::default()
+                    .title(if state.focus == LinkWizardFocus::Confirm {
+                        "Apply *"
+                    } else {
+                        "Apply"
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(if state.focus == LinkWizardFocus::Confirm {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    }),
+            ),
+            rows[4],
+        );
+
+        frame.render_widget(
+            Paragraph::new("j/k or arrows:move  Tab:focus  Enter:next/apply  type:search target  /:target focus  b/B:different block direction  d/r/c:action  Esc:cancel")
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            rows[5],
+        );
+    }
+
+    fn link_wizard_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::LinkWizard || area.width < 6 || area.height < 8 {
+            return None;
+        }
+        let state = self.link_wizard_state()?;
+        let action = LinkWizardAction::from_index(state.action_index);
+        if state.focus != LinkWizardFocus::Target || !action.requires_target() {
+            return None;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // anchor
+                Constraint::Length(7), // actions
+                Constraint::Length(3), // target query
+                Constraint::Min(5),    // target matches
+                Constraint::Length(4), // preview
+                Constraint::Length(2), // help
+            ])
+            .split(inner);
+        let target_query = rows[2];
+        let input_x = target_query.x.saturating_add(1);
+        let input_y = target_query.y.saturating_add(1);
+        let prefix_len = "Search> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = state.target_filter.cursor().min(u16::MAX as usize) as u16;
+        let max_x = target_query
+            .x
+            .saturating_add(target_query.width.saturating_sub(2));
+        let x = input_x
+            .saturating_add(prefix_len)
+            .saturating_add(cursor_chars)
+            .min(max_x);
+        Some((x, input_y))
+    }
+
+    fn category_direct_edit_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryDirectEdit || area.width < 4 || area.height < 4 {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(6),
+                Constraint::Length(3),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[3];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Category> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = self
+            .active_category_direct_edit_row()
+            .map(|row| row.input.cursor())
+            .unwrap_or_else(|| self.input.cursor())
+            .min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        let x = input_x
+            .saturating_add(prefix_len)
+            .saturating_add(cursor_chars)
+            .min(max_x);
+        Some((x, input_y))
+    }
+
+    fn render_category_create_confirm_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        name: &str,
+        description_suffix: &str,
+    ) {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Create \"{}\" {}\ny:confirm  Esc:cancel",
+                name, description_suffix
+            ))
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Create Category"),
+            ),
+            area,
+        );
+    }
+
+    fn render_category_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Set Category")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 4 || area.height < 6 {
+            return;
+        }
+        let Some(state) = self.category_column_picker_state() else {
+            return;
+        };
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(5),
+                Constraint::Length(4),
+                Constraint::Min(4),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+
+        let selected_names: Vec<String> = self
+            .categories
+            .iter()
+            .filter(|c| state.selected_ids.contains(&c.id))
+            .map(|c| c.name.clone())
+            .collect();
+        let selected_display = if selected_names.is_empty() {
+            "(none)".to_string()
+        } else {
+            selected_names.join(", ")
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Column: {}  Mode: {}\nSelected: {}",
+                state.parent_name,
+                if state.is_exclusive {
+                    "single"
+                } else {
+                    "multi"
+                },
+                truncate_board_cell(&selected_display, 56),
+            ))
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new(state.item_label.clone())
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .block(Block::default().borders(Borders::ALL).title("Item Context"))
+                .wrap(Wrap { trim: false })
+                .scroll((state.item_preview_scroll, 0)),
+            chunks[1],
+        );
+
+        let input_border = if state.focus == CategoryColumnPickerFocus::FilterInput {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![
+                    Span::styled("Search or create> ", Style::default().fg(Color::Yellow)),
+                    Span::raw(state.filter.text()),
+                ]),
+                Line::from(vec![Span::styled(
+                    "Enter reuses an exact match or creates a new child category and saves it.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )]),
+            ])
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Search or Create")
+                    .border_style(input_border),
+            ),
+            chunks[2],
+        );
+
+        let matches = self.category_column_picker_matches();
+        let items: Vec<ListItem<'_>> = if matches.is_empty() {
+            let msg = if state.filter.text().trim().is_empty() {
+                "(type to search existing child categories)"
+            } else {
+                "(no exact match yet; Enter will create this as a new child)"
+            };
+            vec![ListItem::new(msg)]
+        } else {
+            matches
+                .iter()
+                .map(|id| {
+                    let label = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == *id)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("(missing)");
+                    let mark = if state.is_exclusive {
+                        if state.selected_ids.contains(id) {
+                            "(*)"
+                        } else {
+                            "( )"
+                        }
+                    } else if state.selected_ids.contains(id) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    ListItem::new(format!("{mark} {label}"))
+                })
+                .collect()
+        };
+        let selected = if matches.is_empty() {
+            None
+        } else {
+            Some(state.list_index.min(matches.len() - 1))
+        };
+        let mut list_state = Self::list_state_for(chunks[3], selected);
+        frame.render_stateful_widget(
+            List::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Categories")
+                        .border_style(if state.focus == CategoryColumnPickerFocus::List {
+                            Style::default().fg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        }),
+                )
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style()),
+            chunks[3],
+            &mut list_state,
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            chunks[3],
+            matches.len().max(1),
+            list_state.offset(),
+        );
+
+        frame.render_widget(
+            Paragraph::new(
+                "Type to search or name a new category | Tab list | Space toggle in list | Enter use/create+save | Esc cancel",
+            )
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[4],
+        );
+    }
+
+    fn category_column_picker_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryColumnPicker || area.width < 4 || area.height < 4 {
+            return None;
+        }
+        let state = self.category_column_picker_state()?;
+        if state.focus != CategoryColumnPickerFocus::FilterInput {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(5),
+                Constraint::Length(4),
+                Constraint::Min(4),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[2];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Search or create> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = state.filter.cursor().min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        Some((
+            input_x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            input_y,
+        ))
+    }
+
+    fn render_board_add_column_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Add Column")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 4 || area.height < 6 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+
+        let header = self
+            .board_add_column
+            .as_ref()
+            .map(|state| {
+                let dir = match state.anchor.direction {
+                    AddColumnDirection::Left => "left",
+                    AddColumnDirection::Right => "right",
+                };
+                let section = self
+                    .current_view()
+                    .and_then(|v| v.sections.get(state.anchor.section_index))
+                    .map(|s| s.title.as_str())
+                    .unwrap_or("(missing)");
+                format!(
+                    "Section: {}  Insert {} of current column  Index: {}",
+                    section, dir, state.anchor.insert_index
+                )
+            })
+            .unwrap_or_else(|| "Insert a category column".to_string());
+        frame.render_widget(
+            Paragraph::new(header)
+                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                .wrap(Wrap { trim: true }),
+            chunks[0],
+        );
+
+        let input_text = self.board_add_column_input_text().unwrap_or("");
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Category> ", Style::default().fg(Color::Yellow)),
+                Span::raw(input_text),
+            ]))
+            .block(Block::default().borders(Borders::ALL).title("Typeahead")),
+            chunks[1],
+        );
+
+        if let Some(name) = self.board_add_column_create_confirm_name() {
+            self.render_category_create_confirm_panel(
+                frame,
+                chunks[2],
+                name,
+                "as a new top-level category and insert its column?",
+            );
+        } else {
+            let matches = self.get_board_add_column_suggest_matches();
+            let items: Vec<ListItem<'_>> = if matches.is_empty() {
+                let msg = if input_text.trim().is_empty() {
+                    "(type to filter categories)"
+                } else {
+                    "(no matches)"
+                };
+                vec![ListItem::new(msg)]
+            } else {
+                matches
+                    .iter()
+                    .map(|id| {
+                        let label = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == *id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("(missing)");
+                        ListItem::new(label)
+                    })
+                    .collect()
+            };
+            let selected = self.board_add_column.as_ref().and_then(|s| {
+                (!matches.is_empty()).then(|| s.suggest_index.min(matches.len() - 1))
+            });
+            let mut list_state = Self::list_state_for(chunks[2], selected);
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(Block::default().borders(Borders::ALL).title("Categories"))
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style()),
+                chunks[2],
+                &mut list_state,
+            );
+        }
+
+        frame.render_widget(
+            Paragraph::new(
+                "Type filter | Up/Down select | Tab autocomplete | Enter insert | Esc cancel",
+            )
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+            .wrap(Wrap { trim: true }),
+            chunks[3],
+        );
+    }
+
+    fn board_add_column_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::BoardAddColumnPicker || area.width < 4 || area.height < 4 {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let input_area = chunks[1];
+        let input_x = input_area.x.saturating_add(1);
+        let input_y = input_area.y.saturating_add(1);
+        let prefix_len = "Category> ".chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = self
+            .board_add_column
+            .as_ref()
+            .map(|s| s.input.cursor())
+            .unwrap_or(0)
+            .min(u16::MAX as usize) as u16;
+        let max_x = input_area
+            .x
+            .saturating_add(input_area.width.saturating_sub(2));
+        Some((
+            input_x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            input_y,
+        ))
+    }
+
+    pub(crate) fn category_manager_action_cursor_position(&self, area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
+            return None;
+        }
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+        let max_x = inner.x.saturating_add(inner.width.saturating_sub(1));
+
+        if let Some(action) = self.category_manager_inline_action() {
+            match action {
+                CategoryInlineAction::Rename { buf, .. } => {
+                    let prefix_len = "Rename> ".chars().count().min(u16::MAX as usize) as u16;
+                    let cursor_chars = buf.cursor().min(u16::MAX as usize) as u16;
+                    let cursor_x = inner
+                        .x
+                        .saturating_add(prefix_len)
+                        .saturating_add(cursor_chars)
+                        .min(max_x);
+                    return Some((cursor_x, inner.y));
+                }
+                CategoryInlineAction::DeleteConfirm { .. } => {}
+            }
+            return None;
+        }
+
+        if self.category_manager_focus() == Some(CategoryManagerFocus::Filter)
+            && self.category_manager_filter_editing()
+        {
+            let prefix_len = "Filter: ".chars().count().min(u16::MAX as usize) as u16;
+            let cursor_chars = self
+                .category_manager
+                .as_ref()
+                .map(|state| state.filter.cursor())
+                .unwrap_or(0)
+                .min(u16::MAX as usize) as u16;
+            let cursor_x = inner
+                .x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x);
+            return Some((cursor_x, inner.y));
+        }
+
+        None
+    }
+
+    pub(crate) fn category_manager_details_cursor_position(
+        &self,
+        area: Rect,
+    ) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
+            return None;
+        }
+        if self.category_manager_focus() != Some(CategoryManagerFocus::Details) {
+            return None;
+        }
+        let input = self.category_manager_details_inline_input()?;
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+
+        let is_numeric_category = self
+            .selected_category_row()
+            .map(|row| row.value_kind == CategoryValueKind::Numeric)
+            .unwrap_or(false);
+        if !is_numeric_category {
+            return None;
+        }
+        let flags_height = 7;
+        let details_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC),
+                Constraint::Length(flags_height),
+                Constraint::Min(5),
+                Constraint::Length(2),
+            ])
+            .split(inner);
+        let flags_inner = Rect {
+            x: details_chunks[1].x.saturating_add(1),
+            y: details_chunks[1].y.saturating_add(1),
+            width: details_chunks[1].width.saturating_sub(2),
+            height: details_chunks[1].height.saturating_sub(2),
+        };
+        if flags_inner.width == 0 || flags_inner.height == 0 {
+            return None;
+        }
+        let max_x = flags_inner
+            .x
+            .saturating_add(flags_inner.width.saturating_sub(1));
+        let (line_offset, prefix) = match input.field {
+            CategoryManagerDetailsInlineField::DecimalPlaces => (1u16, "  Decimal places: "),
+            CategoryManagerDetailsInlineField::CurrencySymbol => (2u16, "  Currency symbol: "),
+        };
+        let prefix_len = prefix.chars().count().min(u16::MAX as usize) as u16;
+        let cursor_chars = input.buffer.cursor().min(u16::MAX as usize) as u16;
+        Some((
+            flags_inner
+                .x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            flags_inner.y.saturating_add(line_offset),
+        ))
+    }
+
+    pub(crate) fn category_manager_condition_cursor_position(
+        &self,
+        area: Rect,
+    ) -> Option<(u16, u16)> {
+        if self.mode != Mode::CategoryManager || area.width < 3 || area.height < 3 {
+            return None;
+        }
+        let edit = self.category_manager_condition_edit()?;
+        if !edit.picker_open || !matches!(edit.editor_kind, ConditionEditorKind::DateEditor) {
+            return None;
+        }
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(8),
+                Constraint::Length(1),
+            ])
+            .split(overlay_area);
+
+        let inner = Rect {
+            x: chunks[1].x.saturating_add(1),
+            y: chunks[1].y.saturating_add(1),
+            width: chunks[1].width.saturating_sub(2),
+            height: chunks[1].height.saturating_sub(2),
+        };
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+        let max_x = inner.x.saturating_add(inner.width.saturating_sub(1));
+        let text_width = inner.width as usize;
+
+        let (line_offset, prefix, cursor_chars): (u16, String, u16) =
+            match edit.draft_date.field_focus {
+                DateConditionField::Source => (
+                    0u16,
+                    "> Source:   ".to_string(),
+                    render_date_source(edit.draft_date.source)
+                        .chars()
+                        .count()
+                        .min(u16::MAX as usize) as u16,
+                ),
+                DateConditionField::Match => {
+                    let value = draft_match_label(edit.draft_date.kind);
+                    (
+                        1u16,
+                        "> Match:    ".to_string(),
+                        value.chars().count().min(u16::MAX as usize) as u16,
+                    )
+                }
+                DateConditionField::Value if draft_uses_value_field(edit.draft_date.kind) => {
+                    let prefix = format!("> {}:    ", draft_value_label(edit.draft_date.kind));
+                    let available = text_width.saturating_sub(prefix.chars().count());
+                    let (_, cursor) = clip_text_for_row(
+                        edit.draft_date.value_input.text(),
+                        edit.draft_date.value_input.cursor(),
+                        available,
+                        true,
+                    );
+                    (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
+                }
+                DateConditionField::From if draft_uses_range_fields(edit.draft_date.kind) => {
+                    let prefix = "> From:     ".to_string();
+                    let available = text_width.saturating_sub(prefix.chars().count());
+                    let (_, cursor) = clip_text_for_row(
+                        edit.draft_date.from_input.text(),
+                        edit.draft_date.from_input.cursor(),
+                        available,
+                        true,
+                    );
+                    (2u16, prefix, cursor.min(u16::MAX as usize) as u16)
+                }
+                DateConditionField::Through if draft_uses_range_fields(edit.draft_date.kind) => {
+                    let prefix = "> Through:  ".to_string();
+                    let available = text_width.saturating_sub(prefix.chars().count());
+                    let (_, cursor) = clip_text_for_row(
+                        edit.draft_date.through_input.text(),
+                        edit.draft_date.through_input.cursor(),
+                        available,
+                        true,
+                    );
+                    (3u16, prefix, cursor.min(u16::MAX as usize) as u16)
+                }
+                _ => return None,
+            };
+
+        let prefix_len = prefix.chars().count().min(u16::MAX as usize) as u16;
+        Some((
+            inner
+                .x
+                .saturating_add(prefix_len)
+                .saturating_add(cursor_chars)
+                .min(max_x),
+            inner.y.saturating_add(line_offset),
+        ))
+    }
+
+    pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
+        match self.mode {
+            Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
+            Mode::ItemAssignInput => Some("Category> ".to_string()),
+            Mode::Normal
+            | Mode::GlobalSettings
+            | Mode::HelpPanel
+            | Mode::SuggestionReview
+            | Mode::InputPanel
+            | Mode::LinkWizard
+            | Mode::ItemAssignPicker
+            | Mode::InspectUnassign
+            | Mode::ViewPicker
+            | Mode::ViewEdit
+            | Mode::ViewDeleteConfirm
+            | Mode::ConfirmDelete
+            | Mode::BoardColumnDeleteConfirm
+            | Mode::CategoryManager
+            | Mode::CategoryDirectEdit
+            | Mode::CategoryColumnPicker
+            | Mode::BoardAddColumnPicker => None,
+        }
+    }
+
+    pub(crate) fn input_cursor_position(&self, footer_area: Rect) -> Option<(u16, u16)> {
+        let prefix = self.input_prompt_prefix()?;
+        if footer_area.width < 3 || footer_area.height < 3 {
+            return None;
+        }
+
+        let inner_x = footer_area.x.saturating_add(1);
+        let inner_y = footer_area.y.saturating_add(1);
+        let max_inner_x = footer_area
+            .x
+            .saturating_add(footer_area.width.saturating_sub(2));
+
+        let input_chars = self.clamped_input_cursor().min(u16::MAX as usize) as u16;
+        let prefix_chars = prefix.chars().count().min(u16::MAX as usize) as u16;
+        let raw_x = inner_x
+            .saturating_add(prefix_chars)
+            .saturating_add(input_chars);
+        let cursor_x = raw_x.min(max_inner_x);
+
+        Some((cursor_x, inner_y))
+    }
+
+    pub(crate) fn input_panel_cursor_position(
+        &self,
+        popup_area: Rect,
+        panel: &input_panel::InputPanel,
+    ) -> Option<(u16, u16)> {
+        use input_panel::InputPanelFocus;
+
+        if popup_area.width < 3 || popup_area.height < 3 {
+            return None;
+        }
+        let regions = input_panel_popup_regions(popup_area, panel.kind)?;
+        match panel.focus {
+            InputPanelFocus::Text => {
+                let prefix_str = match panel.kind {
+                    input_panel::InputPanelKind::NameInput
+                    | input_panel::InputPanelKind::CategoryCreate => "  Name> ",
+                    input_panel::InputPanelKind::WhenDate => "  When: ",
+                    input_panel::InputPanelKind::NumericValue => "  Value> ",
+                    _ => "  Description: ",
+                };
+                let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
+                let (_, visible_cursor) = clip_text_for_row(
+                    panel.text.text(),
+                    panel.text.cursor(),
+                    (regions.text.width as usize).saturating_sub(prefix_len as usize),
+                    true,
+                );
+                let input_chars = visible_cursor.min(u16::MAX as usize) as u16;
+                let max_x = regions
+                    .text
+                    .x
+                    .saturating_add(regions.text.width.saturating_sub(1));
+                let cursor_x = regions
+                    .text
+                    .x
+                    .saturating_add(prefix_len)
+                    .saturating_add(input_chars)
+                    .min(max_x);
+                Some((cursor_x, regions.text.y))
+            }
+            InputPanelFocus::Note => {
+                // tui-textarea renders its own styled cursor that correctly
+                // handles word wrapping; no terminal cursor needed.
+                None
+            }
+            InputPanelFocus::Categories => {
+                if panel.kind == input_panel::InputPanelKind::EditItem {
+                    return None;
+                }
+                if panel.category_filter_editing {
+                    let filter_rect = regions.categories_filter?;
+                    let prefix = "> Filter> ";
+                    let max_x = filter_rect
+                        .x
+                        .saturating_add(filter_rect.width.saturating_sub(1));
+                    let cursor_x =
+                        filter_rect
+                            .x
+                            .saturating_add(prefix.chars().count().min(u16::MAX as usize) as u16)
+                            .saturating_add(
+                                panel.category_filter.cursor().min(u16::MAX as usize) as u16
+                            )
+                            .min(max_x);
+                    return Some((cursor_x, filter_rect.y));
+                }
+
+                // Show cursor in the numeric value field if on an assigned numeric category row.
+                let cat_list = if panel.category_filter_editing {
+                    regions.categories_list?
+                } else {
+                    regions.categories_inner?
+                };
+                let selected_row = self.input_panel_selected_category_row_for(panel)?.row;
+                let is_assigned = panel.categories.contains(&selected_row.id);
+                let is_numeric =
+                    selected_row.value_kind == aglet_core::model::CategoryValueKind::Numeric;
+                if is_assigned && is_numeric {
+                    if let Some(buf) = panel.numeric_buffers.get(&selected_row.id) {
+                        // Value field is right-aligned: "[value_]"
+                        // The cursor should be positioned within that field.
+                        let value_text_len = buf.text().chars().count() + 2; // "[" + text + "]"
+                        let buf_cursor = buf.cursor();
+                        // Position: end of inner rect - value_text_len + 1 (for "[") + buf_cursor
+                        let field_start_x = cat_list
+                            .x
+                            .saturating_add(cat_list.width)
+                            .saturating_sub(value_text_len as u16);
+                        let cursor_x = field_start_x
+                            .saturating_add(1) // skip "["
+                            .saturating_add(buf_cursor.min(u16::MAX as usize) as u16)
+                            .min(cat_list.x.saturating_add(cat_list.width.saturating_sub(1)));
+                        let scroll =
+                            list_scroll_for_selected_line(cat_list, Some(panel.category_cursor))
+                                as usize;
+                        let visible_row = panel.category_cursor.saturating_sub(scroll);
+                        let cursor_y = cat_list
+                            .y
+                            .saturating_add(visible_row.min(u16::MAX as usize) as u16)
+                            .min(cat_list.y.saturating_add(cat_list.height.saturating_sub(1)));
+                        return Some((cursor_x, cursor_y));
+                    }
+                }
+                None
+            }
+            InputPanelFocus::Actions | InputPanelFocus::Suggestions => None,
+            InputPanelFocus::When => {
+                let prefix_str = "  When: ";
+                let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
+                let (_, visible_cursor) = clip_text_for_row(
+                    panel.when_buffer.text(),
+                    panel.when_buffer.cursor(),
+                    (regions.when?.width as usize).saturating_sub(prefix_len as usize),
+                    true,
+                );
+                let input_chars = visible_cursor.min(u16::MAX as usize) as u16;
+                let max_x = regions
+                    .when?
+                    .x
+                    .saturating_add(regions.when?.width.saturating_sub(1));
+                let cursor_x = regions
+                    .when?
+                    .x
+                    .saturating_add(prefix_len)
+                    .saturating_add(input_chars)
+                    .min(max_x);
+                Some((cursor_x, regions.when?.y))
+            }
+            InputPanelFocus::TypePicker => None,
+        }
+    }
+
+    pub(crate) fn render_header(&self) -> Paragraph<'_> {
+        let current_view = self.current_view();
+        let view_name = self
+            .global_search_session
+            .as_ref()
+            .and_then(|session| session.return_view_name.as_deref())
+            .or_else(|| current_view.map(|view| view.name.as_str()))
+            .unwrap_or("(none)");
+        let search = if self.global_search_active() {
+            " search:global"
+        } else {
+            ""
+        };
+        let mode = format!("{:?}", self.mode);
+        let active_filters = self.section_filters.iter().filter(|f| f.is_some()).count();
+        let filter = if active_filters > 0 {
+            format!(" filters:{active_filters}")
+        } else {
+            String::new()
+        };
+        let view_flags = if self.effective_hide_dependent_items() {
+            " dep:hidden"
+        } else {
+            ""
+        };
+        let workflow_hint = self.ready_queue_header_hint().unwrap_or_default();
+        Paragraph::new(Line::raw(format!(
+            "view:{view_name}{view_flags}{workflow_hint}{search}  mode:{mode}{filter}"
+        )))
+    }
+
+    fn section_search_has_no_matches(&self) -> bool {
+        if self.global_search_active() || self.search_buffer.trimmed().is_empty() {
+            return false;
+        }
+        self.section_filters
+            .get(self.slot_index)
+            .and_then(|filter| filter.as_deref())
+            .is_some_and(|filter| !filter.trim().is_empty())
+            && self
+                .current_slot()
+                .is_some_and(|slot| slot.items.is_empty())
+    }
+
+    fn render_search_bar(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let section_name = if self.global_search_active() {
+            "Global/All Items"
+        } else {
+            self.current_slot()
+                .map(|s| s.title.as_str())
+                .unwrap_or("section")
+        };
+        let label = format!("[{section_name}] ");
+        let is_focused = self.mode == Mode::SearchBarFocused;
+
+        let label_style = Style::default().fg(Color::Cyan);
+        let (text_content, text_style) = if is_focused {
+            let text = self.search_buffer.text();
+            if text.is_empty() {
+                (
+                    "Search or create...".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )
+            } else {
+                (text.to_string(), Style::default().fg(Color::White))
+            }
+        } else {
+            let filter = self
+                .section_filters
+                .get(self.slot_index)
+                .and_then(|f| f.as_deref());
+            if let Some(text) = filter {
+                (text.to_string(), Style::default().fg(Color::Yellow))
+            } else {
+                (
+                    "Search or create...".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                )
+            }
+        };
+
+        let mut spans = vec![
+            Span::styled(label.clone(), label_style),
+            Span::styled(text_content, text_style),
+        ];
+        if self.section_search_has_no_matches() {
+            spans.push(Span::styled(
+                "  g/:search all sections",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+        }
+        let line = Line::from(spans);
+        frame.render_widget(Paragraph::new(line), area);
+
+        // Position cursor when focused
+        if is_focused && !self.search_buffer.text().is_empty() {
+            let label_len = label.chars().count() as u16;
+            let cursor_offset = self.search_buffer.cursor().min(u16::MAX as usize) as u16;
+            let x = area
+                .x
+                .saturating_add(label_len)
+                .saturating_add(cursor_offset);
+            let x = x.min(area.x.saturating_add(area.width.saturating_sub(1)));
+            frame.set_cursor_position((x, area.y));
+        } else if is_focused {
+            // Empty buffer but focused: cursor at start of text area
+            let label_len = label.chars().count() as u16;
+            let x = area.x.saturating_add(label_len);
+            frame.set_cursor_position((x, area.y));
+        }
+    }
+
+    pub(crate) fn render_main(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if self.mode == Mode::ViewEdit {
+            self.render_view_edit_screen(frame, area);
+            return;
+        }
+        if self.mode == Mode::GlobalSettings {
+            self.render_global_settings(frame, area);
+            return;
+        }
+        let category_create_panel_open = self.mode == Mode::InputPanel
+            && self.name_input_context == Some(NameInputContext::CategoryCreate)
+            && self
+                .input_panel
+                .as_ref()
+                .map(|panel| panel.kind == input_panel::InputPanelKind::CategoryCreate)
+                .unwrap_or(false);
+        if matches!(self.mode, Mode::CategoryManager) || category_create_panel_open {
+            self.render_category_manager(frame, area);
+            return;
+        }
+        if self.show_preview {
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(area);
+            self.render_board_columns(frame, split[0]);
+            match self.preview_mode {
+                PreviewMode::Summary => {
+                    let summary_width = split[1].width;
+                    frame.render_widget(self.render_preview_summary_panel(summary_width), split[1]);
+                    let content_len = self
+                        .selected_item()
+                        .map(|item| {
+                            let content_width = summary_width.saturating_sub(2).max(1) as usize;
+                            self.item_details_lines_for_item_wrapped(item, content_width)
+                                .len()
+                        })
+                        .unwrap_or(4);
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        split[1],
+                        content_len,
+                        self.preview_summary_scroll,
+                    );
+                }
+                PreviewMode::Provenance => {
+                    self.render_preview_provenance_panel(frame, split[1]);
+                }
+            }
+        } else {
+            self.render_board_columns(frame, area);
+        }
+    }
+
+    fn board_section_borders(&self) -> Borders {
+        match self.section_border_mode {
+            SectionBorderMode::Full => Borders::ALL,
+            SectionBorderMode::Compact => Borders::TOP,
+        }
+    }
+
+    fn board_section_block<'a>(&self, title: String, border_color: Color) -> Block<'a> {
+        Block::default()
+            .title(title)
+            .borders(self.board_section_borders())
+            .border_style(Style::default().fg(border_color))
+    }
+
+    fn board_section_block_with_line(
+        &self,
+        title: Line<'static>,
+        border_color: Color,
+    ) -> Block<'static> {
+        Block::default()
+            .title(title)
+            .borders(self.board_section_borders())
+            .border_style(Style::default().fg(border_color))
+    }
+
+    /// Estimate the number of terminal rows each slot needs for layout purposes.
+    /// Used to determine which slots fit in the visible viewport.
+    fn estimate_slot_heights(
+        &self,
+        empty_mode: EmptySections,
+        has_any_non_empty: bool,
+    ) -> Vec<u16> {
+        let border_rows: u16 = match self.section_border_mode {
+            SectionBorderMode::Full => 2,    // top + bottom border
+            SectionBorderMode::Compact => 1, // top border only
+        };
+        let header_row: u16 = 1; // column header row in Table widget
+
+        self.slots
+            .iter()
+            .map(|slot| {
+                let is_empty = slot.items.is_empty();
+                match empty_mode {
+                    EmptySections::Hide if is_empty && has_any_non_empty => 0,
+                    EmptySections::Collapse if is_empty && has_any_non_empty => 1,
+                    _ => {
+                        let item_rows = slot.items.len().max(1) as u16; // at least 1 for empty msg
+                        border_rows + header_row + item_rows
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Given pre-computed slot heights and a scroll offset, return the logical
+    /// slot indices that fit within `viewport_height` rows.
+    ///
+    /// Each visible slot is rendered with `Constraint::Fill(1)`, so the viewport
+    /// is shared equally among the included slots regardless of their item
+    /// counts. We therefore decide inclusion using a minimum per-slot height
+    /// (borders + header + 1 item row), not each slot's full estimated height —
+    /// otherwise a tall section like a 60-item Overdue would consume the entire
+    /// visibility budget and hide later sections that would have fit fine
+    /// under equal-share rendering.
+    pub(crate) fn visible_slot_window(
+        heights: &[u16],
+        scroll_offset: usize,
+        viewport_height: u16,
+        min_slot_height: u16,
+    ) -> Vec<usize> {
+        let min_slot_height = min_slot_height.max(1);
+        let mut remaining = viewport_height;
+        let mut visible = Vec::new();
+        for (i, &h) in heights.iter().enumerate().skip(scroll_offset) {
+            if h == 0 {
+                // Hidden slots don't consume space but are still logically present;
+                // skip them in the visible list.
+                continue;
+            }
+            if remaining < min_slot_height {
+                break;
+            }
+            visible.push(i);
+            remaining = remaining.saturating_sub(min_slot_height);
+        }
+        visible
+    }
+
+    fn min_slot_height(&self) -> u16 {
+        let border_rows: u16 = match self.section_border_mode {
+            SectionBorderMode::Full => 2,
+            SectionBorderMode::Compact => 1,
+        };
+        border_rows + 1 /* header */ + 1 /* one item row */
+    }
+
+    /// Adjust `board_scroll_offset` so the focused slot (`self.slot_index`) is
+    /// within the visible window. Called from `draw()` before immutable rendering.
+    fn ensure_focused_slot_visible(&mut self, viewport_height: u16) {
+        if self.slots.is_empty() || self.is_horizontal_section_flow() {
+            return;
+        }
+        let empty_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let heights = self.estimate_slot_heights(empty_mode, has_any_non_empty);
+
+        // If the focused slot is hidden (height 0), no scroll adjustment needed.
+        if heights.get(self.slot_index).copied().unwrap_or(0) == 0 {
+            return;
+        }
+
+        // If focused slot is before the scroll offset, scroll up to it.
+        if self.slot_index < self.board_scroll_offset {
+            self.board_scroll_offset = self.slot_index;
+            return;
+        }
+
+        // Check if focused slot is within the current visible window.
+        let min_slot_height = self.min_slot_height();
+        let visible = Self::visible_slot_window(
+            &heights,
+            self.board_scroll_offset,
+            viewport_height,
+            min_slot_height,
+        );
+        if visible.contains(&self.slot_index) {
+            return;
+        }
+
+        // Focused slot is below the visible window. Walk backward from the
+        // focused slot using min_slot_height (matching the windowing logic) to
+        // find the new scroll offset that keeps the focused slot visible.
+        let mut remaining = viewport_height;
+        let mut new_offset = self.slot_index;
+        for i in (0..=self.slot_index).rev() {
+            let h = heights[i];
+            if h == 0 {
+                continue; // hidden slots don't consume space
+            }
+            if min_slot_height > remaining {
+                break;
+            }
+            remaining = remaining.saturating_sub(min_slot_height);
+            new_offset = i;
+        }
+        self.board_scroll_offset = new_offset;
+    }
+
+    pub(crate) fn render_board_columns(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if self.slots.is_empty() {
+            frame.render_widget(
+                Paragraph::new(vec![Line::from("(no sections)")]).block(
+                    Block::default()
+                        .title("Board")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                ),
+                area,
+            );
+            return;
+        }
+
+        let empty_sections_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+
+        let current_view = self.current_view().cloned();
+        let mut category_display_names = category_name_map(&self.categories);
+        if let Some(view) = current_view.as_ref() {
+            for (category_id, alias) in &view.category_aliases {
+                let alias = alias.trim();
+                if !alias.is_empty() {
+                    category_display_names.insert(*category_id, alias.to_string());
+                }
+            }
+        }
+        let explicit_item_label = current_view
+            .as_ref()
+            .and_then(|v| v.item_column_label.clone())
+            .filter(|label| !label.trim().is_empty());
+        let today_slot = self.datebook_today_slot_index();
+
+        if self.is_horizontal_section_flow() {
+            // Horizontal lanes: use original full-layout approach (no vertical scroll).
+            let constraints: Vec<Constraint> = self
+                .slots
+                .iter()
+                .map(|slot| {
+                    let is_empty = slot.items.is_empty();
+                    match empty_sections_mode {
+                        EmptySections::Show => {
+                            let slot_count = self.slots.len() as u16;
+                            Constraint::Percentage((100 / slot_count).max(1))
+                        }
+                        EmptySections::Collapse if is_empty && has_any_non_empty => {
+                            Constraint::Length(1)
+                        }
+                        EmptySections::Hide if is_empty && has_any_non_empty => {
+                            Constraint::Length(0)
+                        }
+                        _ => Constraint::Fill(1),
+                    }
+                })
+                .collect();
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(constraints)
+                .split(area);
+            self.render_horizontal_board_lanes(
+                frame,
+                &columns,
+                &category_display_names,
+                today_slot,
+            );
+            return;
+        }
+
+        // ── Vertical board: windowed slot rendering ──────────────────────
+        let slot_heights = self.estimate_slot_heights(empty_sections_mode, has_any_non_empty);
+        let visible_slots = Self::visible_slot_window(
+            &slot_heights,
+            self.board_scroll_offset,
+            area.height,
+            self.min_slot_height(),
+        );
+
+        if visible_slots.is_empty() {
+            frame.render_widget(
+                Paragraph::new(vec![Line::from("(no visible sections)")]).block(
+                    Block::default()
+                        .title("Board")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Blue)),
+                ),
+                area,
+            );
+            return;
+        }
+
+        // Build constraints only for visible slots.
+        let constraints: Vec<Constraint> = visible_slots
+            .iter()
+            .map(|&si| {
+                let slot = &self.slots[si];
+                let is_empty = slot.items.is_empty();
+                match empty_sections_mode {
+                    EmptySections::Collapse if is_empty && has_any_non_empty => {
+                        Constraint::Length(1)
+                    }
+                    _ => Constraint::Fill(1),
+                }
+            })
+            .collect();
+        let columns = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
+
+        // Render viewport-level scrollbar if not all slots are visible.
+        let total_height: u16 = slot_heights.iter().sum();
+        if total_height > area.height {
+            let scroll_position = self.board_scroll_offset;
+            let content_len = self.slots.len();
+            Self::render_vertical_scrollbar(frame, area, content_len, scroll_position);
+        }
+
+        for (vis_idx, &slot_index) in visible_slots.iter().enumerate() {
+            let slot = &self.slots[slot_index];
+            // Skip hidden slots (zero-height rect from constraint).
+            if columns[vis_idx].height == 0 {
+                continue;
+            }
+            // Render collapsed empty slots as a single dim header line.
+            if slot.items.is_empty()
+                && empty_sections_mode == EmptySections::Collapse
+                && has_any_non_empty
+            {
+                let is_selected_slot = slot_index == self.slot_index;
+                let is_today_slot = today_slot == Some(slot_index);
+                let border_color = if is_selected_slot {
+                    Color::Cyan
+                } else if is_today_slot {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                let title = format!("{} (0)", slot.title);
+                let avail = columns[vis_idx].width as usize;
+                let pad_len = avail.saturating_sub(title.len() + 2);
+                let line = Line::from(vec![
+                    Span::styled("─ ", Style::default().fg(border_color)),
+                    Span::styled(title, Style::default().fg(border_color)),
+                    Span::styled(
+                        " ─".to_string() + &"─".repeat(pad_len),
+                        Style::default().fg(border_color),
+                    ),
+                ]);
+                frame.render_widget(Paragraph::new(line), columns[vis_idx]);
+                continue;
+            }
+
+            let effective_display_mode = match (&slot.context, current_view.as_ref()) {
+                (SlotContext::Section { section_index }, Some(view))
+                | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                    .sections
+                    .get(*section_index)
+                    .and_then(|section| section.board_display_mode_override)
+                    .unwrap_or(view.board_display_mode),
+                _ => current_view
+                    .as_ref()
+                    .map(|v| v.board_display_mode)
+                    .unwrap_or(BoardDisplayMode::SingleLine),
+            };
+            let is_selected_slot = slot_index == self.slot_index;
+            let selected_row = if is_selected_slot && !slot.items.is_empty() {
+                Some(self.item_index.min(slot.items.len().saturating_sub(1)))
+            } else {
+                None
+            };
+            let filter_suffix = self
+                .section_filters
+                .get(slot_index)
+                .and_then(|f| f.as_deref())
+                .map(|needle| format!("  filter:{needle}"))
+                .unwrap_or_default();
+            let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let slot_item_label = explicit_item_label
+                .clone()
+                .unwrap_or_else(|| slot.title.clone());
+            let is_today_slot = today_slot == Some(slot_index);
+            let border_color = if is_selected_slot {
+                Color::Cyan
+            } else if is_today_slot {
+                Color::Yellow
+            } else {
+                Color::Blue
+            };
+            let slot_block = self.board_section_block(title.clone(), border_color);
+            let inner_width = slot_block.inner(columns[vis_idx]).width;
+            let (slot_columns_owned, slot_item_column_index) =
+                match (&slot.context, current_view.as_ref()) {
+                    (SlotContext::Section { section_index }, Some(view))
+                    | (SlotContext::GeneratedSection { section_index, .. }, Some(view)) => view
+                        .sections
+                        .get(*section_index)
+                        .map(|section| {
+                            (
+                                section.columns.clone(),
+                                Self::section_item_column_index(section),
+                            )
+                        })
+                        .unwrap_or_default(),
+                    _ => (Vec::new(), 0),
+                };
+            let use_dynamic = !slot_columns_owned.is_empty();
+            let include_all_categories_in_dynamic = use_dynamic
+                && !slot_columns_owned
+                    .iter()
+                    .any(|column| column.kind == ColumnKind::Standard);
+            if use_dynamic {
+                let layout = compute_board_layout(
+                    &slot_columns_owned,
+                    &self.categories,
+                    &category_display_names,
+                    &slot_item_label,
+                    inner_width,
+                );
+                let mut item_width = layout.item;
+                let mut synthetic_categories_width = 0usize;
+                if include_all_categories_in_dynamic {
+                    let extra_spacing_budget = BOARD_TABLE_COLUMN_SPACING as usize;
+                    let min_item_width = BOARD_ITEM_MIN_WIDTH.min(item_width);
+                    let available_for_categories = item_width.saturating_sub(min_item_width);
+                    if available_for_categories > extra_spacing_budget {
+                        synthetic_categories_width = BOARD_CATEGORY_TARGET_WIDTH
+                            .min(available_for_categories - extra_spacing_budget);
+                        if synthetic_categories_width > 0 {
+                            item_width = item_width
+                                .saturating_sub(synthetic_categories_width + extra_spacing_budget);
+                        }
+                    }
+                }
+                let item_board_column_index = slot_item_column_index.min(layout.columns.len());
+                let mut constraints = vec![
+                    Constraint::Length(layout.marker.min(u16::MAX as usize) as u16),
+                    Constraint::Length(layout.note.min(u16::MAX as usize) as u16),
+                ];
+                let mut column_widths = vec![layout.marker, layout.note];
+                constraints.extend(
+                    layout.columns[..item_board_column_index]
+                        .iter()
+                        .map(|column| {
+                            Constraint::Length(column.width.min(u16::MAX as usize) as u16)
+                        }),
+                );
+                column_widths.extend(
+                    layout.columns[..item_board_column_index]
+                        .iter()
+                        .map(|column| column.width),
+                );
+                constraints.push(Constraint::Length(item_width.min(u16::MAX as usize) as u16));
+                column_widths.push(item_width);
+                constraints.extend(
+                    layout.columns[item_board_column_index..]
+                        .iter()
+                        .map(|column| {
+                            Constraint::Length(column.width.min(u16::MAX as usize) as u16)
+                        }),
+                );
+                column_widths.extend(
+                    layout.columns[item_board_column_index..]
+                        .iter()
+                        .map(|column| column.width),
+                );
+                if synthetic_categories_width > 0 {
+                    constraints.push(Constraint::Length(
+                        synthetic_categories_width.min(u16::MAX as usize) as u16,
+                    ));
+                    column_widths.push(synthetic_categories_width);
+                }
+                let offsets =
+                    board_column_offsets(&column_widths, BOARD_TABLE_COLUMN_SPACING as usize);
+                let mut border_segments = Vec::new();
+                for (col_idx, column) in layout.columns.iter().enumerate() {
+                    let board_column_index = if col_idx < item_board_column_index {
+                        col_idx
+                    } else {
+                        col_idx + 1
+                    };
+                    let table_col_idx = if col_idx < item_board_column_index {
+                        2 + col_idx
+                    } else {
+                        3 + col_idx
+                    };
+                    border_segments.push(InlineBorderSegment {
+                        start: offsets.get(table_col_idx).copied().unwrap_or(0),
+                        width: column.width,
+                        text: self.inline_border_segment_text(&column.label),
+                        priority: self.inline_border_segment_priority(
+                            slot_index,
+                            board_column_index,
+                            SlotSortColumn::SectionColumn {
+                                heading: column.heading_id,
+                                kind: column.kind,
+                            },
+                            item_board_column_index,
+                        ),
+                        active: slot_index == self.slot_index
+                            && self.column_index == board_column_index,
+                    });
+                }
+                if item_board_column_index > 0 {
+                    border_segments.push(InlineBorderSegment {
+                        start: offsets
+                            .get(2 + item_board_column_index)
+                            .copied()
+                            .unwrap_or(0),
+                        width: item_width,
+                        text: self.inline_border_segment_text(&layout.item_label),
+                        priority: self.inline_border_segment_priority(
+                            slot_index,
+                            item_board_column_index,
+                            SlotSortColumn::ItemText,
+                            item_board_column_index,
+                        ),
+                        active: slot_index == self.slot_index
+                            && self.column_index == item_board_column_index,
+                    });
+                }
+                if synthetic_categories_width > 0 {
+                    border_segments.push(InlineBorderSegment {
+                        start: *offsets.last().unwrap_or(&0),
+                        width: synthetic_categories_width,
+                        text: "All Categories".to_string(),
+                        priority: 4,
+                        active: false,
+                    });
+                }
+                let left_border_title = if item_board_column_index > 0 {
+                    if filter_suffix.is_empty() {
+                        format!("({})", slot.items.len())
+                    } else {
+                        format!("({}){}", slot.items.len(), filter_suffix)
+                    }
+                } else {
+                    title.clone()
+                };
+                let border_title = build_segmented_board_border_title_line(
+                    &left_border_title,
+                    &border_segments,
+                    inner_width as usize,
+                    Style::default().fg(border_color),
+                    Style::default().fg(border_color),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                );
+
+                let rows: Vec<Row<'_>> = if slot.items.is_empty() {
+                    let has_filter = self
+                        .section_filters
+                        .get(slot_index)
+                        .map(|f| f.is_some())
+                        .unwrap_or(false);
+                    let all_slots_empty = self.slots.iter().all(|s| s.items.is_empty());
+                    let empty_msg = if all_slots_empty {
+                        "No items. n:add item  v:switch view  q:quit"
+                    } else if has_filter {
+                        "No matches. Esc:clear filter"
+                    } else {
+                        "No items in this section."
+                    };
+                    let mut cells = vec![Cell::from(String::new()), Cell::from(String::new())];
+                    cells.extend(
+                        layout.columns[..item_board_column_index]
+                            .iter()
+                            .map(|_| Cell::from(String::new())),
+                    );
+                    cells.push(Cell::from(Span::styled(
+                        empty_msg,
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )));
+                    cells.extend(
+                        layout.columns[item_board_column_index..]
+                            .iter()
+                            .map(|_| Cell::from(String::new())),
+                    );
+                    if synthetic_categories_width > 0 {
+                        cells.push(Cell::from(String::new()));
+                    }
+                    vec![Row::new(cells)]
+                } else {
+                    slot.items
+                        .iter()
+                        .enumerate()
+                        .map(|(item_index, item)| {
+                            let is_focused_item = is_selected_slot && item_index == self.item_index;
+                            let is_marked_selected = self.is_item_selected(item.id);
+                            let marker_cell = match (is_focused_item, is_marked_selected) {
+                                (true, _) => ">",
+                                (false, true) => "+",
+                                (false, false) => " ",
+                            };
+                            let note_cell = item_indicator_glyphs(
+                                item.is_done,
+                                self.is_item_blocked(item.id),
+                                self.pending_suggestion_count_for_item(item.id) > 0,
+                                self.show_note_glyphs && has_note_text(item.note.as_deref()),
+                            );
+                            let item_cell_content =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    wrap_text_for_board_cell(&board_item_label(item), item_width)
+                                        .join("\n")
+                                } else {
+                                    truncate_board_cell(&board_item_label(item), item_width)
+                                };
+                            let mut row_height = item_cell_content.lines().count().max(1);
+                            let item_cell = {
+                                let mut cell = Cell::from(item_cell_content);
+                                if is_focused_item && self.column_index == item_board_column_index {
+                                    cell = cell.style(focused_cell_style());
+                                }
+                                cell
+                            };
+                            let mut category_cells: Vec<Cell<'_>> = layout
+                                .columns
+                                .iter()
+                                .enumerate()
+                                .map(|(col_idx, column)| {
+                                    let is_numeric_column =
+                                        column.heading_value_kind == CategoryValueKind::Numeric;
+                                    let value = match column.kind {
+                                        ColumnKind::When => {
+                                            let date_str = item
+                                                .when_date
+                                                .map(|dt| dt.date().to_string())
+                                                .unwrap_or_else(|| "\u{2013}".to_string());
+                                            // Use draft recurrence state from the edit
+                                            // panel when this item is being edited,
+                                            // otherwise fall back to persisted state.
+                                            let has_recurrence = self
+                                                .input_panel
+                                                .as_ref()
+                                                .filter(|p| p.item_id == Some(item.id))
+                                                .map(|p| p.parsed_recurrence_rule.is_some())
+                                                .unwrap_or_else(|| item.recurrence_rule.is_some());
+                                            if has_recurrence {
+                                                format!("{} \u{21BB}", date_str)
+                                            } else {
+                                                date_str
+                                            }
+                                        }
+                                        ColumnKind::Standard if is_numeric_column => {
+                                            let numeric_val = item
+                                                .assignments
+                                                .get(&column.heading_id)
+                                                .and_then(|a| a.numeric_value);
+                                            format_numeric_cell(
+                                                numeric_val,
+                                                column.numeric_format.as_ref(),
+                                            )
+                                        }
+                                        ColumnKind::Standard => standard_column_value(
+                                            item,
+                                            &column.child_ids,
+                                            &category_display_names,
+                                        ),
+                                    };
+                                    let content = if effective_display_mode
+                                        == BoardDisplayMode::MultiLine
+                                        && column.kind == ColumnKind::Standard
+                                        && !is_numeric_column
+                                    {
+                                        let lines = if value == "\u{2013}" {
+                                            vec!["-".to_string()]
+                                        } else {
+                                            let labels: Vec<String> =
+                                                value.split(", ").map(str::to_string).collect();
+                                            format_category_values_multi_line(
+                                                &labels,
+                                                BOARD_MULTI_CATEGORY_LINE_CAP,
+                                            )
+                                        };
+                                        lines.join("\n")
+                                    } else if is_numeric_column {
+                                        right_pad_cell(&value, column.width)
+                                    } else {
+                                        truncate_board_cell(&value, column.width)
+                                    };
+                                    row_height = row_height.max(content.lines().count().max(1));
+                                    let mut cell = Cell::from(content);
+                                    let board_column_index = if col_idx < item_board_column_index {
+                                        col_idx
+                                    } else {
+                                        col_idx + 1
+                                    };
+                                    if is_focused_item && self.column_index == board_column_index {
+                                        cell = cell.style(focused_cell_style());
+                                    }
+                                    cell
+                                })
+                                .collect();
+                            let mut cells = vec![Cell::from(marker_cell), Cell::from(note_cell)];
+                            let right_cells = category_cells.split_off(item_board_column_index);
+                            cells.extend(category_cells);
+                            cells.push(item_cell);
+                            cells.extend(right_cells);
+                            if synthetic_categories_width > 0 {
+                                let categories =
+                                    item_assignment_labels(item, &category_display_names);
+                                let categories_text = if categories.is_empty() {
+                                    "-".to_string()
+                                } else if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    format_category_values_multi_line(
+                                        &categories,
+                                        BOARD_MULTI_CATEGORY_LINE_CAP,
+                                    )
+                                    .join("\n")
+                                } else {
+                                    categories.join(", ")
+                                };
+                                let content =
+                                    if effective_display_mode == BoardDisplayMode::MultiLine {
+                                        categories_text
+                                    } else {
+                                        truncate_board_cell(
+                                            &categories_text,
+                                            synthetic_categories_width,
+                                        )
+                                    };
+                                row_height = row_height.max(content.lines().count().max(1));
+                                cells.push(Cell::from(content));
+                            }
+                            let mut row = Row::new(cells);
+                            if effective_display_mode == BoardDisplayMode::MultiLine {
+                                row = row.height(row_height.min(u16::MAX as usize) as u16);
+                            }
+                            if is_focused_item {
+                                row = row.style(selected_board_row_style());
+                            } else if is_marked_selected {
+                                row = row.style(marked_board_row_style());
+                            }
+                            row
+                        })
+                        .collect()
+                };
+
+                // Build a fixed summary footer line for numeric columns,
+                // aligned to match column positions in the table above.
+                let has_summary_columns = layout.columns.iter().any(|c| {
+                    c.heading_value_kind == CategoryValueKind::Numeric
+                        && c.summary_fn != SummaryFn::None
+                });
+                let summary_spans: Option<Vec<Span>> = if has_summary_columns
+                    && !slot.items.is_empty()
+                {
+                    let item_refs: Vec<&Item> = slot.items.iter().collect();
+                    let aggregates = compute_column_aggregates(&item_refs, &layout.columns);
+                    let summary_style = Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD);
+                    let pad_style = Style::default().bg(Color::DarkGray);
+                    let spacing = BOARD_TABLE_COLUMN_SPACING as usize;
+                    let mut spans: Vec<Span> = Vec::new();
+                    // Pad for marker + note + spacing (border + left padding of block = 1)
+                    let prefix_width = 1 + layout.marker + spacing + layout.note + spacing;
+                    spans.push(Span::styled(" ".repeat(prefix_width), pad_style));
+                    for (col_idx, spec) in layout.columns.iter().enumerate() {
+                        // Item column appears at item_board_column_index; add its width
+                        if col_idx == item_board_column_index {
+                            let w = item_width + spacing;
+                            spans.push(Span::styled(" ".repeat(w), pad_style));
+                        }
+                        let col_w = spec.width;
+                        if spec.summary_fn != SummaryFn::None
+                            && spec.heading_value_kind == CategoryValueKind::Numeric
+                        {
+                            let value = aggregates[col_idx]
+                                .as_ref()
+                                .and_then(|agg| agg.value_for(spec.summary_fn));
+                            let label = if let Some(v) = value {
+                                format!(
+                                    "{}={}",
+                                    spec.summary_fn.label(),
+                                    format_numeric_cell(Some(v), spec.numeric_format.as_ref())
+                                        .trim(),
+                                )
+                            } else {
+                                format!("{}=-", spec.summary_fn.label())
+                            };
+                            let display = if label.len() > col_w {
+                                label[..col_w].to_string()
+                            } else {
+                                format!("{:>width$}", label, width = col_w)
+                            };
+                            spans.push(Span::styled(display, summary_style));
+                        } else {
+                            spans.push(Span::styled(" ".repeat(col_w), pad_style));
+                        }
+                        // Add inter-column spacing
+                        if col_idx < layout.columns.len() - 1 || synthetic_categories_width > 0 {
+                            spans.push(Span::styled(" ".repeat(spacing), pad_style));
+                        }
+                    }
+                    // Item column after all category columns
+                    if item_board_column_index >= layout.columns.len() {
+                        let w = item_width + spacing;
+                        spans.push(Span::styled(" ".repeat(w), pad_style));
+                    }
+                    if synthetic_categories_width > 0 {
+                        spans.push(Span::styled(
+                            " ".repeat(synthetic_categories_width),
+                            pad_style,
+                        ));
+                    }
+                    // Fill remaining width with reversed background
+                    spans.push(Span::styled(" ", pad_style));
+                    // Only show footer if at least one column has a computed value
+                    let has_any_value = aggregates.iter().enumerate().any(|(i, agg)| {
+                        let spec = &layout.columns[i];
+                        spec.summary_fn != SummaryFn::None
+                            && agg
+                                .as_ref()
+                                .and_then(|a| a.value_for(spec.summary_fn))
+                                .is_some()
+                    });
+                    if has_any_value {
+                        Some(spans)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Split the slot area: table on top, optional 1-line summary footer.
+                let slot_area = columns[vis_idx];
+                let (table_area, summary_area) = if summary_spans.is_some() && slot_area.height > 4
+                {
+                    let split = Layout::default()
+                        .direction(ratatui::layout::Direction::Vertical)
+                        .constraints([Constraint::Min(3), Constraint::Length(1)])
+                        .split(slot_area);
+                    (split[0], Some(split[1]))
+                } else {
+                    (slot_area, None)
+                };
+
+                let mut state = Self::table_state_for(table_area, selected_row);
+                let remembered_index = self
+                    .horizontal_slot_item_indices
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                let remembered_scroll_offset = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow()
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                *state.offset_mut() = if is_selected_slot {
+                    Self::stable_table_offset(
+                        table_area,
+                        selected_row,
+                        remembered_scroll_offset,
+                        slot.items.len(),
+                    )
+                } else {
+                    remembered_scroll_offset.min(remembered_index)
+                };
+                frame.render_stateful_widget(
+                    Table::new(rows, constraints)
+                        .column_spacing(BOARD_TABLE_COLUMN_SPACING)
+                        .block(self.board_section_block_with_line(border_title, border_color)),
+                    table_area,
+                    &mut state,
+                );
+                if let Some(stored) = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow_mut()
+                    .get_mut(slot_index)
+                {
+                    *stored = state.offset();
+                }
+                if let (Some(area), Some(spans)) = (summary_area, summary_spans) {
+                    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+                }
+                Self::render_vertical_scrollbar(
+                    frame,
+                    table_area,
+                    slot.items.len(),
+                    state.offset(),
+                );
+            } else {
+                let widths = board_column_widths(inner_width);
+                let legacy_column_widths = vec![
+                    widths.marker,
+                    widths.note,
+                    widths.item,
+                    widths.when,
+                    widths.categories,
+                ];
+                let offsets = board_column_offsets(
+                    &legacy_column_widths,
+                    BOARD_TABLE_COLUMN_SPACING as usize,
+                );
+                let border_title = build_segmented_board_border_title_line(
+                    &title,
+                    &[
+                        InlineBorderSegment {
+                            start: offsets.get(3).copied().unwrap_or(0),
+                            width: widths.when,
+                            text: self.inline_border_segment_text("When"),
+                            priority: 3,
+                            active: slot_index == self.slot_index && self.column_index == 1,
+                        },
+                        InlineBorderSegment {
+                            start: offsets.get(4).copied().unwrap_or(0),
+                            width: widths.categories,
+                            text: self.inline_border_segment_text("All Categories"),
+                            priority: 4,
+                            active: slot_index == self.slot_index && self.column_index == 2,
+                        },
+                    ],
+                    inner_width as usize,
+                    Style::default().fg(border_color),
+                    Style::default().fg(border_color),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                );
+                let constraints = vec![
+                    Constraint::Length(widths.marker.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.note.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.item.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.when.min(u16::MAX as usize) as u16),
+                    Constraint::Length(widths.categories.min(u16::MAX as usize) as u16),
+                ];
+                let rows: Vec<Row<'_>> = if slot.items.is_empty() {
+                    let has_filter = self
+                        .section_filters
+                        .get(slot_index)
+                        .map(|f| f.is_some())
+                        .unwrap_or(false);
+                    let all_slots_empty = self.slots.iter().all(|s| s.items.is_empty());
+                    let empty_msg = if all_slots_empty {
+                        "No items. n:add item  v:switch view  q:quit"
+                    } else if has_filter {
+                        "No matches. Esc:clear filter"
+                    } else {
+                        "No items in this section."
+                    };
+                    vec![Row::new(vec![
+                        Cell::from(String::new()),
+                        Cell::from(String::new()),
+                        Cell::from(Span::styled(
+                            empty_msg,
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Cell::from(String::new()),
+                        Cell::from(String::new()),
+                    ])]
+                } else {
+                    slot.items
+                        .iter()
+                        .enumerate()
+                        .map(|(item_index, item)| {
+                            let is_selected = is_selected_slot && item_index == self.item_index;
+                            let when = item
+                                .when_date
+                                .map(|dt| dt.date().to_string())
+                                .unwrap_or_else(|| "-".to_string());
+                            let is_marked_selected = self.is_item_selected(item.id);
+                            let marker_cell = match (is_selected, is_marked_selected) {
+                                (true, _) => ">",
+                                (false, true) => "+",
+                                (false, false) => " ",
+                            };
+                            let note_cell = item_indicator_glyphs(
+                                item.is_done,
+                                self.is_item_blocked(item.id),
+                                self.pending_suggestion_count_for_item(item.id) > 0,
+                                self.show_note_glyphs && has_note_text(item.note.as_deref()),
+                            );
+                            let item_text = board_item_label(item);
+                            let categories = item_assignment_labels(item, &category_display_names);
+                            let categories_text = if categories.is_empty() {
+                                "-".to_string()
+                            } else if effective_display_mode == BoardDisplayMode::MultiLine {
+                                format_category_values_multi_line(
+                                    &categories,
+                                    BOARD_MULTI_CATEGORY_LINE_CAP,
+                                )
+                                .join("\n")
+                            } else {
+                                categories.join(", ")
+                            };
+                            let when_text = truncate_board_cell(&when, widths.when);
+                            let item_cell_text =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    wrap_text_for_board_cell(&item_text, widths.item).join("\n")
+                                } else {
+                                    truncate_board_cell(&item_text, widths.item)
+                                };
+                            let categories_cell_text =
+                                if effective_display_mode == BoardDisplayMode::MultiLine {
+                                    categories_text
+                                } else {
+                                    truncate_board_cell(&categories_text, widths.categories)
+                                };
+                            let row_height = item_cell_text
+                                .lines()
+                                .count()
+                                .max(categories_cell_text.lines().count())
+                                .max(1);
+                            let mut row = Row::new(vec![
+                                Cell::from(marker_cell),
+                                Cell::from(note_cell),
+                                Cell::from(item_cell_text),
+                                Cell::from(when_text),
+                                Cell::from(categories_cell_text),
+                            ]);
+                            if effective_display_mode == BoardDisplayMode::MultiLine {
+                                row = row.height(row_height.min(u16::MAX as usize) as u16);
+                            }
+                            if is_selected {
+                                row = row.style(selected_board_row_style());
+                            } else if is_marked_selected {
+                                row = row.style(marked_board_row_style());
+                            }
+                            row
+                        })
+                        .collect()
+                };
+                let mut state = Self::table_state_for(columns[vis_idx], selected_row);
+                let remembered_index = self
+                    .horizontal_slot_item_indices
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                let remembered_scroll_offset = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow()
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(slot.items.len().saturating_sub(1));
+                *state.offset_mut() = if is_selected_slot {
+                    Self::stable_table_offset(
+                        columns[vis_idx],
+                        selected_row,
+                        remembered_scroll_offset,
+                        slot.items.len(),
+                    )
+                } else {
+                    remembered_scroll_offset.min(remembered_index)
+                };
+                frame.render_stateful_widget(
+                    Table::new(rows, constraints)
+                        .column_spacing(BOARD_TABLE_COLUMN_SPACING)
+                        .block(self.board_section_block_with_line(border_title, border_color)),
+                    columns[vis_idx],
+                    &mut state,
+                );
+                if let Some(stored) = self
+                    .horizontal_slot_scroll_offsets
+                    .borrow_mut()
+                    .get_mut(slot_index)
+                {
+                    *stored = state.offset();
+                }
+                Self::render_vertical_scrollbar(
+                    frame,
+                    columns[vis_idx],
+                    slot.items.len(),
+                    state.offset(),
+                );
+            }
+        }
+    }
+
+    fn render_horizontal_board_lanes(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        columns: &[Rect],
+        category_display_names: &HashMap<CategoryId, String>,
+        today_slot: Option<usize>,
+    ) {
+        let empty_sections_mode = self.effective_empty_sections();
+        let has_any_non_empty = self.slots.iter().any(|s| !s.items.is_empty());
+        let all_slots_empty = !has_any_non_empty;
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let slot_area = columns[slot_index];
+            // Skip hidden slots (zero-width rect).
+            if slot_area.width == 0 {
+                continue;
+            }
+            // Collapsed empty lane: render a thin vertical border.
+            if slot.items.is_empty()
+                && empty_sections_mode == EmptySections::Collapse
+                && has_any_non_empty
+            {
+                let is_selected = slot_index == self.slot_index;
+                let is_today = today_slot == Some(slot_index);
+                let color = if is_selected {
+                    Color::Cyan
+                } else if is_today {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                };
+                let block = Block::default()
+                    .borders(Borders::LEFT)
+                    .border_style(Style::default().fg(color));
+                frame.render_widget(block, slot_area);
+                continue;
+            }
+            let is_selected_slot = slot_index == self.slot_index;
+            let selected_row = if is_selected_slot && !slot.items.is_empty() {
+                Some(self.item_index.min(slot.items.len().saturating_sub(1)))
+            } else {
+                None
+            };
+            let filter_suffix = self
+                .section_filters
+                .get(slot_index)
+                .and_then(|f| f.as_deref())
+                .map(|needle| format!("  filter:{needle}"))
+                .unwrap_or_default();
+            let title = format!("{} ({}){}", slot.title, slot.items.len(), filter_suffix);
+            let is_today_slot = today_slot == Some(slot_index);
+            let border_color = if is_selected_slot {
+                Color::Cyan
+            } else if is_today_slot {
+                Color::Yellow
+            } else {
+                Color::Blue
+            };
+            let block = self.board_section_block(title.clone(), border_color);
+            let effective_display_mode = self.effective_board_display_mode_for_slot(slot);
+            let card_width = block.inner(slot_area).width.saturating_sub(2) as usize;
+
+            if slot.items.is_empty() {
+                let has_filter = self
+                    .section_filters
+                    .get(slot_index)
+                    .map(|f| f.is_some())
+                    .unwrap_or(false);
+                let empty_lines = if all_slots_empty {
+                    vec![
+                        Line::from(Span::styled(
+                            "empty board",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "n:add item  v:views  q:quit",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
+                } else if has_filter {
+                    vec![
+                        Line::from(Span::styled(
+                            "no matches",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "Esc:clear filter",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
+                } else {
+                    vec![
+                        Line::from(Span::styled(
+                            "empty lane",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                        Line::from(Span::styled(
+                            "n:add item",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )),
+                    ]
+                };
+                let inner = block.inner(slot_area);
+                frame.render_widget(block, slot_area);
+                let content_height = empty_lines.len() as u16;
+                let top_padding = inner.height.saturating_sub(content_height) / 2;
+                let y = inner.y.saturating_add(top_padding);
+                let centered_area = Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: content_height.min(inner.height),
+                };
+                frame.render_widget(
+                    Paragraph::new(empty_lines).alignment(ratatui::layout::Alignment::Center),
+                    centered_area,
+                );
+                continue;
+            }
+
+            let title_width = card_width.saturating_sub(1).max(1);
+            let meta_width = card_width.saturating_sub(3).max(1);
+            let separator_width = card_width.saturating_sub(1).max(1);
+            let mut cards: Vec<ListItem<'_>> = Vec::with_capacity(slot.items.len());
+            let mut card_heights: Vec<usize> = Vec::with_capacity(slot.items.len());
+
+            for (item_index, item) in slot.items.iter().enumerate() {
+                let is_focused_item = is_selected_slot && item_index == self.item_index;
+                let is_marked_selected = self.is_item_selected(item.id);
+                let marker_prefix = if is_marked_selected && !is_focused_item {
+                    "+ "
+                } else {
+                    ""
+                };
+                let item_text = board_item_label(item);
+                let category_count = item_assignment_labels(item, category_display_names).len();
+                let mut meta_parts = vec![format!(
+                    "due:{}",
+                    item.when_date
+                        .map(|dt| dt.date().to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                )];
+                let glyphs = item_indicator_glyphs(
+                    item.is_done,
+                    self.is_item_blocked(item.id),
+                    self.pending_suggestion_count_for_item(item.id) > 0,
+                    self.show_note_glyphs && has_note_text(item.note.as_deref()),
+                );
+                if !glyphs.is_empty() {
+                    meta_parts.push(glyphs.clone());
+                }
+                if category_count > 0 {
+                    meta_parts.push(format!(
+                        "{category_count} {}",
+                        if category_count == 1 {
+                            "category"
+                        } else {
+                            "categories"
+                        }
+                    ));
+                }
+                let meta = truncate_board_cell(&meta_parts.join("  "), meta_width);
+
+                let mut lines = Vec::new();
+                match effective_display_mode {
+                    BoardDisplayMode::SingleLine => {
+                        let single_line_text = if glyphs.is_empty() {
+                            truncate_board_cell(&format!("{marker_prefix}{item_text}"), title_width)
+                        } else {
+                            let glyph_prefix = format!("{glyphs} ");
+                            let reserved_glyph_width = glyph_prefix.chars().count();
+                            if title_width > reserved_glyph_width {
+                                format!(
+                                    "{}{}",
+                                    glyph_prefix,
+                                    truncate_board_cell(
+                                        &format!("{marker_prefix}{item_text}"),
+                                        title_width.saturating_sub(reserved_glyph_width),
+                                    )
+                                )
+                            } else {
+                                truncate_board_cell(&glyph_prefix, title_width)
+                            }
+                        };
+                        lines.push(Line::from(single_line_text));
+                    }
+                    BoardDisplayMode::MultiLine => {
+                        for line in wrap_text_for_board_cell_clamped(
+                            &format!("{marker_prefix}{item_text}"),
+                            title_width,
+                            2,
+                        ) {
+                            lines.push(Line::from(format!(" {}", line)));
+                        }
+                        lines.push(Line::from(Span::styled(
+                            format!("   {}", meta),
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                        if item_index + 1 < slot.items.len() {
+                            lines.push(Line::from(Span::styled(
+                                format!(" {}", "-".repeat(separator_width)),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )));
+                        }
+                    }
+                }
+
+                card_heights.push(lines.len().max(1));
+                let mut card = ListItem::new(lines);
+                if !is_focused_item && is_marked_selected {
+                    card = card.style(marked_board_row_style());
+                }
+                cards.push(card);
+            }
+
+            let mut list_state = ListState::default().with_selected(selected_row);
+            let remembered_index = self
+                .horizontal_slot_item_indices
+                .get(slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(cards.len().saturating_sub(1));
+            let remembered_scroll_offset = self
+                .horizontal_slot_scroll_offsets
+                .borrow()
+                .get(slot_index)
+                .copied()
+                .unwrap_or(0)
+                .min(cards.len().saturating_sub(1));
+            *list_state.offset_mut() = if is_selected_slot {
+                Self::stable_variable_height_list_offset(
+                    slot_area,
+                    &card_heights,
+                    selected_row,
+                    remembered_scroll_offset,
+                )
+            } else {
+                remembered_scroll_offset.min(remembered_index)
+            };
+            if let Some(stored) = self
+                .horizontal_slot_scroll_offsets
+                .borrow_mut()
+                .get_mut(slot_index)
+            {
+                *stored = list_state.offset();
+            }
+            let scroll_position = card_heights.iter().take(list_state.offset()).sum::<usize>();
+            let total_card_height = card_heights.iter().sum::<usize>();
+
+            frame.render_stateful_widget(
+                List::new(cards)
+                    .block(block)
+                    .highlight_style(selected_board_row_style())
+                    .highlight_symbol("> ")
+                    .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
+                    .repeat_highlight_symbol(false),
+                slot_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(
+                frame,
+                slot_area,
+                total_card_height.max(1),
+                scroll_position,
+            );
+        }
+    }
+
+    pub(crate) fn render_preview_provenance_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+    ) {
+        let mut items: Vec<ListItem<'_>> = Vec::new();
+        let mut selected_line = None;
+        if let Some(item) = self.selected_item() {
+            for line in self.item_info_header_lines_for_item(item) {
+                items.push(ListItem::new(Line::from(line)));
+            }
+            let rows = self.inspect_assignment_rows_for_item(item);
+            if rows.is_empty() {
+                items.push(ListItem::new(Line::from("(no assignments)")));
+            } else {
+                let picker_mode = self.mode == Mode::InspectUnassign;
+                for (index, row) in rows.iter().enumerate() {
+                    let entry_line = items.len();
+                    items.push(ListItem::new(Line::from(format!(
+                        "{} | source={} | origin={}",
+                        row.category_name, row.source_label, row.origin_label
+                    ))));
+                    if let Some(explanation) = &row.explanation_label {
+                        items.push(ListItem::new(Line::from(format!("  {explanation}"))));
+                    }
+                    if picker_mode && index == self.inspect_assignment_index {
+                        selected_line = Some(entry_line);
+                    }
+                }
+            }
+        } else {
+            items.push(ListItem::new(Line::from("Info")));
+            items.push(ListItem::new(Line::from(
+                "f focus | j/k scroll | i summary",
+            )));
+            items.push(ListItem::new(Line::from("")));
+            items.push(ListItem::new(Line::from("(no selected item)")));
+        }
+        let item_count = items.len();
+        let mut state = Self::list_state_for(area, selected_line);
+        *state.offset_mut() = self.preview_provenance_scroll;
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("Preview: Info")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(
+                            if self.normal_focus == NormalFocus::Preview {
+                                Color::Cyan
+                            } else {
+                                Color::Yellow
+                            },
+                        )),
+                ),
+            area,
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
+    }
+
+    pub(crate) fn item_details_lines_for_item(&self, item: &Item) -> Vec<Line<'_>> {
+        self.item_details_lines_for_item_inner(item, None)
+    }
+
+    pub(crate) fn item_details_lines_for_item_wrapped(
+        &self,
+        item: &Item,
+        content_width: usize,
+    ) -> Vec<Line<'_>> {
+        self.item_details_lines_for_item_inner(item, Some(content_width))
+    }
+
+    fn item_details_lines_for_item_inner(
+        &self,
+        item: &Item,
+        content_width: Option<usize>,
+    ) -> Vec<Line<'_>> {
+        let category_names = category_name_map(&self.categories);
+        let categories = item_assignment_labels(item, &category_names);
+        let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
+        let mut lines = vec![
+            Line::from("Summary"),
+            Line::from("f focus | j/k scroll | i info"),
+            Line::from(""),
+            Line::from(format!("ID: {}", item.id)),
+            Line::from(format!(
+                "Suggestions: {}",
+                if pending_suggestions == 0 {
+                    "-".to_string()
+                } else {
+                    format!("{pending_suggestions} pending")
+                }
+            )),
+            Line::from(""),
+            Line::from("Note"),
+        ];
+
+        match &item.note {
+            Some(note) if !note.is_empty() => {
+                for line in note.lines() {
+                    Self::push_note_preview_line(&mut lines, line, content_width);
+                }
+            }
+            _ => lines.push(Line::from("  (none)")),
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from("Categories"));
+        if categories.is_empty() {
+            lines.push(Line::from("  (none)"));
+        } else {
+            lines.push(Line::from(format!("  {}", categories.join(", "))));
+        }
+        lines
+    }
+
+    fn push_note_preview_line(lines: &mut Vec<Line<'_>>, line: &str, content_width: Option<usize>) {
+        let raw_indent: String = line.chars().take_while(|ch| ch.is_whitespace()).collect();
+        let prefix = format!("  {raw_indent}");
+        let content = line.trim_start();
+        if content.is_empty() {
+            lines.push(Line::from(prefix));
+            return;
+        }
+
+        let Some(width) = content_width else {
+            lines.push(Line::from(format!("  {line}")));
+            return;
+        };
+        let wrapped_width = width.saturating_sub(prefix.chars().count()).max(1);
+        for wrapped in wrap_text_for_board_cell(content, wrapped_width) {
+            lines.push(Line::from(format!("{prefix}{wrapped}")));
+        }
+    }
+
+    pub(crate) fn input_panel_edit_details_lines(
+        &self,
+        panel: &input_panel::InputPanel,
+    ) -> Vec<Line<'static>> {
+        let Some(item_id) = panel.item_id else {
+            return vec![Line::from("(missing item)")];
+        };
+        let Some(item) = self.all_items.iter().find(|item| item.id == item_id) else {
+            return vec![Line::from("(missing item)")];
+        };
+
+        let mut lines = Vec::new();
+
+        let mut info_lines = self.item_info_header_lines_for_item(item);
+        if info_lines.len() >= 2 {
+            info_lines.truncate(info_lines.len() - 2);
+        }
+        for line in info_lines.into_iter().skip(3) {
+            lines.push(Line::from(line));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from("Assignment Provenance"));
+        let rows = self.inspect_assignment_rows_for_item(item);
+        if rows.is_empty() {
+            lines.push(Line::from("  (none)"));
+        } else {
+            for row in rows {
+                lines.push(Line::from(format!(
+                    "  {} | source={} | origin={}",
+                    row.category_name, row.source_label, row.origin_label
+                )));
+                if let Some(explanation) = row.explanation_label {
+                    lines.push(Line::from(format!("    {explanation}")));
+                }
+            }
+        }
+        lines
+    }
+
+    pub(crate) fn input_panel_edit_details_line_count(
+        &self,
+        panel: &input_panel::InputPanel,
+    ) -> usize {
+        self.input_panel_edit_details_lines(panel).len().max(1)
+    }
+
+    pub(crate) fn render_input_panel_details_popup(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        panel: &input_panel::InputPanel,
+    ) {
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title("Item Details")
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.width < 3 || inner.height < 3 {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(self.input_panel_edit_details_lines(panel))
+                .scroll((panel.details_scroll.min(u16::MAX as usize) as u16, 0))
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+        Self::render_vertical_scrollbar(
+            frame,
+            chunks[0],
+            self.input_panel_edit_details_line_count(panel),
+            panel.details_scroll,
+        );
+        frame.render_widget(
+            Paragraph::new("Esc/I close | j/k or PgUp/PgDn scroll")
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
+    }
+
+    pub(crate) fn item_info_header_lines_for_item(&self, item: &Item) -> Vec<String> {
+        let mut lines = vec![
+            "Info".to_string(),
+            "f focus | j/k scroll | i summary".to_string(),
+            String::new(),
+            format!("ID: {}", item.id),
+            format!(
+                "Suggestions: {}",
+                match self.pending_suggestion_count_for_item(item.id) {
+                    0 => "-".to_string(),
+                    count => format!("{count} pending"),
+                }
+            ),
+            String::new(),
+            "Metadata".to_string(),
+            format!("  Done: {}", if item.is_done { "yes" } else { "no" }),
+            format!(
+                "  When: {}",
+                item.when_date
+                    .map(|value| value.strftime("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!("  Created: {}", item.created_at),
+            format!("  Modified: {}", item.modified_at),
+        ];
+        if let Some(links) = self.item_links_by_item_id.get(&item.id) {
+            lines.push(String::new());
+            Self::push_link_summary_section(
+                &mut lines,
+                "Prereqs",
+                self.item_link_preview_labels(&links.depends_on),
+            );
+            Self::push_link_summary_section(
+                &mut lines,
+                "Blocks",
+                self.item_link_preview_labels(&links.blocks),
+            );
+            Self::push_link_summary_section(
+                &mut lines,
+                "Related",
+                self.item_link_preview_labels(&links.related),
+            );
+        }
+        lines.push(String::new());
+        lines.push("Assignment Provenance".to_string());
+        lines
+    }
+
+    pub(crate) fn preview_info_line_count_for_selected_item(&self) -> usize {
+        let Some(item) = self.selected_item() else {
+            return 4;
+        };
+        let assignment_len = self.inspect_assignment_rows_for_item(item).len().max(1);
+        self.item_info_header_lines_for_item(item).len() + assignment_len
+    }
+
+    fn push_link_summary_section(lines: &mut Vec<String>, label: &str, rows: Vec<String>) {
+        lines.push(label.to_string());
+        if rows.is_empty() {
+            lines.push("  (none)".to_string());
+            return;
+        }
+        for row in rows {
+            lines.push(format!("  {row}"));
+        }
+    }
+
+    fn item_link_preview_labels(&self, ids: &[ItemId]) -> Vec<String> {
+        let mut rows: Vec<(String, String)> = ids
+            .iter()
+            .map(|id| {
+                if let Some(item) = self.all_items.iter().find(|item| item.id == *id) {
+                    let sort_key = item.text.to_ascii_lowercase();
+                    let status = if item.is_done { "done" } else { "open" };
+                    (sort_key, format!("{status} | {}", item.text))
+                } else {
+                    (id.to_string(), format!("missing | {}", id))
+                }
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows.into_iter().map(|(_, label)| label).collect()
+    }
+
+    pub(crate) fn render_preview_summary_panel(&self, area_width: u16) -> Paragraph<'_> {
+        let content_width = area_width.saturating_sub(2).max(1) as usize;
+        let lines = if let Some(item) = self.selected_item() {
+            self.item_details_lines_for_item_wrapped(item, content_width)
+        } else {
+            vec![
+                Line::from("Summary"),
+                Line::from("f focus | j/k scroll | i info"),
+                Line::from(""),
+                Line::from("(no selected item)"),
+            ]
+        };
+
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title("Preview: Summary")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(
+                        if self.normal_focus == NormalFocus::Preview {
+                            Color::Cyan
+                        } else {
+                            Color::Yellow
+                        },
+                    )),
+            )
+            .scroll((self.preview_summary_scroll.min(u16::MAX as usize) as u16, 0))
+            .wrap(Wrap { trim: false })
+    }
+
+    fn render_suggestion_review(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(state) = &self.classification.suggestion_review else {
+            return;
+        };
+
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title(" Review Suggestions ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.height < 3 || inner.width < 10 {
+            return;
+        }
+
+        // Two-pane layout: item list (left) | suggestion detail (right)
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(35), // item list
+                Constraint::Percentage(65), // suggestion detail
+            ])
+            .split(inner);
+
+        // === Left pane: item list ===
+        let items_focused = state.focus == SuggestionReviewFocus::Items;
+        let items_border_style = if items_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        let items_title = if items_focused {
+            format!(" > Items ({}) ", state.items.len())
+        } else {
+            format!(" Items ({}) ", state.items.len())
+        };
+        let items_block = Block::default()
+            .title(items_title)
+            .borders(Borders::ALL)
+            .border_style(items_border_style);
+        let items_inner = items_block.inner(panes[0]);
+        frame.render_widget(items_block, panes[0]);
+
+        let item_lines: Vec<Line<'_>> = state
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let is_selected = i == state.item_index;
+                let prefix = if is_selected { "> " } else { "  " };
+                let count = item.suggestions.len();
+                if is_selected && items_focused {
+                    // Cursor row: selected_row_style (Cyan bg + Black fg)
+                    let sel = selected_row_style();
+                    Line::from(vec![
+                        Span::styled(prefix, sel),
+                        Span::styled(&*item.item_text, sel.add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("  ({count})"),
+                            Style::default().fg(Color::Black).bg(Color::Cyan),
+                        ),
+                    ])
+                } else {
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    Line::from(vec![
+                        Span::styled(prefix, style),
+                        Span::styled(&*item.item_text, style),
+                        Span::styled(format!("  ({count})"), Style::default().fg(Color::Yellow)),
+                    ])
+                }
+            })
+            .collect();
+        let item_scroll = list_scroll_for_selected_line(items_inner, Some(state.item_index));
+        frame.render_widget(
+            Paragraph::new(item_lines).scroll((item_scroll, 0)),
+            items_inner,
+        );
+
+        // === Right pane: selected item detail + suggestions ===
+        let sugg_focused = state.focus == SuggestionReviewFocus::Suggestions;
+        let sugg_border_style = if sugg_focused {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+
+        if let Some(item) = state.items.get(state.item_index) {
+            let sugg_title = if sugg_focused {
+                " > Suggestions "
+            } else {
+                " Suggestions "
+            };
+            let detail_block = Block::default()
+                .title(sugg_title)
+                .borders(Borders::ALL)
+                .border_style(sugg_border_style);
+            let detail_inner = detail_block.inner(panes[1]);
+            frame.render_widget(detail_block, panes[1]);
+
+            // Vertical layout: item header + suggestion list
+            let detail_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // item header
+                    Constraint::Min(1),    // suggestion list
+                ])
+                .split(detail_inner);
+
+            // Item header
+            let mut header_lines = vec![Line::from(vec![
+                Span::styled("Item: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    &*item.item_text,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])];
+            if let Some(note) = &item.note_excerpt {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Note: ", Style::default().fg(Color::Gray)),
+                    Span::styled(note.as_str(), Style::default().fg(Color::Gray)),
+                ]));
+            }
+            if !item.current_assignments.is_empty() {
+                header_lines.push(Line::from(vec![
+                    Span::styled("Assigned: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        item.current_assignments.join(", "),
+                        Style::default().fg(Color::White),
+                    ),
+                ]));
+            }
+            frame.render_widget(Paragraph::new(header_lines), detail_chunks[0]);
+
+            // Suggestion list
+            let cat_names = category_name_map(&self.categories);
+            let reason_width = detail_chunks[1].width.saturating_sub(10) as usize;
+            let mut sugg_lines: Vec<Line<'_>> = Vec::new();
+            let mut selected_suggestion_line = Some(0usize);
+            for (i, review) in item.suggestions.iter().enumerate() {
+                let is_selected_suggestion = i == state.suggestion_cursor;
+                let is_cursor = sugg_focused && is_selected_suggestion;
+                let marker = if review.accepted { "[x]" } else { "[ ]" };
+                let marker_color = if review.accepted {
+                    Color::LightGreen
+                } else {
+                    Color::LightRed
+                };
+                let category_name =
+                    candidate_assignment_label(&review.suggestion.assignment, &cat_names);
+                let provider_label = review
+                    .suggestion
+                    .model
+                    .as_ref()
+                    .map(|model| format!("{}:{model}", review.suggestion.provider_id))
+                    .unwrap_or_else(|| review.suggestion.provider_id.clone());
+                let confidence_label = review
+                    .suggestion
+                    .confidence
+                    .map(|value| format!("{:.0}%", value * 100.0))
+                    .unwrap_or_else(|| "-".to_string());
+                let rationale = review
+                    .suggestion
+                    .rationale
+                    .as_deref()
+                    .unwrap_or("text match");
+                let meta = format!("{provider_label} {confidence_label}");
+
+                if is_selected_suggestion {
+                    selected_suggestion_line = Some(sugg_lines.len());
+                }
+                if is_cursor {
+                    // Cursor row: selected_row_style (Cyan bg + Black fg)
+                    let sel = selected_row_style();
+                    let sel_marker = if review.accepted {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(Color::Red)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    sugg_lines.push(Line::from(vec![
+                        Span::styled("> ", sel),
+                        Span::styled(marker, sel_marker),
+                        Span::styled(" ", sel),
+                        Span::styled(category_name, sel.add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("  [{meta}]"),
+                            Style::default().fg(Color::DarkGray).bg(Color::Cyan),
+                        ),
+                    ]));
+                } else {
+                    sugg_lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(marker, Style::default().fg(marker_color)),
+                        Span::raw(" "),
+                        Span::styled(
+                            category_name,
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("  [{meta}]"), Style::default().fg(Color::Gray)),
+                    ]));
+                }
+                if is_selected_suggestion {
+                    let reason_prefix = if is_cursor { "    Reason: " } else { "      " };
+                    let wrapped_reason = wrap_text_for_board_cell(rationale, reason_width.max(12));
+                    for (line_index, line) in wrapped_reason.into_iter().enumerate() {
+                        let prefix = if line_index == 0 {
+                            reason_prefix
+                        } else {
+                            "            "
+                        };
+                        let style = if is_cursor {
+                            Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        };
+                        sugg_lines.push(Line::from(Span::styled(format!("{prefix}{line}"), style)));
+                    }
+                }
+            }
+            let sugg_scroll =
+                list_scroll_for_selected_line(detail_chunks[1], selected_suggestion_line);
+            frame.render_widget(
+                Paragraph::new(sugg_lines).scroll((sugg_scroll, 0)),
+                detail_chunks[1],
+            );
+        } else {
+            let detail_block = Block::default()
+                .title(" Suggestions ")
+                .borders(Borders::ALL)
+                .border_style(sugg_border_style);
+            frame.render_widget(detail_block, panes[1]);
+        }
+    }
+
+    pub(crate) fn render_footer(&self, width: u16) -> Paragraph<'_> {
+        let status = self.footer_status_text();
+        let hint_pairs = self.footer_hint_pairs();
+        // Build width-aware hint line with styled key:desc spans
+        let available = width.saturating_sub(4) as usize; // borders + padding
+        let help_suffix = "?:help";
+        let help_suffix_len = help_suffix.len();
+        let mut spans: Vec<Span<'_>> = Vec::new();
+        let mut used = 0usize;
+        for (key, desc) in &hint_pairs {
+            let entry = format!("{}:{}", key, desc);
+            let entry_len = entry.len() + if spans.is_empty() { 0 } else { 2 }; // "  " separator
+                                                                                // Reserve space for help suffix if not already the help entry
+            let reserve = if *key != "?" { help_suffix_len + 2 } else { 0 };
+            if used + entry_len + reserve > available && !spans.is_empty() {
+                break;
+            }
+            if !spans.is_empty() {
+                spans.push(Span::raw("  "));
+                used += 2;
+            }
+            spans.push(Span::styled(
+                format!("{}:", key),
+                Style::default().fg(Color::LightCyan),
+            ));
+            spans.push(Span::styled(
+                desc.to_string(),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ));
+            used += entry_len;
+        }
+        // Add ?:help if not already present
+        if !hint_pairs.iter().any(|(k, _)| *k == "?") {
+            if !spans.is_empty() {
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled("?:", Style::default().fg(Color::LightCyan)));
+            spans.push(Span::styled("help", Style::default().fg(MUTED_TEXT_COLOR)));
+        }
+        let text = ratatui::text::Text::from(vec![
+            ratatui::text::Line::from(status),
+            ratatui::text::Line::from(spans),
+        ]);
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL))
+    }
+
+    fn footer_status_text(&self) -> String {
+        match self.mode {
+            Mode::SearchBarFocused => {
+                let section_name = self
+                    .slots
+                    .get(self.slot_index)
+                    .map(|s| s.title.as_str())
+                    .unwrap_or("section");
+                let match_count = self.current_slot().map(|s| s.items.len()).unwrap_or(0);
+                format!("[{section_name}] {match_count} matches")
+            }
+            Mode::ConfirmDelete => {
+                if let Some(done_confirm) = &self.done_blocks_confirm {
+                    match &done_confirm.scope {
+                        DoneBlocksConfirmScope::Single {
+                            blocked_item_ids, ..
+                        } => {
+                            let blocked_count = blocked_item_ids.len();
+                            let suffix = if blocked_count == 1 { "" } else { "s" };
+                            format!(
+                                "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                            )
+                        }
+                        DoneBlocksConfirmScope::Batch {
+                            blocking_item_count,
+                            blocked_link_count,
+                            ..
+                        } => {
+                            let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
+                            let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
+                            format!(
+                                "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                            )
+                        }
+                    }
+                } else if let Some(batch_delete_item_ids) = &self.batch_delete_item_ids {
+                    let selected_count = batch_delete_item_ids.len();
+                    let item_suffix = if selected_count == 1 { "" } else { "s" };
+                    format!(
+                        "Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel"
+                    )
+                } else {
+                    "Delete item? y:confirm Esc:cancel".to_string()
+                }
+            }
+            Mode::BoardColumnDeleteConfirm => {
+                if let Some(name) = &self.board_pending_delete_column_label {
+                    format!("Delete column '{name}'? y:confirm Esc:cancel")
+                } else {
+                    "Delete column? y:confirm Esc:cancel".to_string()
+                }
+            }
+            Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
+            Mode::ItemAssignPicker => {
+                "Assign categories (type to filter/create; Enter resolves+closes; Space toggles; Esc closes)".to_string()
+            }
+            Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            Mode::LinkWizard => {
+                if let Some(state) = self.link_wizard_state() {
+                    let action = LinkWizardAction::from_index(state.action_index);
+                    if action.requires_target() {
+                        format!(
+                            "Link wizard ({}) target> {}",
+                            action.label(),
+                            state.target_filter.text()
+                        )
+                    } else {
+                        format!("Link wizard ({})", action.label())
+                    }
+                } else {
+                    "Link wizard".to_string()
+                }
+            }
+            Mode::BoardAddColumnPicker => {
+                format!(
+                    "Add column> {}",
+                    self.board_add_column_input_text().unwrap_or("")
+                )
+            }
+            Mode::InspectUnassign => "Select assignment".to_string(),
+            Mode::InputPanel => {
+                if let Some(panel) = &self.input_panel {
+                    if panel.discard_confirm {
+                        // Show the confirm prompt as status text
+                        "Save changes? y:save  n:discard  Esc:keep editing".to_string()
+                    } else {
+                        use input_panel::InputPanelFocus;
+                        format!(
+                            "{} (focus: {})",
+                            match panel.kind {
+                                input_panel::InputPanelKind::AddItem => "Add item",
+                                input_panel::InputPanelKind::EditItem => "Edit item",
+                                input_panel::InputPanelKind::NameInput => "Name input",
+                                input_panel::InputPanelKind::WhenDate => "When editor",
+                                input_panel::InputPanelKind::NumericValue => "Set value",
+                                input_panel::InputPanelKind::CategoryCreate => "Create category",
+                            },
+                            match panel.focus {
+                                InputPanelFocus::Text => "Text",
+                                InputPanelFocus::When => "When",
+                                InputPanelFocus::Note => "Note",
+                                InputPanelFocus::Categories => "Categories",
+                                InputPanelFocus::Actions => "Actions",
+                                InputPanelFocus::Suggestions => "Suggestions",
+                                InputPanelFocus::TypePicker => "Type",
+                            }
+                        )
+                    }
+                } else {
+                    self.status.clone()
+                }
+            }
+            Mode::SuggestionReview | Mode::GlobalSettings => self.status.clone(),
+            Mode::Normal => self
+                .active_transient_status_text()
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    let mut parts = vec![self.status.clone()];
+                    if !self.classification.in_flight_classifications.is_empty() {
+                        let n = self.classification.in_flight_classifications.len();
+                        parts.push(format!("[classifying {n}…]"));
+                    }
+                    if let Some(suffix) = self.classification_pending_suffix() {
+                        if !self.status.contains("classification suggestion") {
+                            parts.push(suffix);
+                        }
+                    }
+                    parts.join(" | ")
+                }),
+            Mode::HelpPanel
+            | Mode::ViewPicker
+            | Mode::ViewEdit
+            | Mode::CategoryManager
+            | Mode::CategoryDirectEdit
+            | Mode::CategoryColumnPicker => self.status.clone(),
+        }
+    }
+
+    fn footer_hint_pairs(&self) -> Vec<(&'static str, &'static str)> {
+        match self.mode {
+            Mode::HelpPanel => vec![("Esc", "close"), ("Enter", "close"), ("?", "close")],
+            Mode::SuggestionReview => vec![
+                ("Tab", "pane"),
+                ("Space", "toggle"),
+                ("Enter", "confirm"),
+                ("s", "skip"),
+                ("A", "accept all"),
+                ("Esc", "close"),
+            ],
+            Mode::GlobalSettings => {
+                if self
+                    .settings
+                    .workflow_role_picker
+                    .as_ref()
+                    .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
+                {
+                    vec![
+                        ("j/k", "pick"),
+                        ("Enter", "assign"),
+                        ("x", "clear"),
+                        ("Esc", "back"),
+                    ]
+                } else {
+                    vec![
+                        ("j/k", "move"),
+                        ("←/→", "cycle"),
+                        ("Space", "cycle"),
+                        ("Enter", "pick"),
+                        ("Esc", "close"),
+                    ]
+                }
+            }
+            Mode::CategoryManager => {
+                if self.category_manager_discard_confirm() {
+                    vec![
+                        ("y", "save & close"),
+                        ("n", "discard"),
+                        ("Esc", "keep editing"),
+                    ]
+                } else if self.settings.classification_mode_picker_open {
+                    vec![("j/k", "mode"), ("Enter", "apply"), ("Esc", "close")]
+                } else if self.settings.workflow_role_picker.is_some() {
+                    vec![
+                        ("j/k", "pick"),
+                        ("Enter", "assign"),
+                        ("x", "clear"),
+                        ("Esc", "back"),
+                    ]
+                } else if self.workflow_setup_open {
+                    vec![
+                        ("j/k", "role"),
+                        ("Enter", "choose"),
+                        ("x", "clear"),
+                        ("Esc", "close"),
+                    ]
+                } else if self.category_manager_details_note_editing() {
+                    vec![("Tab", "next section"), ("Esc", "stop edit")]
+                } else if self.category_manager_details_also_match_editing() {
+                    vec![
+                        ("Type", "edit"),
+                        ("Enter", "newline"),
+                        ("Tab", "next section"),
+                        ("Esc", "stop edit"),
+                    ]
+                } else if let Some(action) = self.category_manager_inline_action() {
+                    match action {
+                        CategoryInlineAction::Rename { .. } => {
+                            vec![("Enter", "apply"), ("Esc", "cancel")]
+                        }
+                        CategoryInlineAction::DeleteConfirm { .. } => {
+                            vec![("y", "confirm"), ("Esc", "cancel")]
+                        }
+                    }
+                } else if self.category_manager_filter_editing()
+                    || self.category_manager_focus() == Some(CategoryManagerFocus::Filter)
+                {
+                    vec![
+                        ("Type", "filter"),
+                        ("Esc", "clear"),
+                        ("Tab", "tree"),
+                        ("Enter", "details"),
+                    ]
+                } else if self.category_manager_focus() == Some(CategoryManagerFocus::Details) {
+                    vec![
+                        ("j/k", "field"),
+                        ("Enter", "apply+back"),
+                        ("Space", "toggle"),
+                        ("Tab", "section"),
+                        ("Esc", "close"),
+                    ]
+                } else {
+                    vec![
+                        ("n", "new sibling"),
+                        ("N", "new child"),
+                        ("r", "rename"),
+                        ("x", "delete"),
+                        ("S-\u{2191}/\u{2193}", "move"),
+                        ("H/L", "level"),
+                        ("/", "filter"),
+                        ("Tab", "details"),
+                        ("Esc", "close"),
+                    ]
+                }
+            }
+            Mode::ViewPicker => {
+                vec![
+                    ("Enter", "switch"),
+                    ("N", "new"),
+                    ("c", "clone"),
+                    ("r", "rename"),
+                    ("e", "edit"),
+                    ("x", "delete"),
+                    ("Esc", "cancel"),
+                ]
+            }
+            Mode::ViewDeleteConfirm => vec![("y", "confirm"), ("Esc", "cancel")],
+            Mode::ViewEdit => {
+                if let Some(state) = &self.view_edit_state {
+                    if state.discard_confirm {
+                        vec![
+                            ("y", "save & close"),
+                            ("n", "discard"),
+                            ("Esc", "keep editing"),
+                        ]
+                    } else if state.section_delete_confirm.is_some() {
+                        vec![("y", "confirm"), ("Esc", "cancel")]
+                    } else if state.inline_input.is_some() {
+                        vec![("Enter", "confirm"), ("Esc", "cancel")]
+                    } else if state.overlay.is_some() {
+                        let is_criteria = matches!(
+                            &state.overlay,
+                            Some(ViewEditOverlay::CategoryPicker {
+                                target: CategoryEditTarget::ViewCriteria
+                                    | CategoryEditTarget::SectionCriteria
+                            })
+                        );
+                        if is_criteria {
+                            vec![
+                                ("Sp", "cycle"),
+                                ("+/1", "require"),
+                                ("-/2", "exclude"),
+                                ("3", "or"),
+                                ("0", "clear"),
+                                ("Esc", "done"),
+                            ]
+                        } else {
+                            vec![("Space", "toggle"), ("Esc", "done")]
+                        }
+                    } else if state.pane_focus == ViewEditPaneFocus::Sections {
+                        if state.draft.datebook_config.is_some() {
+                            vec![
+                                ("S", "save"),
+                                ("Enter/Sp", "cycle"),
+                                ("Tab", "settings"),
+                                ("Esc", "close"),
+                            ]
+                        } else if state.sections_view_row_selected {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "details"),
+                                ("n", "add section"),
+                                ("Tab", "details"),
+                                ("Esc", "close"),
+                            ]
+                        } else {
+                            vec![
+                                ("S", "save"),
+                                ("e", "title"),
+                                ("n", "add"),
+                                ("x", "del"),
+                                ("J/K", "move"),
+                                ("Tab", "details"),
+                                ("Esc", "close"),
+                            ]
+                        }
+                    } else if state.pane_focus == ViewEditPaneFocus::Preview {
+                        vec![
+                            ("S", "save"),
+                            ("p", "hide"),
+                            ("Tab", "sections"),
+                            ("Esc", "close"),
+                        ]
+                    } else {
+                        // Details pane
+                        let mut hints = if state.sections_view_row_selected {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "edit"),
+                                ("r", "name"),
+                                ("p", "preview"),
+                                ("Tab", "sections"),
+                                ("Esc", "close"),
+                            ]
+                        } else {
+                            vec![
+                                ("S", "save"),
+                                ("Enter", "edit"),
+                                ("Space", "toggle"),
+                                ("p", "preview"),
+                                ("Tab", "sections"),
+                                ("Esc", "close"),
+                            ]
+                        };
+                        if let Some(field) = Self::view_edit_active_field_label(state) {
+                            hints.insert(0, ("field", field));
+                        }
+                        hints
+                    }
+                } else {
+                    vec![("S", "save"), ("Tab", "pane"), ("Esc", "close")]
+                }
+            }
+            Mode::ItemAssignPicker => match self.item_assign_pane {
+                ItemAssignPane::Categories => vec![
+                    ("Tab/S-Tab", "pane"),
+                    ("Space", "toggle"),
+                    ("n", "new"),
+                    ("Enter", "resolve+close"),
+                    ("Esc", "close"),
+                ],
+                ItemAssignPane::ViewSection => vec![
+                    ("Tab/S-Tab", "pane"),
+                    ("Space", "assign"),
+                    ("Enter", "apply+close"),
+                    ("r", "remove"),
+                    ("Esc", "close"),
+                ],
+            },
+            Mode::ItemAssignInput => vec![("Enter", "assign"), ("Esc", "cancel")],
+            Mode::LinkWizard => vec![
+                ("Tab", "focus"),
+                ("Enter", "apply"),
+                ("/", "target"),
+                ("Esc", "cancel"),
+            ],
+            Mode::CategoryDirectEdit => vec![
+                ("S", "save"),
+                ("Tab", "focus"),
+                ("Enter", "resolve"),
+                ("x", "remove"),
+                ("Esc", "cancel"),
+            ],
+            Mode::CategoryColumnPicker => {
+                vec![("Space", "toggle"), ("Enter", "save"), ("Esc", "cancel")]
+            }
+            Mode::BoardAddColumnPicker => {
+                vec![("Enter", "insert"), ("Tab", "complete"), ("Esc", "cancel")]
+            }
+            Mode::ConfirmDelete => {
+                if self.done_blocks_confirm.is_some() {
+                    vec![
+                        ("y", "remove links + done"),
+                        ("n", "done only"),
+                        ("Esc", "cancel"),
+                    ]
+                } else {
+                    vec![("y", "confirm"), ("Esc", "cancel")]
+                }
+            }
+            Mode::BoardColumnDeleteConfirm => {
+                vec![("y", "confirm"), ("Esc", "cancel")]
+            }
+            Mode::SearchBarFocused => {
+                if self.global_search_active() {
+                    vec![
+                        ("Enter", "jump/create"),
+                        ("\u{2193}/Tab", "browse"),
+                        ("Esc", "return"),
+                    ]
+                } else {
+                    let mut hints = vec![
+                        ("Enter", "jump/create"),
+                        ("\u{2193}/Tab", "browse"),
+                        ("Esc", "clear"),
+                    ];
+                    if self.section_search_has_no_matches() {
+                        hints.push(("g/", "search all sections"));
+                    }
+                    hints
+                }
+            }
+            Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
+            Mode::InputPanel => {
+                // Discard-confirm prompt takes priority
+                if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
+                    vec![
+                        ("y", "save & close"),
+                        ("n", "discard"),
+                        ("Esc", "keep editing"),
+                    ]
+                } else if self
+                    .input_panel
+                    .as_ref()
+                    .map(|p| {
+                        p.kind == input_panel::InputPanelKind::NumericValue
+                            || p.kind == input_panel::InputPanelKind::WhenDate
+                    })
+                    .unwrap_or(false)
+                {
+                    vec![("Enter", "save"), ("Esc", "cancel")]
+                } else if self.input_panel.as_ref().is_some_and(|p| {
+                    p.focus == input_panel::InputPanelFocus::Categories && p.category_filter_editing
+                }) {
+                    vec![
+                        ("Type", "filter"),
+                        ("Enter", "keep"),
+                        ("Esc", "done"),
+                        ("Tab", "next"),
+                    ]
+                } else if self
+                    .input_panel
+                    .as_ref()
+                    .is_some_and(|p| p.focus == input_panel::InputPanelFocus::Categories)
+                {
+                    vec![
+                        ("Tab", "next"),
+                        ("/", "filter"),
+                        ("Space", "toggle"),
+                        ("S", "save"),
+                        ("Esc", "cancel"),
+                    ]
+                } else if self.input_panel.as_ref().is_some_and(|p| {
+                    matches!(
+                        p.focus,
+                        input_panel::InputPanelFocus::Text
+                            | input_panel::InputPanelFocus::Note
+                            | input_panel::InputPanelFocus::When
+                    )
+                }) {
+                    vec![("Tab", "next"), ("Ctrl-G", "$EDITOR"), ("Esc", "cancel")]
+                } else {
+                    vec![
+                        ("Tab", "next"),
+                        ("S", "save"),
+                        ("Ctrl-G", "$EDITOR"),
+                        ("Esc", "cancel"),
+                    ]
+                }
+            }
+            Mode::Normal => {
+                let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
+                if self.selected_count() > 0 {
+                    hints.extend_from_slice(&[
+                        ("Space", "toggle"),
+                        ("a", "assign"),
+                        ("b/B", "link"),
+                        ("x", "delete"),
+                        ("Esc", "clear sel"),
+                        ("/", "search"),
+                        ("J/K", "jump"),
+                        ("[/]", "move"),
+                        ("=", "classify"),
+                        ("C", "review"),
+                        ("g/", "global"),
+                        ("v", "views"),
+                        ("p", "preview"),
+                        ("q", "quit"),
+                    ]);
+                } else {
+                    hints.extend_from_slice(&[
+                        ("n", "new"),
+                        ("e", "edit"),
+                        ("a", "assign"),
+                        ("d", "done"),
+                        ("/", "search"),
+                        ("J/K", "jump"),
+                        ("[/]", "move"),
+                        ("v", "views"),
+                        ("m", "lanes"),
+                        ("s", "sort"),
+                    ]);
+                    if self.focused_numeric_board_column() {
+                        hints.extend_from_slice(&[("f", "col fmt"), ("F", "col summary")]);
+                    }
+                    hints.extend_from_slice(&[
+                        ("p", "preview"),
+                        ("u", "deps"),
+                        ("=", "classify"),
+                        ("C", "review"),
+                        ("g/", "global"),
+                        ("g s", "settings"),
+                        ("F10", "settings"),
+                        ("z", "cards"),
+                    ]);
+                    if self.section_filters.iter().any(|f| f.is_some()) {
+                        let insert_pos = hints.len().min(5);
+                        hints.insert(insert_pos, ("Esc", "clear search"));
+                    }
+                    if self
+                        .current_view()
+                        .is_some_and(|v| v.datebook_config.is_some())
+                    {
+                        hints.extend_from_slice(&[("}", "fwd"), ("{", "back"), ("0", "today")]);
+                    }
+                    hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
+                }
+                if self.undo.has_undo() {
+                    // Insert undo hint near the front (after primary action keys)
+                    let insert_pos = hints.len().min(4);
+                    hints.insert(insert_pos, ("Ctrl-Z", "undo"));
+                }
+                if self.undo.has_redo() {
+                    // Insert redo hint right after undo
+                    let undo_pos = hints.iter().position(|h| h.0 == "Ctrl-Z");
+                    let insert_pos = undo_pos
+                        .map(|p| p + 1)
+                        .unwrap_or_else(|| hints.len().min(5));
+                    hints.insert(insert_pos, ("Ctrl-Shift-Z", "redo"));
+                }
+                hints
+            }
+        }
+    }
+
+    fn view_edit_active_field_label(state: &ViewEditState) -> Option<&'static str> {
+        if state.pane_focus != ViewEditPaneFocus::Details {
+            return None;
+        }
+
+        if let Some(inline) = &state.inline_input {
+            return match inline {
+                ViewEditInlineInput::ViewName => Some("Name"),
+                ViewEditInlineInput::SectionTitle { .. } => Some("Title"),
+                ViewEditInlineInput::UnmatchedLabel => Some("Unmatched label"),
+                ViewEditInlineInput::CategoryAlias { .. } => Some("Alias"),
+                ViewEditInlineInput::SectionsFilter => None,
+            };
+        }
+
+        if state.sections_view_row_selected || state.region != ViewEditRegion::Sections {
+            return match state.region {
+                ViewEditRegion::Criteria => {
+                    if state.name_focused {
+                        Some("Name")
+                    } else if state.view_type_focused {
+                        Some("View type")
+                    } else {
+                        Some("Filter criteria")
+                    }
+                }
+                ViewEditRegion::Datebook => match state.datebook_field_index {
+                    0 => Some("Period"),
+                    1 => Some("Interval"),
+                    2 => Some("Anchor"),
+                    3 => Some("Date source"),
+                    _ => None,
+                },
+                ViewEditRegion::Unmatched => match state.unmatched_field_index {
+                    0 => Some("Date range include"),
+                    1 => Some("Date range exclude"),
+                    2 => Some("Display mode"),
+                    3 => Some("Section flow"),
+                    4 => Some("Empty sections"),
+                    5 => Some("Show unmatched"),
+                    6 => Some("Hide dependent"),
+                    7 => Some("Unmatched label"),
+                    8 => Some("Aliases"),
+                    _ => None,
+                },
+                ViewEditRegion::Sections => None,
+            };
+        }
+
+        match state.section_details_field_index {
+            0 => Some("Title"),
+            1 => Some("Filter"),
+            2 => Some("Columns"),
+            3 => Some("Display mode"),
+            4 => Some("Auto-assign"),
+            5 => Some("Auto-unassign"),
+            6 => Some("Section layout"),
+            _ => None,
+        }
+    }
+
+    fn render_help_panel(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if area.width < 8 || area.height < 8 {
+            return;
+        }
+
+        let header = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let help_entry = |key: &str, desc: &str| -> Line<'static> {
+            let pad = 12_usize.saturating_sub(key.len());
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(key.to_string(), key_style),
+                Span::raw(" ".repeat(pad)),
+                Span::raw(desc.to_string()),
+            ])
+        };
+
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(Span::styled("CURRENT ITEM", header)),
+            help_entry("n", "Add a new item to the focused section"),
+            help_entry("e / Enter", "Edit selected item; Enter adds when empty"),
+            help_entry("a", "Assign categories to current item or selection"),
+            help_entry("d / D", "Toggle done on selected item(s)"),
+            help_entry("r / x", "Remove from view / delete selected item(s)"),
+            help_entry("b / B", "Open dependency link wizard (blocked-by / blocks)"),
+            help_entry("=", "Classify selected item(s) now"),
+            help_entry("p / i/o", "Toggle preview sidebar / cycle preview mode"),
+            Line::from(""),
+            Line::from(Span::styled("SELECTION", header)),
+            help_entry("Space", "Toggle selection on current item"),
+            help_entry("a/d/x/=", "Batch assign, done, delete, or classify"),
+            help_entry("b / B", "Link selected items with a dependency"),
+            help_entry("Esc", "Clear selection"),
+            Line::from(""),
+            Line::from(Span::styled("NAVIGATION", header)),
+            help_entry(
+                "\u{2191}/k \u{2193}/j",
+                "Move items; scroll preview when focused",
+            ),
+            help_entry("\u{2190}/h \u{2192}/l", "Move between sections or columns"),
+            help_entry("Tab/S-Tab", "Next / previous section; J/K jump section"),
+            help_entry(
+                "[/] or S-\u{2191}/S-\u{2193}",
+                "Move item to previous / next section",
+            ),
+            help_entry("m / z", "Cycle lane layout / card size"),
+            Line::from(""),
+            Line::from(Span::styled("SEARCH", header)),
+            help_entry("/ / g/", "Search focused section / all sections"),
+            help_entry("Esc", "Clear active section filter"),
+            Line::from(""),
+            Line::from(Span::styled("COLUMNS", header)),
+            help_entry("Enter", "Edit column value (on a column cell)"),
+            help_entry("+/-", "Add / remove board column"),
+            help_entry("H/L", "Move board column left / right"),
+            help_entry("f", "Cycle numeric column format"),
+            help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
+            help_entry("s/S or </>", "Sort section by column (asc / desc)"),
+            Line::from(""),
+            Line::from(Span::styled("VIEWS", header)),
+            help_entry("v/V/F8 ,/. ga", "Views, previous/next view, All Items"),
+            Line::from(""),
+            Line::from(Span::styled("DATEBOOK VIEWS", header)),
+            help_entry("{/}/0", "Browse previous / next period; return to today"),
+            Line::from(""),
+            Line::from(Span::styled("GLOBAL", header)),
+            help_entry("C", "Review pending classification suggestions"),
+            help_entry("g s / F10", "Open Global Settings"),
+            help_entry("c / F9", "Open the category manager"),
+            help_entry("u", "Toggle hide-dependent-items filter"),
+            help_entry("Ctrl-G", "Open $EDITOR for text/note (in item editor)"),
+            help_entry("Ctrl-L", "Reload data from disk"),
+            help_entry("Ctrl-Z", "Undo"),
+            help_entry("C-S-Z", "Redo"),
+            help_entry("?", "Toggle this help panel"),
+            help_entry("q", "Quit"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "              Esc / Enter / ? to close",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+
+        let block = Block::default()
+            .title("Keyboard Shortcuts")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
+    pub(crate) fn render_input_panel(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        panel: &mut input_panel::InputPanel,
+    ) {
+        use input_panel::{InputPanelFocus, InputPanelKind};
+
+        frame.render_widget(Clear, area);
+
+        let dirty_marker = if panel.is_dirty() { " *" } else { "" };
+        let title = match panel.kind {
+            InputPanelKind::AddItem => format!("Add Item{dirty_marker}"),
+            InputPanelKind::EditItem => format!("Edit Item{dirty_marker}"),
+            InputPanelKind::NameInput => format!("Name{dirty_marker}"),
+            InputPanelKind::WhenDate => format!("Edit When{dirty_marker}"),
+            InputPanelKind::NumericValue => format!("Set Value{dirty_marker}"),
+            InputPanelKind::CategoryCreate => format!("Create Category{dirty_marker}"),
+        };
+        let block = Block::default()
+            .title(title)
+            .title_style(Style::default().fg(Color::White))
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        frame.render_widget(block, area);
+
+        let Some(regions) = input_panel_popup_regions(area, panel.kind) else {
+            return;
+        };
+
+        // Text field
+        let text_marker = if panel.focus == InputPanelFocus::Text {
+            "> "
+        } else {
+            "  "
+        };
+        let text_label = match panel.kind {
+            InputPanelKind::NameInput | InputPanelKind::CategoryCreate => "Name",
+            InputPanelKind::WhenDate => "When",
+            InputPanelKind::NumericValue => "Value",
+            _ => "Description",
+        };
+        let text_prefix = if matches!(
+            panel.kind,
+            InputPanelKind::NameInput
+                | InputPanelKind::CategoryCreate
+                | InputPanelKind::NumericValue
+        ) {
+            format!("{text_marker}{text_label}> ")
+        } else {
+            format!("{text_marker}{text_label}: ")
+        };
+        let text_width = regions.text.width as usize;
+        let (visible_value, _) = clip_text_for_row(
+            panel.text.text(),
+            panel.text.cursor(),
+            text_width.saturating_sub(text_prefix.chars().count()),
+            panel.focus == InputPanelFocus::Text,
+        );
+        let text_prefix_style = if panel.focus == InputPanelFocus::Text {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let text_spans = vec![
+            Span::styled(text_prefix, text_prefix_style),
+            Span::raw(visible_value),
+        ];
+        frame.render_widget(Paragraph::new(Line::from(text_spans)), regions.text);
+
+        if panel.kind == InputPanelKind::NumericValue && !panel.preview_context.is_empty() {
+            if let Some(context_rect) = regions.context {
+                frame.render_widget(
+                    Paragraph::new(format!("  {}", panel.preview_context))
+                        .style(Style::default().fg(MUTED_TEXT_COLOR)),
+                    context_rect,
+                );
+            }
+        }
+
+        if panel.kind == InputPanelKind::WhenDate {
+            if let Some(context_rect) = regions.context {
+                let context_text = format!("Item: {}", panel.preview_context);
+                frame.render_widget(
+                    Paragraph::new(context_text).style(Style::default().fg(MUTED_TEXT_COLOR)),
+                    context_rect,
+                );
+            }
+        }
+
+        // When-date field (AddItem/EditItem only)
+        if let Some(when_rect) = regions.when {
+            let when_focused = panel.focus == InputPanelFocus::When;
+            let when_marker = if when_focused { "> " } else { "  " };
+            let when_prefix = format!("{when_marker}When: ");
+            let when_width = when_rect.width as usize;
+            let (when_visible, _) = clip_text_for_row(
+                panel.when_buffer.text(),
+                panel.when_buffer.cursor(),
+                when_width.saturating_sub(when_prefix.chars().count()),
+                when_focused,
+            );
+            let when_prefix_style = if when_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            let when_value_style = if !when_focused && panel.when_buffer.text().is_empty() {
+                Style::default().fg(MUTED_TEXT_COLOR)
+            } else {
+                Style::default()
+            };
+            let when_display = if !when_focused && panel.when_buffer.text().is_empty() {
+                "(none — today, tomorrow, every monday, daily, …)"
+            } else {
+                &when_visible
+            };
+            let mut when_spans = vec![
+                Span::styled(when_prefix, when_prefix_style),
+                Span::styled(when_display, when_value_style),
+            ];
+            // Show recurrence annotation (↻ rule → next date) when the buffer
+            // holds a normalized date. While the user is actively typing new raw
+            // text the buffer won't parse as a datetime, so the annotation
+            // naturally hides until the next Enter/Tab resolves it.
+            if let Some(ref rule) = panel.parsed_recurrence_rule {
+                let trimmed = panel.when_buffer.text().trim().replace(' ', "T");
+                if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
+                    let next = rule.next_date(dt);
+                    let annotation =
+                        format!("  \u{21BB} {} \u{2192} {}", rule.display(), next.date());
+                    when_spans.push(Span::styled(annotation, Style::default().fg(Color::Cyan)));
+                }
+            }
+            frame.render_widget(Paragraph::new(Line::from(when_spans)), when_rect);
+        }
+
+        // Note (not shown for NameInput)
+        if let Some(note_rect) = regions.note {
+            let note_focused = panel.focus == InputPanelFocus::Note;
+            let note_border_style = if note_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Cyan)
+            };
+            let note_widget = panel.note.widget_mut();
+            note_widget.set_placeholder_text(ITEM_NOTE_PLACEHOLDER_TEXT);
+            note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+            note_widget.set_style(Style::default());
+            note_widget.set_cursor_line_style(Style::default());
+            if note_focused {
+                note_widget.set_cursor_style(
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
+            } else {
+                note_widget.set_cursor_style(Style::default());
+            }
+            note_widget.set_block(
+                Block::default()
+                    .title(if note_focused { "> Note" } else { "Note" })
+                    .borders(Borders::ALL)
+                    .border_style(note_border_style),
+            );
+            frame.render_widget(panel.note.widget(), note_rect);
+            let note_scroll =
+                list_scroll_for_selected_line(note_rect, Some(panel.note.line_col().0));
+            Self::render_vertical_scrollbar(
+                frame,
+                note_rect,
+                panel.note.text().lines().count().max(1),
+                note_scroll as usize,
+            );
+        }
+
+        // Inline categories list (bordered, scrollable)
+        if let Some(cat_rect) = regions.categories {
+            let cat_focused = panel.focus == InputPanelFocus::Categories;
+            let actions_focused = panel.focus == InputPanelFocus::Actions;
+            let suggestions_focused = panel.focus == InputPanelFocus::Suggestions;
+            let cat_border_style = if cat_focused || actions_focused || suggestions_focused {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Cyan)
+            };
+            let visible_indices = self.input_panel_visible_category_row_indices_for(panel);
+            let cat_inner = regions.categories_inner.unwrap_or(cat_rect);
+            let cat_filter_rect = regions.categories_filter.unwrap_or(cat_inner);
+            let cat_list_rect = if panel.category_filter_editing {
+                regions.categories_list.unwrap_or(cat_inner)
+            } else {
+                cat_inner
+            };
+            let inner_width = cat_list_rect.width as usize;
+
+            if panel.kind == InputPanelKind::EditItem {
+                let sidebar = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(4), Constraint::Min(0)])
+                    .split(cat_rect);
+                let actions_rect = sidebar[0];
+                let suggestions_rect = sidebar[1];
+                let suggestion_len = panel.pending_suggestions.len();
+                let suggestion_names = category_name_map(&self.categories);
+
+                let suggestions_border_style = if suggestions_focused {
+                    cat_border_style
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+                let actions_border_style = if actions_focused {
+                    cat_border_style
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
+
+                frame.render_widget(
+                    Block::default()
+                        .title(if actions_focused {
+                            "> Actions"
+                        } else {
+                            "Actions"
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(actions_border_style),
+                    actions_rect,
+                );
+                if suggestion_len == 0 {
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            "No pending suggestions",
+                            Style::default().fg(Color::DarkGray),
+                        ))),
+                        Rect {
+                            x: suggestions_rect.x,
+                            y: suggestions_rect.y.saturating_add(1),
+                            width: suggestions_rect.width,
+                            height: 1,
+                        },
+                    );
+                } else {
+                    frame.render_widget(
+                        Block::default()
+                            .title(if suggestions_focused {
+                                "> Suggestions"
+                            } else {
+                                "Suggestions"
+                            })
+                            .borders(Borders::ALL)
+                            .border_style(suggestions_border_style),
+                        suggestions_rect,
+                    );
+                }
+
+                let actions_inner = Rect {
+                    x: actions_rect.x.saturating_add(1),
+                    y: actions_rect.y.saturating_add(1),
+                    width: actions_rect.width.saturating_sub(2),
+                    height: actions_rect.height.saturating_sub(2),
+                };
+                let suggestions_inner = Rect {
+                    x: suggestions_rect.x.saturating_add(1),
+                    y: suggestions_rect.y.saturating_add(1),
+                    width: suggestions_rect.width.saturating_sub(2),
+                    height: suggestions_rect.height.saturating_sub(2),
+                };
+
+                let action_rows = [("a", "Assign categories"), ("i", "Inspect item details")];
+                let action_lines: Vec<Line<'_>> = action_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (key, label))| {
+                        let selected = actions_focused && panel.action_cursor == idx;
+                        let line_style = if selected {
+                            Style::default().fg(Color::Black).bg(Color::Cyan)
+                        } else {
+                            Style::default()
+                        };
+                        let key_style = if selected {
+                            line_style
+                        } else {
+                            Style::default().fg(Color::Yellow)
+                        };
+                        Line::from(vec![
+                            Span::styled(if selected { "> " } else { "  " }, line_style),
+                            Span::styled(*key, key_style),
+                            Span::styled("  ", line_style),
+                            Span::styled(*label, line_style),
+                        ])
+                    })
+                    .collect();
+                if actions_inner.width > 0 && actions_inner.height > 0 {
+                    frame.render_widget(Paragraph::new(action_lines), actions_inner);
+                }
+
+                let suggestion_lines: Vec<Line<'_>> = if suggestion_len == 0 {
+                    Vec::new()
+                } else {
+                    panel
+                        .pending_suggestions
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(idx, (suggestion, decision))| {
+                            let selected = suggestions_focused && panel.category_cursor == idx;
+                            let row_style = if selected {
+                                Style::default().fg(Color::Black).bg(Color::Cyan)
+                            } else {
+                                Style::default()
+                            };
+                            let meta_style = if selected {
+                                Style::default().fg(Color::Black).bg(Color::Cyan)
+                            } else {
+                                Style::default().fg(Color::DarkGray)
+                            };
+                            let marker_style = match decision {
+                                SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
+                                SuggestionDecision::Accept => {
+                                    Style::default().fg(Color::LightGreen)
+                                }
+                                SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
+                            };
+                            let marker_style = if selected {
+                                marker_style.bg(Color::Cyan).fg(Color::Black)
+                            } else {
+                                marker_style
+                            };
+                            let label = candidate_assignment_label(
+                                &suggestion.assignment,
+                                &suggestion_names,
+                            );
+                            let provider_label = suggestion
+                                .model
+                                .as_ref()
+                                .map(|model| format!("{}:{model}", suggestion.provider_id))
+                                .unwrap_or_else(|| suggestion.provider_id.clone());
+                            let confidence_label = suggestion
+                                .confidence
+                                .map(|value| format!("{:.0}%", value * 100.0))
+                                .unwrap_or_else(|| "-".to_string());
+                            let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
+                            vec![
+                                Line::from(vec![
+                                    Span::styled(if selected { "> " } else { "  " }, row_style),
+                                    Span::styled(format!("{} ", decision.marker()), marker_style),
+                                    Span::styled(label, row_style),
+                                ]),
+                                Line::from(vec![
+                                    Span::styled("    ", meta_style),
+                                    Span::styled(
+                                        format!(
+                                            "[{provider_label} {confidence_label}] {rationale}"
+                                        ),
+                                        meta_style,
+                                    ),
+                                ]),
+                            ]
+                        })
+                        .collect()
+                };
+                if suggestion_len > 0 && suggestions_inner.width > 0 && suggestions_inner.height > 0
+                {
+                    let rendered_suggestion_lines = if suggestion_len == 0 {
+                        1
+                    } else {
+                        suggestion_len * 2
+                    };
+                    let suggestion_scroll = list_scroll_for_selected_line(
+                        suggestions_inner,
+                        if suggestions_focused {
+                            Some(panel.category_cursor.saturating_mul(2))
+                        } else {
+                            None
+                        },
+                    );
+                    frame.render_widget(
+                        Paragraph::new(suggestion_lines).scroll((suggestion_scroll, 0)),
+                        suggestions_inner,
+                    );
+                    if rendered_suggestion_lines > suggestions_inner.height as usize {
+                        Self::render_vertical_scrollbar(
+                            frame,
+                            suggestions_rect,
+                            rendered_suggestion_lines,
+                            suggestion_scroll as usize,
+                        );
+                    }
+                }
+            } else if panel.category_filter_editing {
+                frame.render_widget(
+                    Block::default()
+                        .title(if cat_focused {
+                            "> Categories"
+                        } else {
+                            "Categories"
+                        })
+                        .borders(Borders::ALL)
+                        .style(Style::default())
+                        .border_style(cat_border_style),
+                    cat_rect,
+                );
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        format!("> Filter> {}", panel.category_filter.text()),
+                        Style::default().fg(Color::Yellow),
+                    ))),
+                    cat_filter_rect,
+                );
+            } else {
+                frame.render_widget(
+                    Block::default()
+                        .title(if cat_focused {
+                            "> Categories"
+                        } else {
+                            "Categories"
+                        })
+                        .borders(Borders::ALL)
+                        .style(Style::default())
+                        .border_style(cat_border_style),
+                    cat_rect,
+                );
+                let mut lines: Vec<Line<'_>> = Vec::new();
+
+                // Pending suggestions at the top (before categories)
+                let suggestion_len = panel.pending_suggestions.len();
+                if suggestion_len > 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled("─── Suggested ", Style::default().fg(Color::Yellow)),
+                        Span::styled("(Space: toggle) ", Style::default().fg(Color::Gray)),
+                        Span::styled("───", Style::default().fg(Color::Yellow)),
+                    ]));
+                    let suggestion_cat_names = category_name_map(&self.categories);
+                    for (si, (suggestion, decision)) in panel.pending_suggestions.iter().enumerate()
+                    {
+                        let is_cursor = cat_focused && panel.category_cursor == si;
+                        let marker = decision.marker();
+                        let marker_style = match decision {
+                            SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
+                            SuggestionDecision::Accept => Style::default().fg(Color::LightGreen),
+                            SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
+                        };
+                        let marker_style = if is_cursor {
+                            marker_style
+                                .bg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            marker_style
+                        };
+                        let cat_name = candidate_assignment_label(
+                            &suggestion.assignment,
+                            &suggestion_cat_names,
+                        );
+                        let provider_label = suggestion
+                            .model
+                            .as_ref()
+                            .map(|model| format!("{}:{model}", suggestion.provider_id))
+                            .unwrap_or_else(|| suggestion.provider_id.clone());
+                        let confidence_label = suggestion
+                            .confidence
+                            .map(|value| format!("{:.0}%", value * 100.0))
+                            .unwrap_or_else(|| "-".to_string());
+                        let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
+                        let base_style = if is_cursor {
+                            Style::default().fg(Color::White).bg(Color::DarkGray)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        let dim_style = if is_cursor {
+                            Style::default().fg(Color::Gray).bg(Color::DarkGray)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("{marker} "), marker_style),
+                            Span::styled(cat_name.clone(), base_style),
+                            Span::styled(
+                                format!("  [{provider_label} {confidence_label}] ({rationale})"),
+                                dim_style,
+                            ),
+                        ]));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "─────────────────",
+                        Style::default().fg(Color::Yellow),
+                    )));
+                }
+
+                let cat_lines: Vec<Line<'_>> = if self.category_rows.is_empty() {
+                    vec![Line::from(Span::styled(
+                        "(no categories)",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    ))]
+                } else if visible_indices.is_empty() {
+                    vec![Line::from(Span::styled(
+                        "(no matching categories)",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    ))]
+                } else {
+                    visible_indices
+                        .iter()
+                        .enumerate()
+                        .map(|(i, row_index)| {
+                            let row = &self.category_rows[*row_index];
+                            let is_assigned = panel.categories.contains(&row.id);
+                            let is_numeric =
+                                row.value_kind == aglet_core::model::CategoryValueKind::Numeric;
+                            let is_cursor =
+                                cat_focused && (i + suggestion_len) == panel.category_cursor;
+
+                            let check = if is_assigned && is_numeric {
+                                "[#] "
+                            } else if is_assigned {
+                                "[x] "
+                            } else {
+                                "[ ] "
+                            };
+
+                            let indent = "  ".repeat(row.depth);
+
+                            let base_style = if is_cursor {
+                                Style::default().fg(Color::Black).bg(Color::Cyan)
+                            } else if row.is_reserved {
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            };
+
+                            let suffix_style = if is_cursor {
+                                Style::default().fg(Color::DarkGray).bg(Color::Cyan)
+                            } else {
+                                Style::default().fg(MUTED_TEXT_COLOR)
+                            };
+
+                            let type_suffix = if row.is_reserved {
+                                " [reserved]"
+                            } else if is_numeric {
+                                " [numeric]"
+                            } else {
+                                ""
+                            };
+
+                            let main_prefix = format!("{check}{indent}{}", row.name);
+
+                            if is_assigned && is_numeric {
+                                if let Some(buf) = panel.numeric_buffers.get(&row.id) {
+                                    let value_display = buf.text();
+                                    let value_text = if value_display.is_empty() {
+                                        "________".to_string()
+                                    } else {
+                                        value_display.to_string()
+                                    };
+                                    let left_len =
+                                        main_prefix.chars().count() + type_suffix.chars().count();
+                                    let value_len = 1 + value_text.chars().count();
+                                    let total_needed = left_len + value_len;
+                                    let padding = if inner_width > total_needed {
+                                        " ".repeat(inner_width - total_needed)
+                                    } else {
+                                        " ".to_string()
+                                    };
+                                    let value_style = if is_cursor {
+                                        Style::default().fg(Color::Black).bg(Color::LightCyan)
+                                    } else {
+                                        Style::default().fg(Color::Cyan)
+                                    };
+                                    let mut spans = vec![Span::styled(main_prefix, base_style)];
+                                    if !type_suffix.is_empty() {
+                                        spans.push(Span::styled(
+                                            type_suffix.to_string(),
+                                            suffix_style,
+                                        ));
+                                    }
+                                    spans.push(Span::styled(padding, base_style));
+                                    spans.push(Span::styled(value_text, value_style));
+                                    return Line::from(spans);
+                                }
+                            }
+
+                            if type_suffix.is_empty() {
+                                Line::from(Span::styled(main_prefix, base_style))
+                            } else {
+                                Line::from(vec![
+                                    Span::styled(main_prefix, base_style),
+                                    Span::styled(type_suffix.to_string(), suffix_style),
+                                ])
+                            }
+                        })
+                        .collect()
+                };
+                lines.extend(cat_lines);
+
+                let visual_cursor = if suggestion_len > 0 {
+                    if panel.category_cursor < suggestion_len {
+                        panel.category_cursor + 1
+                    } else {
+                        panel.category_cursor + 2
+                    }
+                } else {
+                    panel.category_cursor
+                };
+                let cat_scroll = list_scroll_for_selected_line(cat_list_rect, Some(visual_cursor));
+                let item_count = lines.len();
+
+                if cat_list_rect.width > 0 && cat_list_rect.height > 0 {
+                    frame.render_widget(
+                        Paragraph::new(lines).scroll((cat_scroll, 0)),
+                        cat_list_rect,
+                    );
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        cat_list_rect,
+                        item_count,
+                        cat_scroll as usize,
+                    );
+                }
+            }
+        }
+
+        // Type picker (CategoryCreate only)
+        if let Some(type_rect) = regions.type_picker {
+            let type_marker = if panel.focus == InputPanelFocus::TypePicker {
+                "> "
+            } else {
+                "  "
+            };
+            let (tag_label, num_label) = match panel.value_kind {
+                aglet_core::model::CategoryValueKind::Tag => ("[Tag]", " Numeric "),
+                aglet_core::model::CategoryValueKind::Numeric => (" Tag ", "[Numeric]"),
+            };
+            let type_style = if panel.focus == InputPanelFocus::TypePicker {
+                Style::default().fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!("{type_marker}Type:   "), type_style),
+                    Span::raw(tag_label),
+                    Span::raw("  "),
+                    Span::raw(num_label),
+                ])),
+                type_rect,
+            );
+        }
+
+        // Help row
+        let base_help = match panel.focus {
+            InputPanelFocus::Text => match panel.kind {
+                InputPanelKind::NumericValue => "Type value  Enter:save  Esc:cancel",
+                InputPanelKind::NameInput => "Type name  Enter:save  Esc:cancel",
+                InputPanelKind::WhenDate => {
+                    "Enter natural language or ISO datetime  Enter:save  Esc:cancel"
+                }
+                InputPanelKind::CategoryCreate => "Type name  Enter:save  Esc:cancel  Tab:next",
+                InputPanelKind::EditItem => "Type title  Enter:save  Esc:cancel  Tab:when",
+                InputPanelKind::AddItem => "Type title  Enter:save  Esc:cancel  Tab:when",
+            },
+            InputPanelFocus::Note => {
+                if panel.kind == InputPanelKind::EditItem {
+                    "Type note  Enter:new line  Tab:actions  Esc:cancel"
+                } else {
+                    "Type note  Enter:new line  Tab:categories  Esc:cancel"
+                }
+            }
+            InputPanelFocus::Categories if panel.category_filter_editing => {
+                "Type filter  Enter:keep  Esc:done  Tab:next"
+            }
+            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
+            InputPanelFocus::Actions => {
+                if panel.pending_suggestions.is_empty() {
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S:save  Esc:cancel"
+                } else {
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S:save  Esc:cancel"
+                }
+            }
+            InputPanelFocus::Suggestions => {
+                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S:save  Esc:cancel"
+            }
+            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:cancel",
+            InputPanelFocus::When => {
+                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:cancel"
+            }
+        };
+        let mut help_style = Style::default();
+        let help_text = if panel.kind == InputPanelKind::WhenDate {
+            let is_when_error = self.status.starts_with("Could not parse")
+                || self.status.starts_with("When edit failed:");
+            if is_when_error {
+                help_style = Style::default().fg(Color::LightRed);
+                self.status.clone()
+            } else {
+                base_help.to_string()
+            }
+        } else if panel.kind == InputPanelKind::AddItem && !panel.preview_context.is_empty() {
+            format!("{} | {}", panel.preview_context, base_help)
+        } else {
+            base_help.to_string()
+        };
+        frame.render_widget(Paragraph::new(help_text).style(help_style), regions.help);
+
+        // Second help line for WhenDate: supported format hints.
+        if panel.kind == InputPanelKind::WhenDate {
+            if let Some(help2_rect) = regions.help2 {
+                let is_error = self.status.starts_with("Could not parse")
+                    || self.status.starts_with("When edit failed:");
+                let hint_style = if is_error {
+                    Style::default().fg(Color::LightRed)
+                } else {
+                    Style::default().fg(MUTED_TEXT_COLOR)
+                };
+                let hint_text = if is_error {
+                    // On error, repeat the error on line 2 (line 1 already has key hints)
+                    String::new()
+                } else {
+                    "today | tomorrow | <weekday> | this/next <weekday> | next/last week/month | next year | in N days/weeks/months | end of week/month | YYYY-MM-DD".to_string()
+                };
+                frame.render_widget(Paragraph::new(hint_text).style(hint_style), help2_rect);
+            }
+        }
+    }
+
+    pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+
+        let items: Vec<ListItem<'_>> = if self.views.is_empty() {
+            vec![ListItem::new(Line::from("(no views configured)"))]
+        } else {
+            self.views
+                .iter()
+                .map(|view| ListItem::new(Line::from(view.name.clone())))
+                .collect()
+        };
+        let mut state = Self::list_state_for(
+            area,
+            if self.views.is_empty() {
+                None
+            } else {
+                Some(self.picker_index)
+            },
+        );
+        let item_count = items.len();
+
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title("View Palette")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                ),
+            area,
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
+    }
+
+    pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Block::default()
+                .title("Assign Item")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+            area,
+        );
+        if area.width < 6 || area.height < 8 {
+            return;
+        }
+
+        let inner = Rect {
+            x: area.x.saturating_add(1),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(2),
+            height: area.height.saturating_sub(2),
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .split(inner);
+
+        // Header — changes based on which pane is active.
+        let header = match self.item_assign_pane {
+            ItemAssignPane::Categories =>
+                "Edit item categories  (Tab/S-Tab: switch pane  Space: toggle  n or /: type  Enter: apply+close  Esc: close)",
+            ItemAssignPane::ViewSection =>
+                "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: close)",
+        };
+        frame.render_widget(Paragraph::new(header), chunks[0]);
+        frame.render_widget(
+            Paragraph::new("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned")
+                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            chunks[1],
+        );
+
+        let item_context = self
+            .item_assign_anchor_id()
+            .or_else(|| self.selected_item_id())
+            .and_then(|item_id| self.all_items.iter().find(|item| item.id == item_id))
+            .map(board_item_label)
+            .unwrap_or_else(|| "(no selected item)".to_string());
+        let batch_suffix = if self.selected_count() > 1 {
+            format!("  Batch: {} items", self.selected_count())
+        } else {
+            String::new()
+        };
+        let item_label_width = chunks[2]
+            .width
+            .saturating_sub((format!("Target: {batch_suffix}").chars().count() as u16) + 1)
+            as usize;
+        let item_context = truncate_board_cell(&item_context, item_label_width.max(8));
+        let context_line = Line::from(vec![
+            Span::styled("Target: ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled(item_context, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(batch_suffix, Style::default().fg(MUTED_TEXT_COLOR)),
+        ]);
+        frame.render_widget(Paragraph::new(context_line), chunks[2]);
+
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[3]);
+
+        // ── Left: category pane ────────────────────────────────────────────
+        let cat_active = self.item_assign_pane == ItemAssignPane::Categories;
+        let cat_border_style = if cat_active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        let visible_category_indices = self.item_assign_visible_category_row_indices();
+
+        let cat_items: Vec<ListItem<'_>> = if visible_category_indices.is_empty() {
+            let empty_label = if self.input.trimmed().is_empty() {
+                "(no categories)"
+            } else {
+                "(no matching categories)"
+            };
+            vec![ListItem::new(Line::from(empty_label))]
+        } else {
+            visible_category_indices
+                .iter()
+                .filter_map(|row_index| self.category_rows.get(*row_index))
+                .map(|row| {
+                    let mut flags = Vec::new();
+                    if row.value_kind == aglet_core::model::CategoryValueKind::Numeric {
+                        flags.push("numeric");
+                    }
+                    if row.is_exclusive {
+                        flags.push("exclusive");
+                    }
+                    let suffix = if flags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", flags.join(","))
+                    };
+                    let (assigned_count, total_count) =
+                        self.effective_action_assignment_counts(row.id);
+                    let checkbox = if total_count > 1 {
+                        if assigned_count == 0 {
+                            "[ ]"
+                        } else if assigned_count == total_count {
+                            "[x]"
+                        } else {
+                            "[~]"
+                        }
+                    } else if self.selected_item_has_assignment(row.id) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    let to_add = self.item_assign_preview.cat_to_add.contains(&row.id);
+                    let to_remove = self.item_assign_preview.cat_to_remove.contains(&row.id);
+                    let preview_prefix = if to_add {
+                        "[+] "
+                    } else if to_remove {
+                        "[-] "
+                    } else {
+                        "    "
+                    };
+                    let assignment_badge =
+                        if total_count <= 1 && self.selected_item_has_assignment(row.id) {
+                            self.selected_item_assignment_badge(row.id)
+                                .map(|badge| format!(" [{badge}]"))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                    let text = format!(
+                        "{preview_prefix}{checkbox} {}{}{}{}",
+                        "  ".repeat(row.depth),
+                        row.name,
+                        suffix,
+                        assignment_badge
+                    );
+                    let style = if to_add {
+                        Style::default().fg(Color::Green)
+                    } else if to_remove {
+                        Style::default().fg(Color::Red)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(Line::styled(text, style))
+                })
+                .collect()
+        };
+
+        let mut cat_state =
+            Self::list_state_for(panes[0], self.item_assign_selected_category_row_index());
+        let cat_count = cat_items.len();
+        frame.render_stateful_widget(
+            List::new(cat_items)
+                .highlight_symbol("> ")
+                .highlight_style(if cat_active {
+                    selected_row_style()
+                } else {
+                    Style::default().bg(Color::DarkGray)
+                })
+                .block(
+                    Block::default()
+                        .title(if cat_active {
+                            "> Categories"
+                        } else {
+                            "Categories"
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(cat_border_style),
+                ),
+            panes[0],
+            &mut cat_state,
+        );
+        Self::render_vertical_scrollbar(frame, panes[0], cat_count, cat_state.offset());
+
+        // ── Right: view/section pane ───────────────────────────────────────
+        let view_active = self.item_assign_pane == ItemAssignPane::ViewSection;
+        let view_border_style = if view_active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+
+        let view_items: Vec<ListItem<'_>> = if self.view_assign_rows.is_empty() {
+            vec![ListItem::new(Line::from("(no views)"))]
+        } else {
+            self.view_assign_rows
+                .iter()
+                .enumerate()
+                .map(|(row_idx, row)| match row {
+                    ViewAssignRow::ViewHeader { name, .. } => ListItem::new(Line::styled(
+                        format!("  {name}"),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    ViewAssignRow::SectionRow {
+                        view_idx,
+                        section_idx,
+                        label,
+                    } => {
+                        let (present, total) = self.item_in_section_counts(*view_idx, *section_idx);
+                        let checkbox = if total > 1 {
+                            if present == 0 {
+                                "[ ]"
+                            } else if present == total {
+                                "[x]"
+                            } else {
+                                "[~]"
+                            }
+                        } else if present > 0 {
+                            "[x]"
+                        } else {
+                            "[ ]"
+                        };
+                        let key = (*view_idx, *section_idx);
+                        let to_gain = self.item_assign_preview.section_to_gain.contains(&key);
+                        let to_lose = self.item_assign_preview.section_to_lose.contains(&key);
+                        let preview_prefix = if to_gain {
+                            "[+] "
+                        } else if to_lose {
+                            "[-] "
+                        } else {
+                            "    "
+                        };
+                        let text = format!("{preview_prefix}{checkbox}   {label}");
+                        let is_selected = view_active && row_idx == self.item_assign_view_row_index;
+                        let style = if to_gain {
+                            Style::default().fg(Color::Green)
+                        } else if to_lose {
+                            Style::default().fg(Color::Red)
+                        } else {
+                            Style::default()
+                        };
+                        let line = if is_selected {
+                            Line::styled(format!("> {text}"), style)
+                        } else {
+                            Line::styled(format!("  {text}"), style)
+                        };
+                        ListItem::new(line)
+                    }
+                })
+                .collect()
+        };
+
+        // Compute scroll offset so the selected row stays visible.
+        let view_selected = if view_active && !self.view_assign_rows.is_empty() {
+            Some(self.item_assign_view_row_index)
+        } else {
+            None
+        };
+        let mut view_state = Self::list_state_for(panes[1], view_selected);
+        let view_count = view_items.len();
+        frame.render_stateful_widget(
+            List::new(view_items).block(
+                Block::default()
+                    .title(if view_active {
+                        "> View / Section"
+                    } else {
+                        "View / Section"
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(view_border_style),
+            ),
+            panes[1],
+            &mut view_state,
+        );
+        Self::render_vertical_scrollbar(frame, panes[1], view_count, view_state.offset());
+    }
+
+    pub(crate) fn render_global_settings(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        self.render_board_columns(frame, area);
+
+        let popup_area = centered_rect(62, 55, area);
+        frame.render_widget(Clear, popup_area);
+
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(4),
+                Constraint::Length(1),
+            ])
+            .split(
+                Block::default()
+                    .title(" Global Settings ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                    .inner(popup_area),
+            );
+
+        frame.render_widget(
+            Block::default()
+                .title(" Global Settings ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+            popup_area,
+        );
+
+        let ready_name = self
+            .workflow_config
+            .ready_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+        let claim_name = self
+            .workflow_config
+            .claim_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "Settings apply immediately.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+                Line::from(Span::styled(
+                    "Open workflow rows with Enter to choose or clear categories.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+            ]),
+            outer[0],
+        );
+
+        let selected_row = self.global_settings_selected_row();
+        let visible = self.global_settings_visible_rows();
+        let rows: Vec<ListItem> = visible
+            .iter()
+            .map(|row| {
+                let text = match row {
+                    GlobalSettingsRow::AutoRefresh => {
+                        format!("Auto-refresh        < {} >", self.auto_refresh_mode_label())
+                    }
+                    GlobalSettingsRow::SectionBorders => {
+                        format!(
+                            "Section borders     < {} >",
+                            self.section_border_mode_label()
+                        )
+                    }
+                    GlobalSettingsRow::NoteGlyphs => {
+                        format!("Note glyphs         < {} >", self.show_note_glyphs_label())
+                    }
+                    GlobalSettingsRow::LiteralClassificationMode => {
+                        format!(
+                            "Literal classify    < {} >",
+                            modes::classification::literal_mode_label(
+                                self.classification.ui.config.literal_mode
+                            )
+                        )
+                    }
+                    GlobalSettingsRow::SemanticClassificationMode => {
+                        format!(
+                            "Semantic classify   < {} >",
+                            modes::classification::semantic_mode_label(
+                                self.classification.ui.config.semantic_mode
+                            )
+                        )
+                    }
+                    GlobalSettingsRow::SemanticProvider => {
+                        format!(
+                            "Semantic provider   < {} >",
+                            modes::global_settings::semantic_provider_label(
+                                self.classification.ui.config.semantic_provider
+                            )
+                        )
+                    }
+                    GlobalSettingsRow::OllamaBaseUrl => {
+                        format!(
+                            "  Base URL          {}",
+                            self.classification.ui.config.ollama.base_url
+                        )
+                    }
+                    GlobalSettingsRow::OllamaModel => {
+                        format!(
+                            "  Model             {}",
+                            self.classification.ui.config.ollama.model
+                        )
+                    }
+                    GlobalSettingsRow::OllamaTimeout => {
+                        format!(
+                            "  Timeout           {}s",
+                            self.classification.ui.config.ollama.timeout_secs
+                        )
+                    }
+                    GlobalSettingsRow::OpenRouterModel => {
+                        format!(
+                            "  Model             {}",
+                            self.classification.ui.config.openrouter.model
+                        )
+                    }
+                    GlobalSettingsRow::OpenRouterTimeout => {
+                        format!(
+                            "  Timeout           {}s",
+                            self.classification.ui.config.openrouter.timeout_secs
+                        )
+                    }
+                    GlobalSettingsRow::OpenAiModel => {
+                        format!(
+                            "  Model             {}",
+                            self.classification.ui.config.openai.model
+                        )
+                    }
+                    GlobalSettingsRow::OpenAiTimeout => {
+                        format!(
+                            "  Timeout           {}s",
+                            self.classification.ui.config.openai.timeout_secs
+                        )
+                    }
+                    GlobalSettingsRow::WorkflowReady => {
+                        format!("Ready category       {ready_name}")
+                    }
+                    GlobalSettingsRow::WorkflowClaim => {
+                        format!("Claim category       {claim_name}")
+                    }
+                };
+                ListItem::new(Line::from(text))
+            })
+            .collect();
+        let mut list_state = Self::list_state_for(outer[1], Some(selected_row));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .title(" Settings ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                ),
+            outer[1],
+            &mut list_state,
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "j/k:move  Space/←/→:cycle/toggle  Enter:pick/edit  Esc:close",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            outer[2],
+        );
+
+        if self
+            .settings
+            .workflow_role_picker
+            .as_ref()
+            .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
+        {
+            self.render_workflow_role_picker_overlay(frame, area);
+        }
+
+        if let Some(picker) = &self.settings.ollama_model_picker {
+            self.render_ollama_model_picker_overlay(frame, area, picker);
+        }
+    }
+
+    fn render_ollama_model_picker_overlay(
+        &self,
+        frame: &mut ratatui::Frame<'_>,
+        area: Rect,
+        picker: &OllamaModelPickerState,
+    ) {
+        let height = (picker.models.len() as u16 + 6).min(area.height.saturating_sub(4));
+        let width = 50u16.min(area.width.saturating_sub(4));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup_area = Rect::new(x, y, width, height);
+        frame.render_widget(Clear, popup_area);
+
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(
+                Block::default()
+                    .title(" Pick Ollama Model ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                    .inner(popup_area),
+            );
+
+        frame.render_widget(
+            Block::default()
+                .title(" Pick Ollama Model ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+            popup_area,
+        );
+
+        let current_model = &self.classification.ui.config.ollama.model;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("Current: {current_model}"),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            outer[0],
+        );
+
+        let rows: Vec<ListItem<'_>> = picker
+            .models
+            .iter()
+            .map(|model| {
+                let suffix = if model == current_model {
+                    " [current]"
+                } else {
+                    ""
+                };
+                ListItem::new(Line::from(format!("{model}{suffix}")))
+            })
+            .collect();
+
+        let mut list_state = Self::list_state_for(outer[1], Some(picker.selected_index));
+        frame.render_stateful_widget(
+            List::new(rows)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style()),
+            outer[1],
+            &mut list_state,
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "j/k:navigate  Enter:select  Esc:cancel",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            outer[2],
+        );
+    }
+
+    fn render_workflow_role_picker_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(picker) = &self.settings.workflow_role_picker else {
+            return;
+        };
+        let row_indices = self.workflow_role_picker_row_indices();
+        let role_label = if picker.role_index == 0 {
+            "Ready Queue"
+        } else {
+            "Claim Result"
+        };
+        let current_name = if picker.role_index == 0 {
+            self.workflow_config
+                .ready_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)")
+        } else {
+            self.workflow_config
+                .claim_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)")
+        };
+        let w = area.width.min(64);
+        let h = area.height.min(22);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Min(8),
+                Constraint::Length(1),
+            ])
+            .split(overlay_area);
+
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    format!("Choose the category used as {role_label}."),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+                Line::from(Span::styled(
+                    format!("Current: {current_name}"),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Only normal tag categories can be used here.",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )),
+            ])
+            .block(
+                Block::default()
+                    .title(format!(" Pick {role_label} "))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+            )
+            .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+
+        let items: Vec<ListItem<'_>> = if row_indices.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "(no eligible categories)",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            )))]
+        } else {
+            row_indices
+                .iter()
+                .filter_map(|row_index| self.category_rows.get(*row_index))
+                .map(|row| {
+                    let mut suffixes = Vec::new();
+                    if row.is_exclusive {
+                        suffixes.push("exclusive");
+                    }
+                    if self.workflow_config.ready_category_id == Some(row.id) {
+                        suffixes.push("ready");
+                    }
+                    if self.workflow_config.claim_category_id == Some(row.id) {
+                        suffixes.push("claim");
+                    }
+                    let suffix = if suffixes.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", suffixes.join(","))
+                    };
+                    let text = format!(
+                        "{}{}{}",
+                        "  ".repeat(row.depth),
+                        with_note_marker(row.name.clone(), self.show_note_glyphs && row.has_note),
+                        suffix
+                    );
+                    ListItem::new(Line::from(text))
+                })
+                .collect()
+        };
+
+        let selected_row = if row_indices.is_empty() {
+            None
+        } else {
+            Some(picker.row_index.min(row_indices.len().saturating_sub(1)))
+        };
+        let mut state = ListState::default().with_selected(selected_row);
+        let stable_offset = Self::stable_list_offset(
+            chunks[1],
+            selected_row,
+            picker.scroll_offset.get(),
+            items.len(),
+        );
+        picker.scroll_offset.set(stable_offset);
+        *state.offset_mut() = stable_offset;
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("> ")
+                .highlight_style(selected_row_style())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                ),
+            chunks[1],
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, chunks[1], row_indices.len(), state.offset());
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "j/k:select  Enter:assign  x:clear  Esc:back",
+                Style::default().fg(MUTED_TEXT_COLOR),
+            ))),
+            chunks[2],
+        );
+    }
+
+    fn render_condition_edit_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(edit) = self.category_manager_condition_edit() else {
+            return;
+        };
+        let category_name = self
+            .selected_category_row()
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let category = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id));
+        let selected_category_id = category.map(|c| c.id);
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let category_names: std::collections::HashMap<CategoryId, &str> = self
+            .categories
+            .iter()
+            .map(|c| (c.id, c.name.as_str()))
+            .collect();
+
+        if edit.picker_open {
+            match edit.editor_kind {
+                ConditionEditorKind::ProfilePicker => {
+                    let title = if edit.condition_index.is_some() {
+                        format!(" Edit Condition: {} ", category_name)
+                    } else {
+                        format!(" New Condition: {} ", category_name)
+                    };
+
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(8),
+                            Constraint::Length(1),
+                        ])
+                        .split(overlay_area);
+
+                    let resolve = |id: CategoryId| -> String {
+                        category_names.get(&id).unwrap_or(&"(deleted)").to_string()
+                    };
+                    let trigger = edit.draft_query.format_trigger(&resolve);
+                    let summary_text = if edit.draft_query.criteria.is_empty() {
+                        "(no criteria selected yet)".to_string()
+                    } else {
+                        format!("{} -> {}", trigger, category_name)
+                    };
+                    frame.render_widget(
+                        Paragraph::new(vec![Line::from(Span::styled(
+                            summary_text,
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ))])
+                        .block(
+                            Block::default()
+                                .title(title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        )
+                        .wrap(Wrap { trim: false }),
+                        chunks[0],
+                    );
+
+                    let filtered_indices: Vec<usize> = self
+                        .category_rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, row)| !row.is_reserved)
+                        .map(|(i, _)| i)
+                        .collect();
+                    let selected_row = filtered_indices
+                        .iter()
+                        .position(|&idx| idx == edit.picker_index)
+                        .unwrap_or(0);
+
+                    let items: Vec<ListItem<'_>> = filtered_indices
+                        .iter()
+                        .filter_map(|idx| self.category_rows.get(*idx))
+                        .map(|row| {
+                            let mode = edit.draft_query.mode_for(row.id);
+                            let is_self = Some(row.id) == selected_category_id;
+                            let (prefix, color) = if is_self {
+                                match mode {
+                                    Some(_) => ("[!] ", MUTED_TEXT_COLOR),
+                                    None => ("[ ] ", MUTED_TEXT_COLOR),
+                                }
+                            } else {
+                                match mode {
+                                    Some(CriterionMode::And) => ("[+] ", Color::Green),
+                                    Some(CriterionMode::Not) => ("[-] ", Color::Red),
+                                    Some(CriterionMode::Or) => ("[*] ", Color::Yellow),
+                                    None => ("    ", Color::White),
+                                }
+                            };
+                            let label = format!(
+                                "{}{}{}{}",
+                                "  ".repeat(row.depth),
+                                prefix,
+                                row.name,
+                                if is_self { " (self)" } else { "" }
+                            );
+                            ListItem::new(Line::from(Span::styled(
+                                label,
+                                Style::default().fg(color),
+                            )))
+                        })
+                        .collect();
+
+                    let mut state = ListState::default().with_selected(Some(selected_row));
+                    frame.render_stateful_widget(
+                        List::new(items)
+                            .highlight_symbol("> ")
+                            .highlight_style(selected_row_style())
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                            ),
+                        chunks[1],
+                        &mut state,
+                    );
+
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            "Space:cycle  +/-/3:set  0:clear  Enter:save  Esc:cancel",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ))),
+                        chunks[2],
+                    );
+                }
+                ConditionEditorKind::DateEditor => {
+                    let feedback = date_condition_draft_feedback(&edit.draft_date, &category_name);
+                    let title = if edit.condition_index.is_some() {
+                        format!(" Edit Date Condition: {} ", category_name)
+                    } else {
+                        format!(" New Date Condition: {} ", category_name)
+                    };
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3),
+                            Constraint::Min(10),
+                            Constraint::Length(2),
+                        ])
+                        .split(overlay_area);
+
+                    frame.render_widget(
+                        Paragraph::new(vec![Line::from(Span::styled(
+                            feedback.preview.clone(),
+                            Style::default().fg(
+                                if feedback
+                                    .messages
+                                    .iter()
+                                    .any(|m| m.severity == DateDraftMessageSeverity::Error)
+                                {
+                                    Color::LightRed
+                                } else {
+                                    MUTED_TEXT_COLOR
+                                },
+                            ),
+                        ))])
+                        .block(
+                            Block::default()
+                                .title(title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                        ),
+                        chunks[0],
+                    );
+
+                    let field_prefix = |focused: bool| if focused { "> " } else { "  " };
+                    let focused_label_style = Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD);
+                    let match_label = draft_match_label(edit.draft_date.kind);
+                    let mut lines = vec![
+                        Line::from(vec![
+                            Span::styled(
+                                field_prefix(
+                                    edit.draft_date.field_focus == DateConditionField::Source,
+                                ),
+                                if edit.draft_date.field_focus == DateConditionField::Source {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::styled(
+                                "Source:   ",
+                                if edit.draft_date.field_focus == DateConditionField::Source {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::raw(render_date_source(edit.draft_date.source)),
+                        ]),
+                        Line::from(vec![
+                            Span::styled(
+                                field_prefix(
+                                    edit.draft_date.field_focus == DateConditionField::Match,
+                                ),
+                                if edit.draft_date.field_focus == DateConditionField::Match {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::styled(
+                                "Match:    ",
+                                if edit.draft_date.field_focus == DateConditionField::Match {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::raw(match_label),
+                        ]),
+                    ];
+                    if draft_uses_range_fields(edit.draft_date.kind) {
+                        let from_prefix = format!(
+                            "{}From:     ",
+                            field_prefix(edit.draft_date.field_focus == DateConditionField::From)
+                        );
+                        let through_prefix = format!(
+                            "{}Through:  ",
+                            field_prefix(
+                                edit.draft_date.field_focus == DateConditionField::Through
+                            )
+                        );
+                        let from_width = chunks[1]
+                            .width
+                            .saturating_sub(2)
+                            .saturating_sub(from_prefix.chars().count() as u16)
+                            as usize;
+                        let through_width = chunks[1]
+                            .width
+                            .saturating_sub(2)
+                            .saturating_sub(through_prefix.chars().count() as u16)
+                            as usize;
+                        let (from_visible, _) = clip_text_for_row(
+                            edit.draft_date.from_input.text(),
+                            edit.draft_date.from_input.cursor(),
+                            from_width,
+                            edit.draft_date.field_focus == DateConditionField::From,
+                        );
+                        let (through_visible, _) = clip_text_for_row(
+                            edit.draft_date.through_input.text(),
+                            edit.draft_date.through_input.cursor(),
+                            through_width,
+                            edit.draft_date.field_focus == DateConditionField::Through,
+                        );
+                        lines.push(Line::from(format!("{}{}", from_prefix, from_visible)));
+                        lines.push(Line::from(format!("{}{}", through_prefix, through_visible)));
+                        if let Some(line) = lines.get_mut(2) {
+                            *line = Line::from(vec![
+                                Span::styled(
+                                    from_prefix,
+                                    if edit.draft_date.field_focus == DateConditionField::From {
+                                        focused_label_style
+                                    } else {
+                                        Style::default()
+                                    },
+                                ),
+                                Span::raw(from_visible),
+                            ]);
+                        }
+                        if let Some(line) = lines.get_mut(3) {
+                            *line = Line::from(vec![
+                                Span::styled(
+                                    through_prefix,
+                                    if edit.draft_date.field_focus == DateConditionField::Through {
+                                        focused_label_style
+                                    } else {
+                                        Style::default()
+                                    },
+                                ),
+                                Span::raw(through_visible),
+                            ]);
+                        }
+                    } else {
+                        let value_prefix = format!(
+                            "{}{}:    ",
+                            field_prefix(edit.draft_date.field_focus == DateConditionField::Value),
+                            draft_value_label(edit.draft_date.kind)
+                        );
+                        let value_width = chunks[1]
+                            .width
+                            .saturating_sub(2)
+                            .saturating_sub(value_prefix.chars().count() as u16)
+                            as usize;
+                        let (value_visible, _) = clip_text_for_row(
+                            edit.draft_date.value_input.text(),
+                            edit.draft_date.value_input.cursor(),
+                            value_width,
+                            edit.draft_date.field_focus == DateConditionField::Value,
+                        );
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                value_prefix,
+                                if edit.draft_date.field_focus == DateConditionField::Value {
+                                    focused_label_style
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                            Span::raw(value_visible),
+                        ]));
+                    }
+                    let helper_text = match edit.draft_date.kind {
+                        DateConditionDraftKind::TodayAfter
+                        | DateConditionDraftKind::TodayBefore => {
+                            "  Examples: 1pm, 1:00pm, 1:00pm today"
+                        }
+                        DateConditionDraftKind::ThisAfternoon => {
+                            "  Fixed shortcut: from 1:00pm today through today"
+                        }
+                        _ => "  Examples: today, tomorrow, may 10, 1990-11-12, 12:00pm today",
+                    };
+                    lines.push(Line::from(Span::styled(
+                        helper_text,
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )));
+                    for message in feedback.messages.iter().take(3) {
+                        let style = match message.severity {
+                            DateDraftMessageSeverity::Error => Style::default().fg(Color::LightRed),
+                            DateDraftMessageSeverity::Warning => Style::default().fg(Color::Yellow),
+                            DateDraftMessageSeverity::Info => Style::default().fg(Color::Green),
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("  {}", message.text),
+                            style,
+                        )));
+                    }
+
+                    frame.render_widget(
+                        Paragraph::new(lines)
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                            )
+                            .wrap(Wrap { trim: false }),
+                        chunks[1],
+                    );
+
+                    frame.render_widget(
+                        Paragraph::new(vec![
+                            Line::from(Span::styled(
+                                "Tab/Shift-Tab or Up/Down: field  Source/Match h/l: cycle",
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )),
+                            Line::from(Span::styled(
+                                "Enter:save  Esc:cancel",
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            )),
+                        ])
+                        .wrap(Wrap { trim: false }),
+                        chunks[2],
+                    );
+                    if let Some((x, y)) = self.category_manager_condition_cursor_position(area) {
+                        frame.set_cursor_position((x, y));
+                    }
+                }
+            }
+        } else {
+            // Level 1: condition list
+            let editable_conditions: Vec<(usize, String)> = category
+                .map(|cat| {
+                    cat.conditions
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| match c {
+                            Condition::Profile { criteria } => Some((
+                                i,
+                                format!(
+                                    "[Profile] {}",
+                                    criteria.format_trigger(&|id| {
+                                        category_names.get(&id).unwrap_or(&"(deleted)").to_string()
+                                    })
+                                ),
+                            )),
+                            Condition::Date { source, matcher } => Some((
+                                i,
+                                format!(
+                                    "[Date] {}",
+                                    aglet_core::date_rules::render_date_condition(*source, matcher)
+                                ),
+                            )),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(5),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            let condition_mode = category
+                .map(|cat| cat.condition_match_mode)
+                .unwrap_or(ConditionMatchMode::Any);
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    format!(
+                        "Items matching {} {} get assigned:",
+                        condition_match_mode_copy(condition_mode),
+                        if condition_mode == ConditionMatchMode::Any {
+                            "rule"
+                        } else {
+                            "rules"
+                        }
+                    ),
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(format!(
+                            " Rules: {} [{}] ",
+                            category_name,
+                            condition_match_mode_copy(condition_mode)
+                        ))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let items: Vec<ListItem<'_>> = if editable_conditions.is_empty() {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "(no rules — press 'a' for profile or 'd' for date)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                editable_conditions
+                    .iter()
+                    .enumerate()
+                    .map(|(display_idx, (_actual_idx, summary))| {
+                        let label =
+                            format!("{}. {} -> {}", display_idx + 1, summary, category_name);
+                        ListItem::new(Line::from(label))
+                    })
+                    .collect()
+            };
+
+            let selected_row = if editable_conditions.is_empty() {
+                0
+            } else {
+                edit.list_index
+                    .min(editable_conditions.len().saturating_sub(1))
+            };
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "m:toggle any/all  a:add profile  d:add date  Enter:edit  x:delete  Esc:close",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        }
+    }
+
+    fn render_action_edit_overlay(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(edit) = self.category_manager_action_edit() else {
+            return;
+        };
+        let category_name = self
+            .selected_category_row()
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let category = self
+            .selected_category_row()
+            .and_then(|row| self.categories.iter().find(|c| c.id == row.id));
+        let selected_category_id = category.map(|c| c.id);
+
+        let w = area.width.min(60);
+        let h = area.height.min(24);
+        let x = area.x + area.width.saturating_sub(w) / 2;
+        let y = area.y + area.height.saturating_sub(h) / 2;
+        let overlay_area = Rect::new(x, y, w, h);
+        frame.render_widget(Clear, overlay_area);
+
+        let category_names = category_name_map(&self.categories);
+
+        if edit.picker_open {
+            let title = if edit.action_index.is_some() {
+                format!(" Edit Action: {} ", category_name)
+            } else {
+                format!(" New Action: {} ", category_name)
+            };
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(8),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            let action_name = edit.draft_kind.label();
+            let summary_text = if edit.draft_targets.is_empty() {
+                format!("{action_name} (no targets selected yet)")
+            } else {
+                format!(
+                    "{action_name} {}",
+                    format_action_targets(&edit.draft_targets, &category_names)
+                )
+            };
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    summary_text,
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let filtered_indices: Vec<usize> = self
+                .category_rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| !row.is_reserved)
+                .map(|(i, _)| i)
+                .collect();
+            let selected_row = filtered_indices
+                .iter()
+                .position(|&idx| idx == edit.picker_index)
+                .unwrap_or(0);
+            let items: Vec<ListItem<'_>> = filtered_indices
+                .iter()
+                .filter_map(|idx| self.category_rows.get(*idx))
+                .map(|row| {
+                    let is_self = Some(row.id) == selected_category_id;
+                    let is_selected = edit.draft_targets.contains(&row.id);
+                    let (prefix, color) = if is_self {
+                        ("[!] ", MUTED_TEXT_COLOR)
+                    } else if is_selected {
+                        (
+                            "[x] ",
+                            match edit.draft_kind {
+                                ActionEditKind::Assign => Color::Green,
+                                ActionEditKind::Remove => Color::Red,
+                            },
+                        )
+                    } else {
+                        ("[ ] ", Color::White)
+                    };
+                    let label = format!(
+                        "{}{}{}{}",
+                        "  ".repeat(row.depth),
+                        prefix,
+                        row.name,
+                        if is_self { " (self)" } else { "" }
+                    );
+                    ListItem::new(Line::from(Span::styled(label, Style::default().fg(color))))
+                })
+                .collect();
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "Space:toggle target  1:Assign  2:Remove  Enter:save  Esc:cancel",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        } else {
+            let actions: Vec<&Action> = category
+                .map(|cat| cat.actions.iter().collect())
+                .unwrap_or_default();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(5),
+                    Constraint::Length(1),
+                ])
+                .split(overlay_area);
+
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    "Actions fire when this category is assigned:",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))])
+                .block(
+                    Block::default()
+                        .title(format!(" Actions: {} ", category_name))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                chunks[0],
+            );
+
+            let items: Vec<ListItem<'_>> = if actions.is_empty() {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "(no actions — press 'a' to add)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                )))]
+            } else {
+                actions
+                    .iter()
+                    .enumerate()
+                    .map(|(display_idx, action)| {
+                        let label = format!(
+                            "{}. {}",
+                            display_idx + 1,
+                            format_category_action(action, &category_names)
+                        );
+                        ListItem::new(Line::from(label))
+                    })
+                    .collect()
+            };
+            let selected_row = if actions.is_empty() {
+                0
+            } else {
+                edit.list_index.min(actions.len().saturating_sub(1))
+            };
+            let mut state = ListState::default().with_selected(Some(selected_row));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .highlight_symbol("> ")
+                    .highlight_style(selected_row_style())
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                    ),
+                chunks[1],
+                &mut state,
+            );
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "a:add  Enter:edit  x:delete  Esc:close",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))),
+                chunks[2],
+            );
+        }
+    }
+
+    pub(crate) fn render_category_manager(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        frame.render_widget(Clear, area);
+
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+        let manager_focus = self
+            .category_manager
+            .as_ref()
+            .map(|state| state.focus)
+            .unwrap_or(CategoryManagerFocus::Tree);
+        let details_active = manager_focus == CategoryManagerFocus::Details;
+        let filter_text = self
+            .category_manager
+            .as_ref()
+            .map(|state| state.filter.text().to_string())
+            .unwrap_or_default();
+        let action_prompt = self
+            .category_manager_inline_action()
+            .map(|action| match action {
+                CategoryInlineAction::Rename { buf, .. } => format!("Rename> {}", buf.text()),
+                CategoryInlineAction::DeleteConfirm { category_name, .. } => {
+                    format!("Delete '{}'? y:confirm Esc:cancel", category_name)
+                }
+            });
+        let literal_mode =
+            modes::classification::literal_mode_label(self.classification.ui.config.literal_mode);
+        let semantic_mode =
+            modes::classification::semantic_mode_label(self.classification.ui.config.semantic_mode);
+        let ready_name = self
+            .workflow_config
+            .ready_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+        let claim_name = self
+            .workflow_config
+            .claim_category_id
+            .and_then(|id| self.categories.iter().find(|c| c.id == id))
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unset)");
+        let summary_line = Line::from(vec![
+            Span::styled("Literal", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(literal_mode, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Semantic", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(semantic_mode, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
+            Span::raw(": "),
+            Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(summary_line)
+                .style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
+                .wrap(Wrap { trim: false }),
+            layout[0],
+        );
+
+        let body = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .split(layout[1]);
+        let left = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .split(body[0]);
+
+        let pane_idle = CATEGORY_MANAGER_PANE_IDLE;
+        let tree_border = if manager_focus == CategoryManagerFocus::Tree {
+            CATEGORY_MANAGER_PANE_FOCUS
+        } else {
+            pane_idle
+        };
+        let filter_border = if self.category_manager_filter_editing() {
+            CATEGORY_MANAGER_TEXT_ENTRY
+        } else if manager_focus == CategoryManagerFocus::Filter {
+            CATEGORY_MANAGER_PANE_FOCUS
+        } else {
+            pane_idle
+        };
+        let details_border = if manager_focus == CategoryManagerFocus::Details {
+            CATEGORY_MANAGER_PANE_FOCUS
+        } else {
+            pane_idle
+        };
+        frame.render_widget(
+            Paragraph::new(if let Some(prompt) = action_prompt {
+                prompt
+            } else if manager_focus == CategoryManagerFocus::Filter
+                && self.category_manager_filter_editing()
+            {
+                format!("Filter: {}", filter_text)
+            } else if filter_text.trim().is_empty() {
+                "Press / to filter categories. Use g s or F10 for Global Settings.".to_string()
+            } else {
+                format!("Filter: {}", filter_text)
+            })
+            .block(
+                Block::default()
+                    .title(if self.category_manager_inline_action().is_some() {
+                        "> Action"
+                    } else if self.category_manager_filter_editing() {
+                        "> Filter (editing)"
+                    } else if manager_focus == CategoryManagerFocus::Filter {
+                        "> Filter"
+                    } else {
+                        "Filter"
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(filter_border).add_modifier(
+                        if manager_focus == CategoryManagerFocus::Filter {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        },
+                    )),
+            ),
+            left[0],
+        );
+        if let Some((x, y)) = self.category_manager_action_cursor_position(left[0]) {
+            frame.set_cursor_position((x, y));
+        }
+
+        let table_area = left[1];
+
+        let title_suffix = String::new();
+
+        let visible_row_indices: Vec<usize> = self
+            .category_manager_visible_row_indices()
+            .map(|rows| rows.to_vec())
+            .unwrap_or_else(|| (0..self.category_rows.len()).collect());
+        let rows: Vec<Row<'_>> = if visible_row_indices.is_empty() {
+            vec![Row::new(vec![Cell::from("(no categories)")])]
+        } else {
+            visible_row_indices
+                .iter()
+                .filter_map(|idx| self.category_rows.get(*idx))
+                .map(|row| {
+                    let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
+                    label = with_note_marker(label, self.show_note_glyphs && row.has_note);
+                    let mut badges: Vec<String> = Vec::new();
+                    if row.is_reserved {
+                        badges.push("reserved".to_string());
+                    }
+                    if row.value_kind == CategoryValueKind::Numeric {
+                        badges.push("numeric".to_string());
+                    } else {
+                        if row.is_exclusive {
+                            badges.push("exclusive".to_string());
+                        }
+                        if self.workflow_config.ready_category_id == Some(row.id) {
+                            badges.push("ready-queue".to_string());
+                        }
+                        if self.workflow_config.claim_category_id == Some(row.id) {
+                            badges.push("claim-target".to_string());
+                        }
+                    }
+                    if row.condition_count > 0 {
+                        let suffix = if row.condition_count == 1 { "" } else { "s" };
+                        badges.push(format!("{} condition{}", row.condition_count, suffix));
+                    }
+                    if row.action_count > 0 {
+                        let suffix = if row.action_count == 1 { "" } else { "s" };
+                        badges.push(format!("{} action{}", row.action_count, suffix));
+                    }
+                    if !badges.is_empty() {
+                        label.push(' ');
+                        label.push_str(
+                            &badges
+                                .into_iter()
+                                .map(|badge| format!("[{badge}]"))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        );
+                    }
+                    let row_style = if row.is_reserved {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default()
+                    };
+                    Row::new(vec![Cell::from(label)]).style(row_style)
+                })
+                .collect()
+        };
+        let selected_tree_row_is_reserved = self
+            .selected_category_row()
+            .map(|row| row.is_reserved)
+            .unwrap_or(false);
+        let row_count = rows.len();
+        let mut state = Self::table_state_for(
+            table_area,
+            if visible_row_indices.is_empty() {
+                None
+            } else {
+                Some(
+                    self.category_manager_visible_tree_index()
+                        .unwrap_or(0)
+                        .min(visible_row_indices.len().saturating_sub(1)),
+                )
+            },
+        );
+        frame.render_stateful_widget(
+            Table::new(rows, vec![Constraint::Min(20)])
+                .header(
+                    Row::new(vec![Cell::from("Category")])
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
+                )
+                .highlight_symbol("> ")
+                .row_highlight_style(if selected_tree_row_is_reserved {
+                    Style::default()
+                        .fg(MUTED_TEXT_COLOR)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM)
+                } else {
+                    selected_row_style()
+                })
+                .block(
+                    Block::default()
+                        .title(if manager_focus == CategoryManagerFocus::Tree {
+                            format!("> Category Manager{title_suffix}")
+                        } else {
+                            format!("Category Manager{title_suffix}")
+                        })
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(tree_border).add_modifier(
+                            if manager_focus == CategoryManagerFocus::Tree {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            },
+                        )),
+                ),
+            table_area,
+            &mut state,
+        );
+        Self::render_vertical_scrollbar(frame, table_area, row_count, state.offset());
+        frame.render_widget(
+            Block::default()
+                .title(if manager_focus == CategoryManagerFocus::Details {
+                    "> Details"
+                } else {
+                    "Details"
+                })
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(details_border).add_modifier(
+                    if manager_focus == CategoryManagerFocus::Details {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    },
+                )),
+            body[1],
+        );
+        let details_inner = Rect {
+            x: body[1].x.saturating_add(1),
+            y: body[1].y.saturating_add(1),
+            width: body[1].width.saturating_sub(2),
+            height: body[1].height.saturating_sub(2),
+        };
+        if details_inner.width > 0 && details_inner.height > 0 {
+            if let Some(row) = self.selected_category_row() {
+                let details_focus = self
+                    .category_manager_details_focus()
+                    .unwrap_or(CategoryManagerDetailsFocus::Exclusive);
+                let is_reserved_category = row.is_reserved;
+                let note_editing = self.category_manager_details_note_editing();
+                let note_dirty = self.category_manager_details_note_dirty();
+                let also_match_editing = self.category_manager_details_also_match_editing();
+                let also_match_dirty = self.category_manager_details_also_match_dirty();
+
+                let mut parent_name = "(root)".to_string();
+                let mut child_count = 0usize;
+                if let Some(parent_id) =
+                    self.categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .and_then(|c| {
+                            child_count = c.children.len();
+                            c.parent
+                        })
+                {
+                    if let Some(parent) = self.categories.iter().find(|c| c.id == parent_id) {
+                        parent_name = parent.name.clone();
+                    }
+                }
+
+                let is_numeric_category = row.value_kind == CategoryValueKind::Numeric;
+                let numeric_format = if is_numeric_category {
+                    self.categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .and_then(|c| c.numeric_format.clone())
+                        .unwrap_or_default()
+                } else {
+                    NumericFormat::default()
+                };
+                let integer_mode = is_numeric_category && numeric_format.decimal_places == 0;
+                let info_height = if is_numeric_category {
+                    CATEGORY_DETAILS_INFO_HEIGHT_NUMERIC
+                } else {
+                    CATEGORY_DETAILS_INFO_HEIGHT
+                };
+                let is_ready_queue_role = self.selected_category_is_ready_queue_role();
+                let is_claim_target_role = self.selected_category_is_claim_target_role();
+                let workflow_role_height: u16 = if is_ready_queue_role { 2 } else { 0 }
+                    + if is_claim_target_role { 2 } else { 0 };
+                let flags_height = if is_numeric_category {
+                    7
+                } else {
+                    7 + workflow_role_height
+                };
+                let details_chunks = if is_numeric_category {
+                    Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(info_height),
+                            Constraint::Length(flags_height),
+                            Constraint::Min(5),
+                            Constraint::Length(2),
+                        ])
+                        .split(details_inner)
+                } else {
+                    Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(info_height),
+                            Constraint::Length(flags_height),
+                            Constraint::Length(6),
+                            Constraint::Length(4),
+                            Constraint::Length(4),
+                            Constraint::Min(5),
+                            Constraint::Length(2),
+                        ])
+                        .split(details_inner)
+                };
+                let conditions_chunk_index: usize = 3;
+                let actions_chunk_index: usize = 4;
+                let note_chunk_index = if is_numeric_category { 2 } else { 5 };
+                let hint_chunk_index = if is_numeric_category { 3 } else { 6 };
+
+                let assigned_item_count = self
+                    .category_assignment_counts
+                    .get(&row.id)
+                    .copied()
+                    .unwrap_or(0);
+                let mut info_lines = vec![
+                    Line::from(format!("Selected: {}", row.name)),
+                    Line::from(format!(
+                        "Depth: {}    Children: {}    Items: {}",
+                        row.depth, child_count, assigned_item_count
+                    )),
+                    Line::from(format!("Parent: {}", parent_name)),
+                    Line::from(if row.is_reserved {
+                        "Reserved: yes (read-only config)".to_string()
+                    } else {
+                        "Reserved: no".to_string()
+                    }),
+                ];
+                if is_numeric_category {
+                    let preview_val = rust_decimal::Decimal::new(123456, 2);
+                    let preview = format_numeric_cell(Some(preview_val), Some(&numeric_format));
+                    let decimals_label = if numeric_format.decimal_places == 1 {
+                        "1dp".to_string()
+                    } else {
+                        format!("{}dp", numeric_format.decimal_places)
+                    };
+                    info_lines.push(Line::from(format!(
+                        "Format: {} ({})",
+                        preview.trim(),
+                        decimals_label
+                    )));
+                }
+
+                frame.render_widget(
+                    Paragraph::new(info_lines).wrap(Wrap { trim: false }),
+                    details_chunks[0],
+                );
+
+                let focus_prefix =
+                    |active: bool| if active && details_active { "> " } else { "  " };
+                let flag_line = |active: bool, label: &str, on: bool| {
+                    let style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if active && details_active {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    Line::from(Span::styled(
+                        format!(
+                            "{}{} {}",
+                            focus_prefix(active && !is_reserved_category),
+                            if on { "[x]" } else { "[ ]" },
+                            label
+                        ),
+                        style,
+                    ))
+                };
+                let is_numeric = row.value_kind == CategoryValueKind::Numeric;
+                let flag_lines = if is_numeric {
+                    let inline_input = self.category_manager_details_inline_input();
+                    let integer_focused =
+                        details_active && details_focus == CategoryManagerDetailsFocus::Integer;
+                    let decimal_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::DecimalPlaces;
+                    let currency_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::CurrencySymbol;
+                    let thousands_focused = details_active
+                        && details_focus == CategoryManagerDetailsFocus::ThousandsSeparator;
+                    let decimal_value = inline_input
+                        .filter(|input| {
+                            input.field == CategoryManagerDetailsInlineField::DecimalPlaces
+                        })
+                        .map(|input| input.buffer.text().to_string())
+                        .unwrap_or_else(|| numeric_format.decimal_places.to_string());
+                    let currency_value = inline_input
+                        .filter(|input| {
+                            input.field == CategoryManagerDetailsInlineField::CurrencySymbol
+                        })
+                        .map(|input| input.buffer.text().to_string())
+                        .unwrap_or_else(|| {
+                            numeric_format.currency_symbol.clone().unwrap_or_default()
+                        });
+                    let decimal_style = if integer_mode || is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if decimal_focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    let currency_style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if currency_focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    let thousands_style = if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else if thousands_focused {
+                        focused_cell_style()
+                    } else {
+                        Style::default()
+                    };
+                    vec![
+                        flag_line(
+                            integer_focused && !is_reserved_category,
+                            "Integer",
+                            integer_mode,
+                        ),
+                        Line::from(Span::styled(
+                            format!(
+                                "{}Decimal places: {}",
+                                if decimal_focused && !is_reserved_category {
+                                    "> "
+                                } else {
+                                    "  "
+                                },
+                                if integer_mode {
+                                    "(disabled in Integer mode)".to_string()
+                                } else if decimal_value.is_empty() {
+                                    "_".to_string()
+                                } else {
+                                    decimal_value
+                                }
+                            ),
+                            decimal_style,
+                        )),
+                        Line::from(Span::styled(
+                            format!(
+                                "{}Currency symbol: {}",
+                                if currency_focused && !is_reserved_category {
+                                    "> "
+                                } else {
+                                    "  "
+                                },
+                                if currency_value.is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    currency_value
+                                }
+                            ),
+                            currency_style,
+                        )),
+                        Line::from(Span::styled(
+                            format!(
+                                "{}{} Thousands separator",
+                                if thousands_focused && !is_reserved_category {
+                                    "> "
+                                } else {
+                                    "  "
+                                },
+                                if numeric_format.use_thousands_separator {
+                                    "[x]"
+                                } else {
+                                    "[ ]"
+                                }
+                            ),
+                            thousands_style,
+                        )),
+                    ]
+                } else {
+                    let mut lines = vec![
+                        flag_line(
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::Exclusive,
+                            "Exclusive",
+                            row.is_exclusive,
+                        ),
+                        flag_line(
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::AutoMatch,
+                            "Auto-match",
+                            row.enable_implicit_string,
+                        ),
+                        flag_line(
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::SemanticMatch,
+                            "Semantic Match",
+                            row.enable_semantic_classification,
+                        ),
+                        flag_line(
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::MatchCategoryName,
+                            "Match category name",
+                            row.match_category_name,
+                        ),
+                        flag_line(
+                            details_active
+                                && details_focus == CategoryManagerDetailsFocus::Actionable,
+                            "Actionable",
+                            row.is_actionable,
+                        ),
+                    ];
+                    if is_ready_queue_role {
+                        lines.push(Line::from(Span::styled(
+                            "  Workflow: Ready Queue",
+                            Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  Configured in Global Settings (g s / F10)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  (items need this to be claimable)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                    }
+                    if is_claim_target_role {
+                        lines.push(Line::from(Span::styled(
+                            "  Workflow: Claim Result",
+                            Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  Configured in Global Settings (g s / F10)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                        lines.push(Line::from(Span::styled(
+                            "  (assigned by the CLI claim workflow)",
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        )));
+                    }
+                    lines
+                };
+                let flags_title = if is_numeric {
+                    "Numeric Format"
+                } else {
+                    "Flags"
+                };
+                let flags_border_focused = details_active
+                    && !is_reserved_category
+                    && !matches!(
+                        details_focus,
+                        CategoryManagerDetailsFocus::Note
+                            | CategoryManagerDetailsFocus::AlsoMatch
+                            | CategoryManagerDetailsFocus::Conditions
+                            | CategoryManagerDetailsFocus::Actions
+                    );
+                frame.render_widget(
+                    Paragraph::new(flag_lines).block(
+                        Block::default()
+                            .title(if flags_border_focused {
+                                format!("> {flags_title}")
+                            } else {
+                                flags_title.to_string()
+                            })
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(if flags_border_focused {
+                                CATEGORY_MANAGER_EDIT_FOCUS
+                            } else {
+                                pane_idle
+                            })),
+                    ),
+                    details_chunks[1],
+                );
+
+                if !is_numeric_category {
+                    let also_match_block_focus = details_active
+                        && !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::AlsoMatch;
+                    let also_match_title = if is_reserved_category {
+                        "Also Match (read-only)"
+                    } else if also_match_editing {
+                        "Also Match (editing)"
+                    } else if also_match_dirty {
+                        "Also Match (unsaved)"
+                    } else {
+                        "Also Match"
+                    };
+                    let also_match_rect = details_chunks[2];
+                    if let Some(state) = self.category_manager.as_ref() {
+                        let mut also_match_widget = state.details_also_match.widget().clone();
+                        also_match_widget.set_placeholder_text(ALSO_MATCH_PLACEHOLDER_TEXT);
+                        also_match_widget
+                            .set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+                        also_match_widget.set_style(if is_reserved_category {
+                            Style::default()
+                                .fg(MUTED_TEXT_COLOR)
+                                .add_modifier(Modifier::DIM)
+                        } else {
+                            Style::default()
+                        });
+                        also_match_widget.set_cursor_line_style(Style::default());
+                        if also_match_editing && !is_reserved_category {
+                            also_match_widget.set_cursor_style(
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            );
+                        } else {
+                            also_match_widget.set_cursor_style(Style::default());
+                        }
+                        also_match_widget.set_block(
+                            Block::default()
+                                .title(if also_match_block_focus {
+                                    format!("> {also_match_title}")
+                                } else {
+                                    also_match_title.to_string()
+                                })
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(if is_reserved_category {
+                                    pane_idle
+                                } else if also_match_editing {
+                                    CATEGORY_MANAGER_EDIT_FOCUS
+                                } else if also_match_block_focus {
+                                    CATEGORY_MANAGER_PANE_FOCUS
+                                } else {
+                                    pane_idle
+                                })),
+                        );
+                        frame.render_widget(&also_match_widget, also_match_rect);
+                        let also_match_scroll = list_scroll_for_selected_line(
+                            also_match_rect,
+                            Some(state.details_also_match.line_col().0),
+                        );
+                        Self::render_vertical_scrollbar(
+                            frame,
+                            also_match_rect,
+                            state.details_also_match.text().lines().count().max(1),
+                            also_match_scroll as usize,
+                        );
+                    }
+                }
+
+                // Conditions subpane (non-numeric only)
+                if !is_numeric_category {
+                    let conditions_focused = details_active
+                        && !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::Conditions;
+                    let conditions_count = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .map(|c| {
+                            c.conditions
+                                .iter()
+                                .filter(|cond| !matches!(cond, Condition::ImplicitString))
+                                .count()
+                        })
+                        .unwrap_or(0);
+                    let conditions_summary = if conditions_count == 0 {
+                        format!(
+                            "  Mode: {}\n  (none — Enter to add)",
+                            condition_match_mode_label(
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == row.id)
+                                    .map(|c| c.condition_match_mode)
+                                    .unwrap_or(ConditionMatchMode::Any)
+                            )
+                        )
+                    } else {
+                        let category_names: std::collections::HashMap<CategoryId, &str> = self
+                            .categories
+                            .iter()
+                            .map(|c| (c.id, c.name.as_str()))
+                            .collect();
+                        let resolve = |id: CategoryId| -> String {
+                            category_names
+                                .get(&id)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "(deleted)".to_string())
+                        };
+                        self.categories
+                            .iter()
+                            .find(|c| c.id == row.id)
+                            .map(|cat| {
+                                std::iter::once(format!(
+                                    "  Mode: {}",
+                                    condition_match_mode_label(cat.condition_match_mode)
+                                ))
+                                .chain(cat.conditions.iter().filter_map(|cond| match cond {
+                                    Condition::Profile { criteria } => Some(format!(
+                                        "  [Profile] {} -> {}",
+                                        criteria.format_trigger(&resolve),
+                                        row.name
+                                    )),
+                                    Condition::Date { source, matcher } => Some(format!(
+                                        "  [Date] {} -> {}",
+                                        aglet_core::date_rules::render_date_condition(
+                                            *source, matcher
+                                        ),
+                                        row.name
+                                    )),
+                                    _ => None,
+                                }))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                            })
+                            .unwrap_or_default()
+                    };
+                    let conditions_title = if conditions_count == 0 {
+                        format!(
+                            "Conditions [{}]",
+                            condition_match_mode_label(
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == row.id)
+                                    .map(|c| c.condition_match_mode)
+                                    .unwrap_or(ConditionMatchMode::Any)
+                            )
+                        )
+                    } else {
+                        format!(
+                            "Conditions [{}] (Enter to edit)",
+                            condition_match_mode_label(
+                                self.categories
+                                    .iter()
+                                    .find(|c| c.id == row.id)
+                                    .map(|c| c.condition_match_mode)
+                                    .unwrap_or(ConditionMatchMode::Any)
+                            )
+                        )
+                    };
+                    let conditions_title_display = if conditions_focused {
+                        format!("> {conditions_title}")
+                    } else {
+                        conditions_title
+                    };
+                    frame.render_widget(
+                        Paragraph::new(conditions_summary)
+                            .style(if is_reserved_category {
+                                Style::default()
+                                    .fg(MUTED_TEXT_COLOR)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            })
+                            .block(
+                                Block::default()
+                                    .title(conditions_title_display)
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(if conditions_focused {
+                                        CATEGORY_MANAGER_EDIT_FOCUS
+                                    } else {
+                                        pane_idle
+                                    })),
+                            ),
+                        details_chunks[conditions_chunk_index],
+                    );
+                }
+
+                if !is_numeric_category {
+                    let actions_focused = details_active
+                        && !is_reserved_category
+                        && details_focus == CategoryManagerDetailsFocus::Actions;
+                    let actions_summary = self
+                        .categories
+                        .iter()
+                        .find(|c| c.id == row.id)
+                        .map(|cat| {
+                            if cat.actions.is_empty() {
+                                "  (none — Enter to add)".to_string()
+                            } else {
+                                let category_names = category_name_map(&self.categories);
+                                cat.actions
+                                    .iter()
+                                    .map(|action| {
+                                        format!(
+                                            "  {}",
+                                            format_category_action(action, &category_names)
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            }
+                        })
+                        .unwrap_or_else(|| "  (none — Enter to add)".to_string());
+                    frame.render_widget(
+                        Paragraph::new(actions_summary)
+                            .style(if is_reserved_category {
+                                Style::default()
+                                    .fg(MUTED_TEXT_COLOR)
+                                    .add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default()
+                            })
+                            .block(
+                                Block::default()
+                                    .title(if actions_focused {
+                                        "> Actions (Enter to edit)".to_string()
+                                    } else {
+                                        "Actions (Enter to edit)".to_string()
+                                    })
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(if actions_focused {
+                                        CATEGORY_MANAGER_EDIT_FOCUS
+                                    } else {
+                                        pane_idle
+                                    })),
+                            ),
+                        details_chunks[actions_chunk_index],
+                    );
+                }
+
+                let note_block_focus = details_active
+                    && !is_reserved_category
+                    && details_focus == CategoryManagerDetailsFocus::Note;
+                let note_title = if is_reserved_category {
+                    "Note (read-only)"
+                } else if note_editing {
+                    "Note (editing)"
+                } else if note_dirty {
+                    "Note (unsaved)"
+                } else {
+                    "Note"
+                };
+                let note_rect = details_chunks[note_chunk_index];
+                if let Some(state) = self.category_manager.as_ref() {
+                    let mut note_widget = state.details_note.widget().clone();
+                    note_widget.set_placeholder_text(CATEGORY_NOTE_PLACEHOLDER_TEXT);
+                    note_widget.set_placeholder_style(Style::default().fg(MUTED_TEXT_COLOR));
+                    note_widget.set_style(if is_reserved_category {
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default()
+                    });
+                    note_widget.set_cursor_line_style(Style::default());
+                    if note_editing && !is_reserved_category {
+                        note_widget.set_cursor_style(
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        );
+                    } else {
+                        note_widget.set_cursor_style(Style::default());
+                    }
+                    let note_block = Block::default()
+                        .title(if note_block_focus {
+                            format!("> {note_title}")
+                        } else {
+                            note_title.to_string()
+                        })
+                        .borders(Borders::ALL)
+                        .padding(Padding::new(0, 1, 0, 0))
+                        .border_style(Style::default().fg(if is_reserved_category {
+                            pane_idle
+                        } else if note_editing {
+                            CATEGORY_MANAGER_EDIT_FOCUS
+                        } else if note_block_focus {
+                            CATEGORY_MANAGER_PANE_FOCUS
+                        } else {
+                            pane_idle
+                        }));
+                    let note_inner = note_block.inner(note_rect);
+                    note_widget.set_placeholder_text("");
+                    note_widget.set_block(note_block);
+                    frame.render_widget(&note_widget, note_rect);
+                    if !note_editing && state.details_note.text().is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(CATEGORY_NOTE_PLACEHOLDER_TEXT)
+                                .style(Style::default().fg(MUTED_TEXT_COLOR))
+                                .wrap(Wrap { trim: false }),
+                            note_inner,
+                        );
+                    }
+                    let note_scroll = list_scroll_for_selected_line(
+                        note_rect,
+                        Some(state.details_note.line_col().0),
+                    );
+                    Self::render_vertical_scrollbar(
+                        frame,
+                        note_rect,
+                        state.details_note.text().lines().count().max(1),
+                        note_scroll as usize,
+                    );
+                } else {
+                    frame.render_widget(
+                        Paragraph::new("").block(
+                            Block::default()
+                                .title(note_title)
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(pane_idle)),
+                        ),
+                        note_rect,
+                    );
+                }
+
+                let details_hint = if !details_active {
+                    "Enter/Tab moves focus into Details; selected category metadata is shown here."
+                } else if is_reserved_category {
+                    "Reserved categories are built-in and read-only here."
+                } else if note_editing {
+                    "Type to edit  Esc:stop editing  Tab:leave (warn if unsaved)"
+                } else if also_match_editing {
+                    "Type terms line-by-line  Enter:new line  Esc:stop editing  Tab:leave"
+                } else {
+                    match details_focus {
+                        CategoryManagerDetailsFocus::Exclusive => {
+                            "If enabled, only one child can be assigned to an item at a time"
+                        }
+                        CategoryManagerDetailsFocus::AutoMatch => {
+                            "Enable fallback text matching for this category"
+                        }
+                        CategoryManagerDetailsFocus::SemanticMatch => {
+                            "Enable LLM-backed category suggestions for this category"
+                        }
+                        CategoryManagerDetailsFocus::MatchCategoryName => {
+                            "Include the literal category name alongside also-match terms"
+                        }
+                        CategoryManagerDetailsFocus::Actionable => {
+                            "Items need an actionable category to be marked done"
+                        }
+                        CategoryManagerDetailsFocus::AlsoMatch => {
+                            "Enter/Space: edit also-match terms  One term or phrase per line"
+                        }
+                        CategoryManagerDetailsFocus::Integer => {
+                            "Enter/Space: toggle Integer mode (on sets 0dp, off restores 2dp)"
+                        }
+                        CategoryManagerDetailsFocus::DecimalPlaces => {
+                            if integer_mode {
+                                "Disabled while Integer mode is enabled"
+                            } else {
+                                "Enter: edit decimal places  Esc: cancel edit"
+                            }
+                        }
+                        CategoryManagerDetailsFocus::CurrencySymbol => {
+                            "Enter: edit currency symbol  Empty value clears symbol"
+                        }
+                        CategoryManagerDetailsFocus::ThousandsSeparator => {
+                            "Enter/Space: toggle thousands separator"
+                        }
+                        CategoryManagerDetailsFocus::Conditions => {
+                            "Profile conditions auto-assign items  Enter: details"
+                        }
+                        CategoryManagerDetailsFocus::Actions => {
+                            "Actions fire on assignment  Enter: details"
+                        }
+                        CategoryManagerDetailsFocus::Note => {
+                            "j/k: focus field  Enter/Space: toggle/edit"
+                        }
+                    }
+                };
+                frame.render_widget(
+                    Paragraph::new(details_hint),
+                    details_chunks[hint_chunk_index],
+                );
+                if let Some((x, y)) = self.category_manager_details_cursor_position(body[1]) {
+                    frame.set_cursor_position((x, y));
+                }
+            } else {
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::from("No category selected"),
+                        Line::from(""),
+                        Line::from("Select a category to edit flags and note."),
+                    ])
+                    .wrap(Wrap { trim: false }),
+                    details_inner,
+                );
+            }
+        }
+
+        if self.category_manager_discard_confirm() {
+            let w = area.width.min(48);
+            let h = 5;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Save changes before closing?"),
+                    Line::from(""),
+                    Line::from("y: save and close   n: discard   Esc: keep editing"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Confirm ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_EDIT_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if self.workflow_setup_open {
+            let ready_name = self
+                .workflow_config
+                .ready_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)");
+            let claim_name = self
+                .workflow_config
+                .claim_category_id
+                .and_then(|id| self.categories.iter().find(|c| c.id == id))
+                .map(|c| c.name.as_str())
+                .unwrap_or("(unset)");
+            let focus = self.workflow_setup_focus;
+            let ready_style = if focus == 0 {
+                focused_cell_style()
+            } else {
+                Style::default()
+            };
+            let claim_style = if focus == 1 {
+                focused_cell_style()
+            } else {
+                Style::default()
+            };
+            let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
+            let w = area.width.min(58);
+            let h = 16u16;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        "This config enables the CLI claim workflow.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "Pick two categories used by aglet claim:",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Ready Queue    items eligible to be claimed",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Ready Queue:   {}", indicator(0), ready_name),
+                        ready_style,
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Claim Result   category applied after claim",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Claim Result:  {}", indicator(1), claim_name),
+                        claim_style,
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Press Enter to choose a category for the",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "highlighted role from a category picker.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from("j/k:role  Enter:choose  x:clear  Esc:close"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Workflow Setup ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if self.settings.workflow_role_picker.is_some() {
+            self.render_workflow_role_picker_overlay(frame, area);
+        }
+
+        if self.category_manager_condition_edit().is_some() {
+            self.render_condition_edit_overlay(frame, area);
+        }
+
+        if self.category_manager_action_edit().is_some() {
+            self.render_action_edit_overlay(frame, area);
+        }
+
+        if self.settings.classification_mode_picker_open {
+            let focus = self.settings.classification_mode_picker_focus;
+            let style_for = |idx: usize| {
+                if focus == idx {
+                    focused_cell_style()
+                } else {
+                    Style::default()
+                }
+            };
+            let indicator = |idx: usize| if focus == idx { "> " } else { "  " };
+            let current_mode = modes::classification::literal_mode_label(
+                self.classification.ui.config.literal_mode,
+            );
+            let w = area.width.min(54);
+            let h = 15u16;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        "How should categories be assigned to",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        "new or edited items?",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("Current: {current_mode}"),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Off             no auto-classification", indicator(0)),
+                        style_for(0),
+                    )),
+                    Line::from(Span::styled(
+                        format!(
+                            "{}Auto-apply      assign matches instantly (default)",
+                            indicator(1)
+                        ),
+                        style_for(1),
+                    )),
+                    Line::from(Span::styled(
+                        format!("{}Suggest/Review  queue for manual approval", indicator(2)),
+                        style_for(2),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Classification runs when you save an item or change categories.",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "j/k:select  Enter:apply  Esc:close",
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    )),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Classification Mode ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ViewEdit (unified view editor)
+    // -------------------------------------------------------------------------
+
+    pub(crate) fn render_view_edit_screen(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(state) = &self.view_edit_state else {
+            return;
+        };
+
+        let view_settings_height = if area.height >= 28 {
+            13
+        } else if area.height >= 18 {
+            9
+        } else {
+            0
+        };
+        let (view_settings_area, sections_root_area) = if view_settings_height > 0 {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(view_settings_height), Constraint::Min(1)])
+                .split(area);
+            (Some(rows[0]), rows[1])
+        } else {
+            (None, area)
+        };
+
+        let preview_three_column = state.preview_visible
+            && sections_root_area.width >= 120
+            && sections_root_area.height >= 12;
+        let preview_stacked_right = state.preview_visible && !preview_three_column;
+        let panes = if preview_three_column {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(36),
+                    Constraint::Percentage(42),
+                    Constraint::Percentage(22),
+                ])
+                .split(sections_root_area)
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .split(sections_root_area)
+        };
+        let sections_area = panes[0];
+        let (details_area, preview_area) = if preview_three_column && panes.len() > 2 {
+            (panes[1], Some(panes[2]))
+        } else if preview_stacked_right {
+            let right = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+                .split(panes[1]);
+            (right[0], Some(right[1]))
+        } else {
+            (panes[1], None)
+        };
+
+        let focused_border = Color::Cyan;
+        let inactive_border = Color::Rgb(60, 70, 90);
+
+        let category_names = category_name_map(&self.categories);
+        let dim = Color::Rgb(110, 118, 138); // visible mid-gray for dimmed text
+
+        if let Some(view_settings_area) = view_settings_area {
+            let settings_focused = state.pane_focus == ViewEditPaneFocus::Details
+                && state.region != ViewEditRegion::Sections;
+            let settings_border = if settings_focused {
+                focused_border
+            } else {
+                inactive_border
+            };
+            frame.render_widget(
+                Block::default()
+                    .title(if settings_focused {
+                        "> VIEW SETTINGS "
+                    } else {
+                        " VIEW SETTINGS "
+                    })
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(settings_border)),
+                view_settings_area,
+            );
+
+            let inner = Rect {
+                x: view_settings_area.x.saturating_add(1),
+                y: view_settings_area.y.saturating_add(1),
+                width: view_settings_area.width.saturating_sub(2),
+                height: view_settings_area.height.saturating_sub(2),
+            };
+            if inner.width > 8 && inner.height > 0 {
+                let columns = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+                    .split(inner);
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
+                let row_marker = |active: bool| if active { "> " } else { "  " };
+                let row_style = |active: bool| {
+                    if active {
+                        sel_style
+                    } else {
+                        Style::default()
+                    }
+                };
+                let pad = 22usize;
+
+                let editing_view_name =
+                    matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
+                let name_selected = settings_focused
+                    && (Self::view_details_on_name_row(state) || editing_view_name);
+                let name_line = if editing_view_name {
+                    let label = format!(
+                        "{}{:<width$}< ",
+                        row_marker(name_selected),
+                        "Name",
+                        width = pad
+                    );
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        row_style(name_selected),
+                        row_style(name_selected),
+                    ))
+                } else {
+                    Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(name_selected),
+                        "Name",
+                        state.draft.name,
+                        width = pad
+                    ))
+                };
+                let view_type_selected =
+                    settings_focused && Self::view_details_on_view_type_row(state);
+                let view_type = if state.draft.datebook_config.is_some() {
+                    "Datebook"
+                } else {
+                    "Board"
+                };
+                let view_type = if state.is_new_view {
+                    view_type.to_string()
+                } else {
+                    format!("{view_type} (locked)")
+                };
+                let criteria_selected = settings_focused
+                    && state.region == ViewEditRegion::Criteria
+                    && !state.name_focused
+                    && !state.view_type_focused;
+                let criteria_summary = if state.draft.criteria.criteria.is_empty() {
+                    "(no criteria - matches all items)".to_string()
+                } else {
+                    state
+                        .draft
+                        .criteria
+                        .criteria
+                        .iter()
+                        .map(|criterion| {
+                            let prefix = match criterion.mode {
+                                CriterionMode::And => "Require",
+                                CriterionMode::Not => "Exclude",
+                                CriterionMode::Or => "Or",
+                            };
+                            let name = category_names
+                                .get(&criterion.category_id)
+                                .cloned()
+                                .unwrap_or_else(|| "(deleted)".to_string());
+                            format!("{prefix}: {name}")
+                        })
+                        .collect::<Vec<String>>()
+                        .join("; ")
+                };
+                let when_include = if state.draft.criteria.virtual_include.is_empty() {
+                    "(all)".to_string()
+                } else {
+                    when_bucket_options()
+                        .iter()
+                        .filter(|bucket| state.draft.criteria.virtual_include.contains(*bucket))
+                        .map(|bucket| when_bucket_label(*bucket).to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                };
+                let when_exclude = if state.draft.criteria.virtual_exclude.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    when_bucket_options()
+                        .iter()
+                        .filter(|bucket| state.draft.criteria.virtual_exclude.contains(*bucket))
+                        .map(|bucket| when_bucket_label(*bucket).to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                };
+
+                let mut left_items = vec![
+                    ListItem::new(name_line).style(row_style(name_selected)),
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(view_type_selected),
+                        "View type",
+                        view_type,
+                        width = pad
+                    )))
+                    .style(row_style(view_type_selected)),
+                    ListItem::new(Line::from("")),
+                    ListItem::new(Line::from("  Filter criteria:")),
+                    ListItem::new(Line::from(format!(
+                        "{}{}",
+                        row_marker(criteria_selected),
+                        criteria_summary
+                    )))
+                    .style(row_style(criteria_selected)),
+                ];
+                left_items.push(ListItem::new(Line::from("")));
+                let date_include_selected = settings_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 0;
+                left_items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(date_include_selected),
+                        "Date range (include)",
+                        when_include,
+                        width = pad
+                    )))
+                    .style(row_style(date_include_selected)),
+                );
+                let date_exclude_selected = settings_focused
+                    && state.region == ViewEditRegion::Unmatched
+                    && state.unmatched_field_index == 1;
+                left_items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(date_exclude_selected),
+                        "Date range (exclude)",
+                        when_exclude,
+                        width = pad
+                    )))
+                    .style(row_style(date_exclude_selected)),
+                );
+
+                let display_mode = match state.draft.board_display_mode {
+                    BoardDisplayMode::SingleLine => "single-line",
+                    BoardDisplayMode::MultiLine => "multi-line",
+                };
+                let section_flow = match state.draft.section_flow {
+                    SectionFlow::Vertical => "vertical (stacked lanes)",
+                    SectionFlow::Horizontal => "horizontal (kanban lanes)",
+                };
+                let alias_count = state
+                    .draft
+                    .category_aliases
+                    .values()
+                    .filter(|alias| !alias.trim().is_empty())
+                    .count();
+                let alias_summary = if alias_count == 0 {
+                    "(none)".to_string()
+                } else {
+                    format!("{alias_count} configured")
+                };
+                let unmatched_value = if state.draft.show_unmatched {
+                    "shown"
+                } else {
+                    "hidden"
+                };
+                let hide_dependent = if state.draft.hide_dependent_items {
+                    "yes"
+                } else {
+                    "no"
+                };
+                let mut right_items = Vec::new();
+                for (field_index, label, value) in [
+                    (2usize, "Display mode", display_mode.to_string()),
+                    (3, "Section flow", section_flow.to_string()),
+                    (
+                        4,
+                        "Empty sections",
+                        state.draft.empty_sections.label().to_string(),
+                    ),
+                    (8, "Aliases", alias_summary),
+                    (5, "Show unmatched", unmatched_value.to_string()),
+                    (6, "Hide dependent", hide_dependent.to_string()),
+                    (
+                        7,
+                        "Unmatched label",
+                        format!("\"{}\"", state.draft.unmatched_label),
+                    ),
+                ] {
+                    let selected = settings_focused
+                        && state.region == ViewEditRegion::Unmatched
+                        && state.unmatched_field_index == field_index;
+                    right_items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}{}",
+                            row_marker(selected),
+                            label,
+                            value,
+                            width = pad
+                        )))
+                        .style(row_style(selected)),
+                    );
+                }
+
+                frame.render_widget(List::new(left_items), columns[0]);
+                frame.render_widget(List::new(right_items), columns[1]);
+
+                if editing_view_name && settings_focused {
+                    let text_start = columns[0].x + 2 + pad as u16 + 2;
+                    let cursor_x = text_start + state.inline_buf.cursor() as u16;
+                    let max_x = columns[0].x + columns[0].width.saturating_sub(1);
+                    frame.set_cursor_position((cursor_x.min(max_x), columns[0].y));
+                }
+            }
+        }
+
+        // ── Details pane (row-based, view or selected section) ──────────────
+        {
+            let criterion_mode_label = |mode: CriterionMode| -> &'static str {
+                match mode {
+                    CriterionMode::And => "Require",
+                    CriterionMode::Not => "Exclude",
+                    CriterionMode::Or => "Or",
+                }
+            };
+
+            let criterion_mode_color = |mode: CriterionMode| -> Color {
+                match mode {
+                    CriterionMode::And => Color::Green,
+                    CriterionMode::Not => Color::Red,
+                    CriterionMode::Or => Color::Yellow,
+                }
+            };
+
+            let summarize_query = |query: &Query| -> Vec<(CriterionMode, String)> {
+                query
+                    .criteria
+                    .iter()
+                    .map(|criterion| {
+                        let name = category_names
+                            .get(&criterion.category_id)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string());
+                        (
+                            criterion.mode,
+                            format!("{}: {}", criterion_mode_label(criterion.mode), name),
+                        )
+                    })
+                    .collect()
+            };
+
+            let summarize_category_set = |set: &std::collections::HashSet<CategoryId>| -> String {
+                if set.is_empty() {
+                    return "(none)".to_string();
+                }
+                let mut names: Vec<String> = set
+                    .iter()
+                    .map(|id| {
+                        category_names
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| "(deleted)".to_string())
+                    })
+                    .collect();
+                names.sort_by_key(|s| s.to_ascii_lowercase());
+                names.join(", ")
+            };
+
+            let show_view_details = view_settings_area.is_none()
+                && (state.region != ViewEditRegion::Sections
+                    || state.sections_view_row_selected
+                    || state.draft.sections.get(state.section_index).is_none());
+            let details_focused = state.pane_focus == ViewEditPaneFocus::Details
+                && (view_settings_area.is_none() || state.region == ViewEditRegion::Sections);
+            let details_border = if details_focused {
+                focused_border
+            } else {
+                inactive_border
+            };
+
+            let mut items: Vec<ListItem<'_>> = Vec::new();
+            let mut selected_line: Option<usize> = None;
+            let title_base = if state.draft.datebook_config.is_some() {
+                "GENERATED PERIODS"
+            } else {
+                "DETAILS"
+            };
+            let title = if details_focused {
+                format!("> {title_base} ")
+            } else {
+                format!(" {title_base} ")
+            };
+
+            // Context banner: full-width colored bar distinguishing view vs section
+            {
+                let banner = if show_view_details {
+                    let view_name = &state.draft.name;
+                    ListItem::new(Line::from(vec![Span::styled(
+                        format!(" VIEW: {} ", view_name),
+                        Style::default().fg(Color::Black).bg(Color::Cyan),
+                    )]))
+                } else {
+                    let section_name = state
+                        .draft
+                        .sections
+                        .get(state.section_index)
+                        .map(|s| s.title.as_str())
+                        .unwrap_or("?");
+                    ListItem::new(Line::from(vec![Span::styled(
+                        format!(" SECTION: {} ", section_name),
+                        Style::default().fg(Color::Black).bg(Color::Green),
+                    )]))
+                };
+                items.push(banner);
+            }
+
+            if state.draft.datebook_config.is_some() {
+                items.clear();
+                let reference_date = jiff::Zoned::now().date();
+                let resolved = resolve_view(
+                    &state.draft,
+                    &self.all_items,
+                    &self.categories,
+                    reference_date,
+                );
+                if resolved.sections.is_empty() {
+                    items.push(ListItem::new(Line::from("  (no generated periods)")));
+                } else {
+                    let sel_style = Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD);
+                    for (idx, section) in resolved.sections.iter().enumerate() {
+                        let subsection_count = section.subsections.len();
+                        let count = if subsection_count == 0 {
+                            section.items.len()
+                        } else {
+                            section.subsections.iter().map(|s| s.items.len()).sum()
+                        };
+                        let selected = details_focused
+                            && idx == state.section_index.min(resolved.sections.len() - 1);
+                        if selected {
+                            selected_line = Some(items.len());
+                        }
+                        let marker = if selected { "> " } else { "  " };
+                        let style = if selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(
+                            ListItem::new(Line::from(format!(
+                                "{}{:<24}{} item{}",
+                                marker,
+                                section.title,
+                                count,
+                                if count == 1 { "" } else { "s" }
+                            )))
+                            .style(style),
+                        );
+                    }
+                }
+            } else if show_view_details {
+                let display_mode_label = match state.draft.board_display_mode {
+                    BoardDisplayMode::SingleLine => "single-line",
+                    BoardDisplayMode::MultiLine => "multi-line",
+                };
+                let section_flow_label = match state.draft.section_flow {
+                    SectionFlow::Vertical => "vertical (stacked lanes)",
+                    SectionFlow::Horizontal => "horizontal (kanban lanes)",
+                };
+                let empty_sections_label = state.draft.empty_sections.label();
+
+                let separator_style = Style::default().fg(dim);
+                let pad = 26; // column alignment width
+
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
+                let row_marker = |active: bool| if active { "> " } else { "  " };
+                // Helper: style + track selected_line for unmatched-region fields
+                let style_for_unmatched_field =
+                    |field_index: usize,
+                     items: &[ListItem<'_>],
+                     selected_line_ref: &mut Option<usize>| {
+                        if details_focused
+                            && state.region == ViewEditRegion::Unmatched
+                            && state.unmatched_field_index == field_index
+                        {
+                            *selected_line_ref = Some(items.len());
+                            sel_style
+                        } else {
+                            Style::default()
+                        }
+                    };
+                let unmatched_field_selected = |field_index: usize| {
+                    details_focused
+                        && state.region == ViewEditRegion::Unmatched
+                        && state.unmatched_field_index == field_index
+                };
+
+                // ── Name ──
+                let editing_view_name =
+                    matches!(state.inline_input, Some(ViewEditInlineInput::ViewName));
+                let name_row_focused =
+                    details_focused && Self::view_details_on_name_row(state) && !editing_view_name;
+                let view_name_style = if editing_view_name || name_row_focused {
+                    selected_line = Some(items.len());
+                    sel_style
+                } else {
+                    Style::default()
+                };
+                let name_line = if editing_view_name {
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        row_marker(editing_view_name || name_row_focused),
+                        "Name",
+                        width = pad
+                    );
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        view_name_style,
+                        view_name_style,
+                    ))
+                } else {
+                    Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(name_row_focused),
+                        "Name",
+                        state.draft.name,
+                        width = pad
+                    ))
+                };
+                items.push(ListItem::new(name_line).style(view_name_style));
+
+                let view_type_row_focused = details_focused
+                    && Self::view_details_on_view_type_row(state)
+                    && !editing_view_name;
+                let view_type_style = if view_type_row_focused {
+                    selected_line = Some(items.len());
+                    sel_style
+                } else {
+                    Style::default()
+                };
+                let view_type_label = if state.draft.datebook_config.is_some() {
+                    "Datebook"
+                } else {
+                    "Board"
+                };
+                let view_type_label = if state.is_new_view {
+                    view_type_label.to_string()
+                } else {
+                    format!("{view_type_label} (locked)")
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(view_type_row_focused),
+                        "View type",
+                        view_type_label,
+                        width = pad
+                    )))
+                    .style(view_type_style),
+                );
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Filter criteria ──
+                items.push(ListItem::new(Line::from("  Filter criteria:")));
+
+                let criteria_row_start = items.len();
+                let criteria_lines = summarize_query(&state.draft.criteria);
+                if criteria_lines.is_empty() {
+                    let style = if details_focused && state.region == ViewEditRegion::Criteria {
+                        selected_line = Some(criteria_row_start);
+                        sel_style
+                    } else {
+                        Style::default()
+                    };
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}  (no criteria — matches all items)",
+                            row_marker(details_focused && state.region == ViewEditRegion::Criteria)
+                        )))
+                        .style(style),
+                    );
+                } else {
+                    for (i, (mode, criterion)) in criteria_lines.iter().enumerate() {
+                        let is_selected = details_focused
+                            && state.region == ViewEditRegion::Criteria
+                            && i == state.criteria_index;
+                        if is_selected {
+                            selected_line = Some(criteria_row_start + i);
+                        }
+                        let text_color = if is_selected {
+                            Color::Black
+                        } else {
+                            criterion_mode_color(*mode)
+                        };
+                        let line = Line::from(vec![
+                            Span::raw(format!("{}  ", row_marker(is_selected))),
+                            Span::styled(criterion.clone(), Style::default().fg(text_color)),
+                        ]);
+                        let style = if is_selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(ListItem::new(line).style(style));
+                    }
+                }
+
+                // ── Datebook config (only for datebook views) ──
+                if let Some(config) = &state.draft.datebook_config {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "  ─────────────────────────────────────────",
+                        separator_style,
+                    ))));
+                    items.push(ListItem::new(Line::from("  Datebook config:")));
+
+                    let datebook_fields: &[(&str, String)] = &[
+                        ("Period", config.period.label().to_string()),
+                        ("Interval", config.interval.label().to_string()),
+                        ("Anchor", config.anchor.label().to_string()),
+                        ("Date source", config.date_source.label().to_string()),
+                    ];
+                    for (fi, (label, value)) in datebook_fields.iter().enumerate() {
+                        let is_selected = details_focused
+                            && state.region == ViewEditRegion::Datebook
+                            && state.datebook_field_index == fi;
+                        if is_selected {
+                            selected_line = Some(items.len());
+                        }
+                        let style = if is_selected {
+                            sel_style
+                        } else {
+                            Style::default()
+                        };
+                        items.push(
+                            ListItem::new(Line::from(format!(
+                                "{}{:<width$}{}",
+                                row_marker(is_selected),
+                                label,
+                                value,
+                                width = pad
+                            )))
+                            .style(style),
+                        );
+                    }
+                }
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Date range ──
+                let when_include = if state.draft.criteria.virtual_include.is_empty() {
+                    "(all)".to_string()
+                } else {
+                    when_bucket_options()
+                        .iter()
+                        .filter(|b| state.draft.criteria.virtual_include.contains(*b))
+                        .map(|b| when_bucket_label(*b).to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                };
+                let when_exclude = if state.draft.criteria.virtual_exclude.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    when_bucket_options()
+                        .iter()
+                        .filter(|b| state.draft.criteria.virtual_exclude.contains(*b))
+                        .map(|b| when_bucket_label(*b).to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                };
+
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(0)),
+                        "Date range (include)",
+                        when_include,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        0,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(1)),
+                        "Date range (exclude)",
+                        when_exclude,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        1,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Display ──
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(2)),
+                        "Display mode",
+                        display_mode_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        2,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(3)),
+                        "Section flow",
+                        section_flow_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        3,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(4)),
+                        "Empty sections",
+                        empty_sections_label,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
+                let configured_aliases: Vec<_> = state
+                    .draft
+                    .category_aliases
+                    .iter()
+                    .filter(|(_, alias)| !alias.trim().is_empty())
+                    .map(|(cat_id, alias)| {
+                        let cat_name = self
+                            .categories
+                            .iter()
+                            .find(|c| c.id == *cat_id)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or("?");
+                        (cat_name.to_string(), alias.clone())
+                    })
+                    .collect();
+                let alias_summary = if configured_aliases.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    format!("{} configured", configured_aliases.len())
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(8)),
+                        "Aliases",
+                        alias_summary,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        8,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                // Show configured aliases as indented sub-rows (display-only)
+                for (cat_name, alias) in &configured_aliases {
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        format!("      {} \u{2192} {}", cat_name, alias),
+                        Style::default().fg(MUTED_TEXT_COLOR),
+                    ))));
+                }
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Unmatched ──
+                let unmatched_value = if state.draft.show_unmatched {
+                    format!("yes, as \"{}\"", state.draft.unmatched_label)
+                } else {
+                    "hidden".to_string()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(5)),
+                        "Show unmatched",
+                        unmatched_value,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        5,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
+                let hide_dependent_value = if state.draft.hide_dependent_items {
+                    "yes".to_string()
+                } else {
+                    "no".to_string()
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(unmatched_field_selected(6)),
+                        "Hide dependent",
+                        hide_dependent_value,
+                        width = pad
+                    )))
+                    .style(style_for_unmatched_field(
+                        6,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
+                let editing_unmatched_label = matches!(
+                    state.inline_input,
+                    Some(ViewEditInlineInput::UnmatchedLabel)
+                );
+                let unmatched_label_style =
+                    style_for_unmatched_field(7, &items, &mut selected_line);
+                let unmatched_label_line = if editing_unmatched_label {
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        row_marker(unmatched_field_selected(7) || editing_unmatched_label),
+                        "Unmatched label",
+                        width = pad
+                    );
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        unmatched_label_style,
+                        unmatched_label_style,
+                    ))
+                } else {
+                    Line::from(format!(
+                        "{}{:<width$}\"{}\"",
+                        row_marker(unmatched_field_selected(7)),
+                        "Unmatched label",
+                        state.draft.unmatched_label,
+                        width = pad
+                    ))
+                };
+                items.push(ListItem::new(unmatched_label_line).style(unmatched_label_style));
+            } else if !show_view_details && state.draft.sections.get(state.section_index).is_some()
+            {
+                let section = &state.draft.sections[state.section_index];
+                let editing_title = matches!(
+                    state.inline_input,
+                    Some(ViewEditInlineInput::SectionTitle { section_index, .. })
+                    if section_index == state.section_index
+                );
+                let title_text = if editing_title {
+                    format!("◀ {}", state.inline_buf.text())
+                } else {
+                    section.title.clone()
+                };
+
+                let separator_style = Style::default().fg(dim);
+                let pad = 26; // column alignment width
+
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
+                let row_marker = |active: bool| if active { "> " } else { "  " };
+
+                // Helper: style + track selected_line for a given field index
+                let style_for_section_field =
+                    |field_index: usize,
+                     items: &[ListItem<'_>],
+                     selected_line_ref: &mut Option<usize>| {
+                        if details_focused
+                            && state.region == ViewEditRegion::Sections
+                            && state.section_details_field_index == field_index
+                        {
+                            *selected_line_ref = Some(items.len());
+                            sel_style
+                        } else {
+                            Style::default()
+                        }
+                    };
+                let section_field_selected = |field_index: usize| {
+                    details_focused
+                        && state.region == ViewEditRegion::Sections
+                        && state.section_details_field_index == field_index
+                };
+
+                // ── Group 1: Identity ──
+                let title_field_style = style_for_section_field(0, &items, &mut selected_line);
+                let title_line = if editing_title {
+                    let label = format!(
+                        "{}{:<width$}◀ ",
+                        row_marker(section_field_selected(0) || editing_title),
+                        "Title",
+                        width = pad
+                    );
+                    Line::from(inline_edit_spans(
+                        &label,
+                        state.inline_buf.text(),
+                        state.inline_buf.cursor(),
+                        title_field_style,
+                        title_field_style,
+                    ))
+                } else {
+                    Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(0)),
+                        "Title",
+                        title_text,
+                        width = pad
+                    ))
+                };
+                items.push(ListItem::new(title_line).style(title_field_style));
+
+                let criteria_lines = summarize_query(&section.criteria);
+                let is_filter_selected = details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 1;
+                if criteria_lines.is_empty() {
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<width$}(none)",
+                            row_marker(section_field_selected(1)),
+                            "Filter",
+                            width = pad
+                        )))
+                        .style(style_for_section_field(
+                            1,
+                            &items,
+                            &mut selected_line,
+                        )),
+                    );
+                } else {
+                    let mut spans = vec![Span::raw(format!(
+                        "{}{:<width$}",
+                        row_marker(is_filter_selected),
+                        "Filter",
+                        width = pad
+                    ))];
+                    for (idx, (mode, text)) in criteria_lines.iter().enumerate() {
+                        if idx > 0 {
+                            spans.push(Span::raw("; "));
+                        }
+                        let text_color = if is_filter_selected {
+                            Color::Black
+                        } else {
+                            criterion_mode_color(*mode)
+                        };
+                        spans.push(Span::styled(text.clone(), Style::default().fg(text_color)));
+                    }
+                    let line = Line::from(spans);
+                    let style = if is_filter_selected {
+                        selected_line = Some(items.len());
+                        sel_style
+                    } else {
+                        Style::default()
+                    };
+                    items.push(ListItem::new(line).style(style));
+                }
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Group 2: Display ──
+                let columns_summary = if section.columns.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    section
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            category_names
+                                .get(&column.heading)
+                                .cloned()
+                                .unwrap_or_else(|| "(deleted)".to_string())
+                        })
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(2)),
+                        "Columns",
+                        columns_summary,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        2,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                let mode_label = match section.board_display_mode_override {
+                    None => "(use view default)".to_string(),
+                    Some(BoardDisplayMode::SingleLine) => "single-line".to_string(),
+                    Some(BoardDisplayMode::MultiLine) => "multi-line".to_string(),
+                };
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(3)),
+                        "Display mode",
+                        mode_label,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        3,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+
+                // ── Separator ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                // ── Group 3: Automation / Behavior ──
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(4)),
+                        "Auto-assign on add",
+                        summarize_category_set(&section.on_insert_assign),
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        4,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(5)),
+                        "Auto-unassign on remove",
+                        summarize_category_set(&section.on_remove_unassign),
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        5,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(6)),
+                        "Section layout",
+                        self.view_edit_section_layout_value(section),
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        6,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                if details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && state.section_details_field_index == 6
+                {
+                    let help_style = Style::default().fg(Color::Rgb(170, 178, 198));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    Behavior:",
+                        help_style,
+                    ))));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    - Flat: keeps one section",
+                        help_style,
+                    ))));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    - Split: creates child lanes + \"(Other)\"",
+                        help_style,
+                    ))));
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        "    Requirements: single Include parent, no Exclude/Any/Text/Date filters.",
+                        help_style,
+                    ))));
+                }
+
+                // ── Group 4: Date range (subset of view's date range) ──
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  ─────────────────────────────────────────",
+                    separator_style,
+                ))));
+
+                let format_buckets =
+                    |set: &std::collections::HashSet<WhenBucket>, empty_label: &str| -> String {
+                        if set.is_empty() {
+                            empty_label.to_string()
+                        } else {
+                            when_bucket_options()
+                                .iter()
+                                .filter(|b| set.contains(*b))
+                                .map(|b| when_bucket_label(*b).to_string())
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        }
+                    };
+                let section_include_label =
+                    format_buckets(&section.criteria.virtual_include, "(inherit view)");
+                let section_exclude_label =
+                    format_buckets(&section.criteria.virtual_exclude, "(none)");
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(7)),
+                        "Date range (include)",
+                        section_include_label,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        7,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                items.push(
+                    ListItem::new(Line::from(format!(
+                        "{}{:<width$}{}",
+                        row_marker(section_field_selected(8)),
+                        "Date range (exclude)",
+                        section_exclude_label,
+                        width = pad
+                    )))
+                    .style(style_for_section_field(
+                        8,
+                        &items,
+                        &mut selected_line,
+                    )),
+                );
+                if details_focused
+                    && state.region == ViewEditRegion::Sections
+                    && (state.section_details_field_index == 7
+                        || state.section_details_field_index == 8)
+                {
+                    let help_style = Style::default().fg(Color::Rgb(170, 178, 198));
+                    let view_include = &state.draft.criteria.virtual_include;
+                    let view_summary = if view_include.is_empty() {
+                        "any".to_string()
+                    } else {
+                        when_bucket_options()
+                            .iter()
+                            .filter(|b| view_include.contains(*b))
+                            .map(|b| when_bucket_label(*b).to_string())
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    };
+                    items.push(ListItem::new(Line::from(Span::styled(
+                        format!("    Section options limited to view range: {view_summary}"),
+                        help_style,
+                    ))));
+                }
+            } else {
+                items.push(ListItem::new(Line::from("  No selection")));
+            }
+
+            let content_len = items.len();
+            let block = Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(details_border));
+            let mut list_state = Self::list_state_for(details_area, selected_line);
+            frame.render_stateful_widget(
+                List::new(items).block(block),
+                details_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, details_area, content_len, list_state.offset());
+
+            // Position the terminal cursor on the active inline text input.
+            if state.inline_input.is_some() {
+                if let Some(sel) = selected_line {
+                    let offset = list_state.offset();
+                    if sel >= offset {
+                        let visible_row = (sel - offset) as u16;
+                        // inner area: 1 for border
+                        let inner_y = details_area.y + 1 + visible_row;
+                        if inner_y < details_area.y + details_area.height.saturating_sub(1) {
+                            // Compute x: the inline text is after "◀ " prefix inside
+                            // the formatted row. Place cursor at the TextBuffer cursor.
+                            let cursor_col = state.inline_buf.cursor();
+                            // The text starts at: border(1) + padding(2) + label(pad=26) + "◀ "(2)
+                            let text_start = details_area.x + 1 + 2 + 26 + 2;
+                            let cursor_x = text_start + cursor_col as u16;
+                            let max_x = details_area.x + details_area.width.saturating_sub(2);
+                            frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Sections region ──────────────────────────────────────────────────
+        {
+            let inline_editing_section = state.inline_input.as_ref().and_then(|inp| {
+                if let ViewEditInlineInput::SectionTitle { section_index, .. } = inp {
+                    Some(*section_index)
+                } else {
+                    None
+                }
+            });
+
+            let filter_active = !state.sections_filter_buf.trimmed().is_empty();
+            let filter_editing = matches!(
+                state.inline_input,
+                Some(ViewEditInlineInput::SectionsFilter)
+            );
+            let dirty_marker = if state.dirty { " *" } else { "" };
+            let datebook_mode = state.draft.datebook_config.is_some();
+            let view_label = if datebook_mode {
+                "DATEBOOK RULES".to_string()
+            } else {
+                format!("SECTIONS: {}", state.draft.name)
+            };
+            let sections_title: Line<'_> = if filter_editing {
+                let prefix = format!(" {view_label}{dirty_marker}  /",);
+                Line::from(inline_edit_spans(
+                    &prefix,
+                    state.sections_filter_buf.text(),
+                    state.sections_filter_buf.cursor(),
+                    Style::default(),
+                    Style::default(),
+                ))
+            } else if filter_active {
+                Line::from(format!(
+                    " {view_label}{dirty_marker}  /{} ",
+                    state.sections_filter_buf.text()
+                ))
+            } else {
+                Line::from(format!(" {view_label}{dirty_marker} "))
+            };
+            let block = Block::default()
+                .title(sections_title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(
+                    if state.pane_focus == ViewEditPaneFocus::Sections {
+                        focused_border
+                    } else {
+                        inactive_border
+                    },
+                ));
+
+            let mut items: Vec<ListItem<'_>> = Vec::new();
+            let mut selected_line: Option<usize> = None;
+            let sections_pane_focused = state.pane_focus == ViewEditPaneFocus::Sections;
+
+            let visible_section_indices: Vec<usize> = {
+                let q = state.sections_filter_buf.trimmed().to_ascii_lowercase();
+                if q.is_empty() {
+                    (0..state.draft.sections.len()).collect()
+                } else {
+                    state
+                        .draft
+                        .sections
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| {
+                            if s.title.to_ascii_lowercase().contains(&q) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                }
+            };
+
+            if let Some(config) = &state.draft.datebook_config {
+                let sel_style = Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD);
+                let row_marker = |active: bool| if active { "> " } else { "  " };
+                for (idx, (label, value)) in [
+                    ("Period", config.period.label()),
+                    ("Interval", config.interval.label()),
+                    ("Anchor", config.anchor.label()),
+                    ("Date source", config.date_source.label()),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let selected = sections_pane_focused
+                        && state.region == ViewEditRegion::Datebook
+                        && state.datebook_field_index == idx;
+                    if selected {
+                        selected_line = Some(items.len());
+                    }
+                    let style = if selected {
+                        sel_style
+                    } else {
+                        Style::default()
+                    };
+                    items.push(
+                        ListItem::new(Line::from(format!(
+                            "{}{:<18}{}",
+                            row_marker(selected),
+                            label,
+                            value
+                        )))
+                        .style(style),
+                    );
+                }
+                items.push(ListItem::new(Line::from("")));
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  Generated from item dates.",
+                    Style::default().fg(dim),
+                ))));
+                items.push(ListItem::new(Line::from(Span::styled(
+                    "  No manual section add/delete/reorder.",
+                    Style::default().fg(dim),
+                ))));
+            } else if state.draft.sections.is_empty() {
+                items.push(ListItem::new(Line::from("  (no sections — n:add)")));
+            } else if visible_section_indices.is_empty() {
+                items.push(ListItem::new(Line::from("  (no matching sections)")));
+            } else {
+                for i in visible_section_indices {
+                    let section = &state.draft.sections[i];
+                    let is_active_section =
+                        i == state.section_index && !state.sections_view_row_selected;
+                    if is_active_section {
+                        selected_line = Some(items.len());
+                    }
+                    let cursor = if is_active_section && state.region == ViewEditRegion::Sections {
+                        "▸"
+                    } else {
+                        " "
+                    };
+                    let style = if is_active_section && sections_pane_focused {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else if is_active_section {
+                        Style::default().add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                    };
+                    let line = if inline_editing_section == Some(i) {
+                        let prefix = format!(" {} {}. ", cursor, i + 1,);
+                        Line::from(inline_edit_spans(
+                            &prefix,
+                            state.inline_buf.text(),
+                            state.inline_buf.cursor(),
+                            style,
+                            style,
+                        ))
+                    } else {
+                        Line::from(format!(" {} {}. {}", cursor, i + 1, section.title))
+                    };
+                    items.push(ListItem::new(line).style(style));
+                }
+            }
+
+            let content_len = items.len();
+            let mut list_state = Self::list_state_for(sections_area, selected_line);
+            frame.render_stateful_widget(
+                List::new(items).block(block),
+                sections_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, sections_area, content_len, list_state.offset());
+
+            // Position cursor for section title inline editing.
+            if let Some(section_idx) = inline_editing_section {
+                if let Some(sel) = selected_line {
+                    let offset = list_state.offset();
+                    if sel >= offset {
+                        let visible_row = (sel - offset) as u16;
+                        let inner_y = sections_area.y + 1 + visible_row;
+                        if inner_y < sections_area.y + sections_area.height.saturating_sub(1) {
+                            let cursor_col = state.inline_buf.cursor();
+                            // Format: " {cursor}(1) {idx}.(varies) {text}"
+                            let idx_width = format!("{}.", section_idx + 1).len();
+                            let prefix_len = 1 + 1 + 1 + idx_width + 1; // " ▸ N. "
+                            let text_start = sections_area.x + 1 + prefix_len as u16;
+                            let cursor_x = text_start + cursor_col as u16;
+                            let max_x = sections_area.x + sections_area.width.saturating_sub(2);
+                            frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                        }
+                    }
+                }
+            }
+            // Position cursor for sections filter in title bar.
+            if filter_editing {
+                let cursor_col = state.sections_filter_buf.cursor();
+                // Title: " VIEW: {name}{dirty}  /{filter}◀ "
+                let prefix_len = 1 + view_label.len() + dirty_marker.len() + 2 + 1; // " VIEW:...  /"
+                let cursor_x = sections_area.x + 1 + prefix_len as u16 + cursor_col as u16;
+                let max_x = sections_area.x + sections_area.width.saturating_sub(2);
+                let cursor_y = sections_area.y;
+                frame.set_cursor_position((cursor_x.min(max_x), cursor_y));
+            }
+        }
+
+        // ── Preview pane (optional) ─────────────────────────────────────────
+        if let Some(preview_area) = preview_area {
+            let preview_focused = state.pane_focus == ViewEditPaneFocus::Preview;
+            let preview_border = if preview_focused {
+                focused_border
+            } else {
+                inactive_border
+            };
+
+            let reference_date = jiff::Zoned::now().date();
+            let resolved = resolve_view(
+                &state.draft,
+                &self.all_items,
+                &self.categories,
+                reference_date,
+            );
+            let mut preview_items: Vec<ListItem<'_>> = Vec::new();
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Matches: {}",
+                state.preview_count
+            ))));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Sections: {} configured",
+                state.draft.sections.len()
+            ))));
+            preview_items.push(ListItem::new(Line::from("")));
+
+            if resolved.sections.is_empty() {
+                preview_items.push(ListItem::new(Line::from("  (no section lanes)")));
+            } else {
+                let sample_limit = 3usize;
+                for section in &resolved.sections {
+                    let subsection_count = section.subsections.len();
+                    let section_count = if subsection_count == 0 {
+                        section.items.len()
+                    } else {
+                        section.subsections.iter().map(|s| s.items.len()).sum()
+                    };
+                    preview_items.push(ListItem::new(Line::from(format!(
+                        "  {}: {}",
+                        section.title, section_count
+                    ))));
+                    if subsection_count > 0 {
+                        preview_items.push(ListItem::new(Line::from(format!(
+                            "    generated: {}",
+                            subsection_count
+                        ))));
+                    }
+                    // Show sample items
+                    let sample_items = &section.items;
+                    for item in sample_items.iter().take(sample_limit) {
+                        let truncated = if item.text.len() > 30 {
+                            format!("{}…", &item.text[..29])
+                        } else {
+                            item.text.clone()
+                        };
+                        preview_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("    {truncated}"),
+                            Style::default().fg(dim),
+                        ))));
+                    }
+                    if section_count > sample_limit {
+                        preview_items.push(ListItem::new(Line::from(Span::styled(
+                            format!("    ({} more)", section_count - sample_limit),
+                            Style::default().fg(dim),
+                        ))));
+                    }
+                }
+            }
+
+            let unmatched_count = resolved
+                .unmatched
+                .as_ref()
+                .map(|items| items.len())
+                .unwrap_or(0);
+            preview_items.push(ListItem::new(Line::from("")));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Unmatched: {} ({})",
+                if state.draft.show_unmatched {
+                    "shown"
+                } else {
+                    "hidden"
+                },
+                unmatched_count
+            ))));
+            preview_items.push(ListItem::new(Line::from(format!(
+                "  Dependent items: {}",
+                if state.draft.hide_dependent_items {
+                    "hidden"
+                } else {
+                    "shown"
+                }
+            ))));
+
+            let selected_preview_row = if preview_items.is_empty() {
+                None
+            } else {
+                Some(
+                    state
+                        .preview_scroll
+                        .min(preview_items.len().saturating_sub(1)),
+                )
+            };
+            let content_len = preview_items.len();
+            let mut list_state = Self::list_state_for(preview_area, selected_preview_row);
+            frame.render_stateful_widget(
+                List::new(preview_items)
+                    .block(
+                        Block::default()
+                            .title(" PREVIEW ")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(preview_border)),
+                    )
+                    .highlight_style(if preview_focused {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    }),
+                preview_area,
+                &mut list_state,
+            );
+            Self::render_vertical_scrollbar(frame, preview_area, content_len, list_state.offset());
+        }
+
+        // ── Picker overlay ───────────────────────────────────────────────────
+        if let Some(overlay) = &state.overlay {
+            let overlay_area = centered_rect(64, 72, area);
+            frame.render_widget(Clear, overlay_area);
+            match overlay {
+                ViewEditOverlay::CategoryPicker { target } => {
+                    let filtered_indices = self.view_edit_filtered_category_row_indices(state);
+                    let selected_filtered_index = filtered_indices
+                        .iter()
+                        .position(|&i| i == state.picker_index)
+                        .unwrap_or(0);
+                    let is_criteria_picker = matches!(
+                        target,
+                        CategoryEditTarget::ViewCriteria | CategoryEditTarget::SectionCriteria
+                    );
+                    let is_alias_picker = matches!(target, CategoryEditTarget::ViewAliases);
+                    let toggle_hint = if is_alias_picker {
+                        "A/Enter edit alias"
+                    } else if is_criteria_picker {
+                        "Sp:cycle +/-:req/exc 0:clr Enter/Tab done"
+                    } else {
+                        "Space/Enter toggle"
+                    };
+                    let context_label = match target {
+                        CategoryEditTarget::ViewCriteria => "View criteria".to_string(),
+                        CategoryEditTarget::ViewAliases => "View aliases".to_string(),
+                        CategoryEditTarget::SectionCriteria => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" criteria")
+                        }
+                        CategoryEditTarget::SectionColumns => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" columns")
+                        }
+                        CategoryEditTarget::SectionOnInsertAssign => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" auto-assign")
+                        }
+                        CategoryEditTarget::SectionOnRemoveUnassign => {
+                            let name = state
+                                .draft
+                                .sections
+                                .get(state.section_index)
+                                .map(|s| s.title.as_str())
+                                .unwrap_or("?");
+                            format!("Section \"{name}\" auto-unassign")
+                        }
+                    };
+                    let pos_label = format!(
+                        "{}/{}",
+                        (selected_filtered_index + 1).min(filtered_indices.len().max(1)),
+                        filtered_indices.len()
+                    );
+                    let title = if is_criteria_picker {
+                        format!(" {context_label}  {pos_label}  ({toggle_hint}) ")
+                    } else {
+                        format!(" {context_label}  {pos_label}  ({toggle_hint}, Esc done) ")
+                    };
+                    let section_index = state.section_index;
+                    let items: Vec<ListItem<'_>> = self
+                        .category_rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| filtered_indices.contains(i))
+                        .map(|(i, row)| {
+                            let indent = "  ".repeat(row.depth);
+                            let is_criteria_target = matches!(
+                                target,
+                                CategoryEditTarget::ViewCriteria
+                                    | CategoryEditTarget::SectionCriteria
+                            );
+                            let criterion_mode = if is_criteria_target {
+                                let query = match target {
+                                    CategoryEditTarget::ViewCriteria => Some(&state.draft.criteria),
+                                    CategoryEditTarget::ViewAliases => None,
+                                    CategoryEditTarget::SectionCriteria => {
+                                        state.draft.sections.get(section_index).map(|s| &s.criteria)
+                                    }
+                                    _ => None,
+                                };
+                                query.and_then(|q| q.mode_for(row.id))
+                            } else {
+                                None
+                            };
+                            let selected_style = if i == state.picker_index {
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                            };
+                            if is_criteria_target {
+                                let is_selected = i == state.picker_index;
+                                let (glyph, label, glyph_color) = match criterion_mode {
+                                    None => (" ", "", dim),
+                                    Some(CriterionMode::And) => ("+", " Require", Color::Green),
+                                    Some(CriterionMode::Not) => ("-", " Exclude", Color::Red),
+                                    Some(CriterionMode::Or) => ("*", " Or", Color::Yellow),
+                                };
+                                let fg = if is_selected {
+                                    Color::Black
+                                } else {
+                                    glyph_color
+                                };
+                                let glyph_style = Style::default().fg(fg);
+                                let label_style = if is_selected {
+                                    Style::default().fg(Color::Black)
+                                } else {
+                                    Style::default().fg(glyph_color).add_modifier(Modifier::DIM)
+                                };
+                                let name_style = if is_selected {
+                                    Style::default().fg(Color::Black)
+                                } else {
+                                    Style::default()
+                                };
+                                let line = Line::from(vec![
+                                    Span::raw(indent.to_string()),
+                                    Span::styled(format!("[{glyph}]"), glyph_style),
+                                    Span::styled(format!(" {}", row.name), name_style),
+                                    Span::styled(label.to_string(), label_style),
+                                ]);
+                                ListItem::new(line).style(selected_style)
+                            } else if is_alias_picker {
+                                let active_alias_edit = matches!(
+                                    state.inline_input,
+                                    Some(ViewEditInlineInput::CategoryAlias { category_id })
+                                    if category_id == row.id
+                                );
+                                let current_alias = if active_alias_edit {
+                                    state.inline_buf.text().to_string()
+                                } else {
+                                    state
+                                        .draft
+                                        .category_aliases
+                                        .get(&row.id)
+                                        .cloned()
+                                        .unwrap_or_default()
+                                };
+                                let alias_text = if current_alias.trim().is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    current_alias
+                                };
+                                if active_alias_edit {
+                                    let prefix = format!("{indent}{}  alias: ", row.name);
+                                    ListItem::new(Line::from(inline_edit_spans(
+                                        &prefix,
+                                        state.inline_buf.text(),
+                                        state.inline_buf.cursor(),
+                                        selected_style,
+                                        selected_style,
+                                    )))
+                                    .style(selected_style)
+                                } else {
+                                    let label =
+                                        format!("{indent}{}  alias: {alias_text}", row.name);
+                                    ListItem::new(Line::from(label)).style(selected_style)
+                                }
+                            } else {
+                                let checked = match target {
+                                    CategoryEditTarget::ViewAliases => false,
+                                    CategoryEditTarget::SectionColumns => state
+                                        .draft
+                                        .sections
+                                        .get(section_index)
+                                        .map(|section| {
+                                            section.columns.iter().any(|col| col.heading == row.id)
+                                        })
+                                        .unwrap_or(false),
+                                    CategoryEditTarget::SectionOnInsertAssign => state
+                                        .draft
+                                        .sections
+                                        .get(section_index)
+                                        .map(|section| section.on_insert_assign.contains(&row.id))
+                                        .unwrap_or(false),
+                                    CategoryEditTarget::SectionOnRemoveUnassign => state
+                                        .draft
+                                        .sections
+                                        .get(section_index)
+                                        .map(|section| section.on_remove_unassign.contains(&row.id))
+                                        .unwrap_or(false),
+                                    _ => false,
+                                };
+                                let invalid_reason =
+                                    if matches!(target, CategoryEditTarget::SectionColumns) {
+                                        self.categories
+                                            .iter()
+                                            .find(|cat| cat.id == row.id)
+                                            .and_then(column_heading_ineligibility_reason)
+                                    } else {
+                                        None
+                                    };
+                                let checkbox = if invalid_reason.is_some() {
+                                    "-"
+                                } else if checked {
+                                    "x"
+                                } else {
+                                    " "
+                                };
+                                let spans = vec![
+                                    Span::raw(indent.to_string()),
+                                    Span::styled(
+                                        format!("[{checkbox}] "),
+                                        if invalid_reason.is_some() && i != state.picker_index {
+                                            Style::default().fg(dim)
+                                        } else {
+                                            Style::default()
+                                        },
+                                    ),
+                                    Span::styled(
+                                        row.name.clone(),
+                                        if invalid_reason.is_some() && i != state.picker_index {
+                                            Style::default().fg(dim)
+                                        } else {
+                                            Style::default()
+                                        },
+                                    ),
+                                ];
+                                ListItem::new(Line::from(spans)).style(selected_style)
+                            }
+                        })
+                        .collect();
+                    let block = Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow));
+                    let mut list_state = Self::list_state_for(
+                        overlay_area,
+                        if filtered_indices.is_empty() {
+                            None
+                        } else {
+                            Some(selected_filtered_index)
+                        },
+                    );
+                    frame.render_stateful_widget(
+                        List::new(items).block(block),
+                        overlay_area,
+                        &mut list_state,
+                    );
+
+                    // Position cursor for alias inline editing inside the overlay.
+                    if is_alias_picker {
+                        if let Some(ViewEditInlineInput::CategoryAlias { category_id }) =
+                            &state.inline_input
+                        {
+                            // Find the row for this category in the filtered list.
+                            if let Some(row) =
+                                self.category_rows.iter().find(|r| r.id == *category_id)
+                            {
+                                let vis_sel = selected_filtered_index;
+                                let offset = list_state.offset();
+                                if vis_sel >= offset {
+                                    let visible_row = (vis_sel - offset) as u16;
+                                    let inner_y = overlay_area.y + 1 + visible_row;
+                                    if inner_y
+                                        < overlay_area.y + overlay_area.height.saturating_sub(1)
+                                    {
+                                        let indent_len = 2 * row.depth;
+                                        let name_len = row.name.len();
+                                        let prefix_len = indent_len + name_len + "  alias: ".len();
+                                        let cursor_col = state.inline_buf.cursor();
+                                        let cursor_x = overlay_area.x
+                                            + 1
+                                            + prefix_len as u16
+                                            + cursor_col as u16;
+                                        let max_x =
+                                            overlay_area.x + overlay_area.width.saturating_sub(2);
+                                        frame.set_cursor_position((cursor_x.min(max_x), inner_y));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                ViewEditOverlay::BucketPicker { target } => {
+                    let view_include = &state.draft.criteria.virtual_include;
+                    let options: Vec<WhenBucket> =
+                        if target.is_section() && !view_include.is_empty() {
+                            when_bucket_options()
+                                .iter()
+                                .copied()
+                                .filter(|b| view_include.contains(b))
+                                .collect()
+                        } else {
+                            when_bucket_options().to_vec()
+                        };
+                    let selected_set: Option<&std::collections::HashSet<WhenBucket>> = match target
+                    {
+                        BucketEditTarget::ViewVirtualInclude => {
+                            Some(&state.draft.criteria.virtual_include)
+                        }
+                        BucketEditTarget::ViewVirtualExclude => {
+                            Some(&state.draft.criteria.virtual_exclude)
+                        }
+                        BucketEditTarget::SectionVirtualInclude => state
+                            .draft
+                            .sections
+                            .get(state.section_index)
+                            .map(|s| &s.criteria.virtual_include),
+                        BucketEditTarget::SectionVirtualExclude => state
+                            .draft
+                            .sections
+                            .get(state.section_index)
+                            .map(|s| &s.criteria.virtual_exclude),
+                    };
+                    let items: Vec<ListItem<'_>> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, bucket)| {
+                            let checked = selected_set
+                                .map(|set| set.contains(bucket))
+                                .unwrap_or(false);
+                            let mark = if checked { "[x]" } else { "[ ]" };
+                            let label = format!("  {} {}", mark, when_bucket_label(*bucket));
+                            let style = if i == state.picker_index {
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                            };
+                            ListItem::new(Line::from(label)).style(style)
+                        })
+                        .collect();
+                    let title = match target {
+                        BucketEditTarget::ViewVirtualInclude => " View date range — include ",
+                        BucketEditTarget::ViewVirtualExclude => " View date range — exclude ",
+                        BucketEditTarget::SectionVirtualInclude => " Section date range — include ",
+                        BucketEditTarget::SectionVirtualExclude => " Section date range — exclude ",
+                    };
+                    let block = Block::default()
+                        .title(title)
+                        .title_bottom(" Space:toggle  C:clear  Esc:close ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow));
+                    let mut list_state =
+                        Self::list_state_for(overlay_area, Some(state.picker_index));
+                    frame.render_stateful_widget(
+                        List::new(items).block(block),
+                        overlay_area,
+                        &mut list_state,
+                    );
+                }
+            }
+        }
+
+        // ── Discard confirmation overlay ──────────────────────────────────────
+        if state.discard_confirm {
+            let w = area.width.min(48);
+            let h = 5;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Save changes before closing?"),
+                    Line::from(""),
+                    Line::from("y: save and close   n: discard   Esc: keep editing"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Confirm ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+
+        if let Some(section_index) = state.section_delete_confirm {
+            let section_name = state
+                .draft
+                .sections
+                .get(section_index)
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| "(missing)".to_string());
+            let w = area.width.min(64);
+            let h = 6;
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            let y = area.y + area.height.saturating_sub(h) / 2;
+            let overlay_area = Rect::new(x, y, w, h);
+            frame.render_widget(Clear, overlay_area);
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from("Delete section?"),
+                    Line::from(format!("\"{section_name}\"")),
+                    Line::from(""),
+                    Line::from("y:confirm  Esc:cancel"),
+                ])
+                .block(
+                    Block::default()
+                        .title(" Confirm Delete ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .wrap(Wrap { trim: false }),
+                overlay_area,
+            );
+        }
+    }
+}

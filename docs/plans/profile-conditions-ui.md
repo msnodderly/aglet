@@ -13,8 +13,8 @@ Profile conditions are fully implemented in the engine (`engine.rs`) and data mo
 Users currently cannot create or manage profile conditions through CLI or TUI — only through
 direct database manipulation. This plan adds the missing user-facing layer.
 
-The Beeswax/Agenda article states profile conditions are "identical in form to the view criteria."
-The view criteria picker in `crates/agenda-tui/src/modes/view_edit/details.rs` already edits
+The Beeswax/Aglet article states profile conditions are "identical in form to the view criteria."
+The view criteria picker in `crates/aglet-tui/src/modes/view_edit/details.rs` already edits
 `Query` objects with AND/NOT/OR logic.
 We reuse this same pattern for category profile condition editing.
 
@@ -112,10 +112,10 @@ We reuse this same pattern for category profile condition editing.
 
 ## Key Files
 
-- `crates/agenda-core/src/model.rs:167-171` — Condition enum
-- `crates/agenda-core/src/engine.rs:273-321` — evaluation logic
-- `crates/agenda-core/src/store.rs` — persistence
-- `crates/agenda-cli/src/main.rs:288-413` — CategoryCommand enum (add variants here)
-- `crates/agenda-cli/src/main.rs:1950-1979` — category show display
-- `crates/agenda-tui/src/modes/category.rs` — category manager (add condition UI here)
-- `crates/agenda-tui/src/modes/view_edit/details.rs` — criteria picker to reuse
+- `crates/aglet-core/src/model.rs:167-171` — Condition enum
+- `crates/aglet-core/src/engine.rs:273-321` — evaluation logic
+- `crates/aglet-core/src/store.rs` — persistence
+- `crates/aglet-cli/src/main.rs:288-413` — CategoryCommand enum (add variants here)
+- `crates/aglet-cli/src/main.rs:1950-1979` — category show display
+- `crates/aglet-tui/src/modes/category.rs` — category manager (add condition UI here)
+- `crates/aglet-tui/src/modes/view_edit/details.rs` — criteria picker to reuse

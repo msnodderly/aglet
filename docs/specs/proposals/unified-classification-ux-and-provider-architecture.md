@@ -7,7 +7,7 @@ created: 2026-03-15
 # Unified Classification UX And Provider Architecture
 
 Revision note: this document supersedes earlier discussion with a March 24,
-2026 snapshot of what is already implemented in `agenda-core` and `agenda-tui`.
+2026 snapshot of what is already implemented in `aglet-core` and `aglet-tui`.
 It is intentionally grounded in the current code, not the older imagined UX.
 
 ## Context
