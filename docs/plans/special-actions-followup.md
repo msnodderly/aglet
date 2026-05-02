@@ -47,7 +47,7 @@ Potential variants:
 - `Action::MarkDone`
 - `Action::Discard`
 
-These must route through shared agenda-layer helpers instead of bypassing item
+These must route through shared workspace-layer helpers instead of bypassing item
 lifecycle invariants.
 
 ### Phase 4C: External side effects
@@ -62,11 +62,11 @@ beyond the database itself.
 
 ## Core Design Constraints
 
-- Do not let action variants sidestep existing agenda invariants.
+- Do not let action variants sidestep existing workspace invariants.
 - Keep the authoring surface action-kind-first, with per-kind payload editors,
   so special actions extend the existing flow instead of replacing it.
 - Route date mutations through `set_item_when_date(...)`-style helpers.
-- Route done/discard mutations through agenda-layer lifecycle functions.
+- Route done/discard mutations through workspace-layer lifecycle functions.
 - Preserve deterministic ordering when multiple heterogeneous actions exist on a
   category.
 - Keep action-produced side effects sticky and audit-friendly.
@@ -93,5 +93,5 @@ beyond the database itself.
 
 - We have a documented, sequenced design for special actions.
 - No special-action work starts before recurrence and done sequencing land.
-- Any eventual implementation reuses agenda lifecycle APIs instead of open-coded
+- Any eventual implementation reuses workspace lifecycle APIs instead of open-coded
   store mutations.

@@ -12,7 +12,7 @@ Scope: gaps between `docs/specs/product/target.md` and the current implementatio
 
 This document tracks what is still missing or mismatched after reviewing:
 
-- core code (`agenda-core`)
+- core code (`aglet-core`)
 - shipped CLI/TUI codepaths
 - CLI/TUI demo evidence in `docs/demo-*.md` and `docs/test-*.md`
 
@@ -40,7 +40,7 @@ Why it matters:
 
 Current state:
 
-- `crates/agenda-core/src/undo.rs` is effectively empty.
+- `crates/aglet-core/src/undo.rs` is effectively empty.
 - V1 decision is no-undo + explicit recovery UX, not minimal undo.
 
 Gap:

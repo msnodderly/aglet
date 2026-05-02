@@ -325,7 +325,7 @@ Candidate shape if gate is triggered:
 ### 12.1 Full-Screen View Manager
 
 ```text
-Agenda Reborn  screen:View Manager  draft:*unsaved*  view:Project Y Board
+Aglet Reborn  screen:View Manager  draft:*unsaved*  view:Project Y Board
 ┌──────────────────────┬──────────────────────────────────────────────┬──────────────────────────────┐
 │ Views                │ Definition                                   │ Sections                     │
 │ > All Items          │ Criteria rows                                │ > Slot A                     │

@@ -14,7 +14,7 @@ Tracking issue: `befa2fdb-3874-4cff-a9ff-05ac422fbb8a`
 
 Expose the existing category action system in shipped UX without changing the
 core rule semantics. Aglet already supports `Action::Assign` and
-`Action::Remove` in the model, store, agenda layer, and fixed-point engine; the
+`Action::Remove` in the model, store, workspace layer, and fixed-point engine; the
 missing work is authoring, editing, and visibility in CLI/TUI.
 
 This should be treated as a phase-1, category-targeted action editor. The UI
@@ -98,7 +98,7 @@ Phase 1 payload editor:
 1. Extend CLI command surface and help text.
 2. Centralize action kind/summary formatting so CLI and TUI use the same naming
    and future kinds only add one new branch.
-3. Add shared agenda/category mutation helpers for action list updates so CLI
+3. Add shared workspace/category mutation helpers for action list updates so CLI
    and TUI do not hand-roll the same validation logic.
 4. Add TUI action-edit state alongside existing condition-edit state.
 5. Surface action counts and summaries in Category Manager details.

@@ -19,9 +19,9 @@ Implement a workflow model where:
 User-facing surfaces:
 
 - TUI exposes a built-in immutable `Ready Queue` view.
-- CLI adds `agenda ready` to list claimable items.
-- CLI redesigns `agenda claim` to use workflow config only.
-- CLI adds `agenda release` with visible alias `agenda unclaim`.
+- CLI adds `aglet ready` to list claimable items.
+- CLI redesigns `aglet claim` to use workflow config only.
+- CLI adds `aglet release` with visible alias `aglet unclaim`.
 
 ## Public API and Interface Changes
 
@@ -36,7 +36,7 @@ Add a new core type:
 }
 ```
 
-Add a new public model type in `agenda-core`:
+Add a new public model type in `aglet-core`:
 
 ```rust
 pub struct WorkflowConfig {
@@ -52,13 +52,13 @@ Add core/store helpers:
 
 Add new CLI commands:
 
-- `agenda ready`
-- `agenda release <ITEM_ID>`
-- `agenda unclaim <ITEM_ID>` as a visible alias of `release`
+- `aglet ready`
+- `aglet release <ITEM_ID>`
+- `aglet unclaim <ITEM_ID>` as a visible alias of `release`
 
 Redesign existing CLI command:
 
-- `agenda claim <ITEM_ID>` becomes config-driven only.
+- `aglet claim <ITEM_ID>` becomes config-driven only.
 - Remove `--claim-category` and `--must-not-have` from the public interface.
 - Update help/docs/tests accordingly.
 
@@ -75,7 +75,7 @@ A DB is "workflow-configured" only when both configured category IDs exist and a
 If workflow config is incomplete:
 
 - TUI does not show `Ready Queue`.
-- `agenda ready`, `agenda claim`, and `agenda release` fail with a clear setup error and a hint to configure roles in the TUI Category Manager.
+- `aglet ready`, `aglet claim`, and `aglet release` fail with a clear setup error and a hint to configure roles in the TUI Category Manager.
 
 Invalid config rules:
 
@@ -96,12 +96,12 @@ An item is claimable if all of the following are true:
 This predicate must be shared across:
 
 - TUI `Ready Queue`
-- CLI `agenda ready`
-- CLI `agenda claim`
+- CLI `aglet ready`
+- CLI `aglet claim`
 
 ### Claim
 
-`agenda claim <ITEM_ID>` is strict and has no `--force` in v1.
+`aglet claim <ITEM_ID>` is strict and has no `--force` in v1.
 
 `claim` must fail unless the item is currently claimable.
 
@@ -126,7 +126,7 @@ This preserves the "begin transaction / reserve this item for active work" seman
 
 ### Release / Unclaim
 
-`agenda release <ITEM_ID>` removes the configured claim target category.
+`aglet release <ITEM_ID>` removes the configured claim target category.
 
 Rules:
 
@@ -162,7 +162,7 @@ This means reopened items naturally re-enter the ready queue if they are still R
 
 ### 1. Core workflow config and claimability helpers
 
-Add `WorkflowConfig` to `agenda-core`.
+Add `WorkflowConfig` to `aglet-core`.
 
 Add store helpers to serialize/deserialize it through `app_settings`.
 
@@ -180,26 +180,26 @@ Do not persist `Ready Queue` as a normal DB row. The current `View` query model 
 
 Replace the current name-based `claim` wrapper behavior with workflow-aware core operations.
 
-Add a new transactional claim method in `Agenda` that:
+Add a new transactional claim method in `Aglet` that:
 
 - loads current item state inside `with_immediate_transaction`
 - re-evaluates claimability inside the transaction
 - assigns the configured claim category if allowed
 - returns `ProcessItemResult`
 
-Add a release method in `Agenda` that:
+Add a release method in `Aglet` that:
 
 - checks the configured claim category is present
 - removes it
 - reprocesses the item
 
-Update `mark_item_done` in `Agenda` so it auto-clears the configured claim category before final processing.
+Update `mark_item_done` in `Aglet` so it auto-clears the configured claim category before final processing.
 
 ### 3. CLI surface
 
 Add `Command::Ready`.
 
-`agenda ready` should support list-like output ergonomics:
+`aglet ready` should support list-like output ergonomics:
 
 - repeated `--sort <KEY>`
 - `--format table|json`
@@ -221,7 +221,7 @@ Redesign `Command::Claim`:
 
 Add `Command::Release` with visible alias `unclaim`:
 
-- signature: `agenda release <ITEM_ID>`
+- signature: `aglet release <ITEM_ID>`
 - same item-id resolution behavior as other item commands
 - success message should clearly mention the claim category removed
 
@@ -308,13 +308,13 @@ Treat malformed JSON as unconfigured at runtime rather than crashing the TUI ref
 - clap parses `ready`
 - clap parses `release` and alias `unclaim`
 - clap no longer exposes `claim` override flags
-- `agenda ready` lists only claimable items
-- `agenda ready --format json` uses the expected ready-queue output shape
-- `agenda ready --sort ...` uses existing sort parsing
-- `agenda claim` success path moves eligible item into claim target
-- `agenda claim` failure messages match the specified precondition order
-- `agenda release` success/failure messages are correct
-- `agenda view show "Ready Queue"` renders the generated system view
+- `aglet ready` lists only claimable items
+- `aglet ready --format json` uses the expected ready-queue output shape
+- `aglet ready --sort ...` uses existing sort parsing
+- `aglet claim` success path moves eligible item into claim target
+- `aglet claim` failure messages match the specified precondition order
+- `aglet release` success/failure messages are correct
+- `aglet view show "Ready Queue"` renders the generated system view
 - view create/rename/clone rejects reserved name `Ready Queue`
 
 ### TUI tests
@@ -334,14 +334,14 @@ Treat malformed JSON as unconfigured at runtime rather than crashing the TUI ref
 
 ## Files Expected to Change
 
-- `crates/agenda-core/src/model.rs`
-- `crates/agenda-core/src/store.rs`
-- `crates/agenda-core/src/agenda.rs`
-- `crates/agenda-cli/src/main.rs`
-- `crates/agenda-tui/src/lib.rs`
-- `crates/agenda-tui/src/app.rs`
-- `crates/agenda-tui/src/modes/category.rs`
-- `crates/agenda-tui/src/render/mod.rs`
+- `crates/aglet-core/src/model.rs`
+- `crates/aglet-core/src/store.rs`
+- `crates/aglet-core/src/workspace.rs`
+- `crates/aglet-cli/src/main.rs`
+- `crates/aglet-tui/src/lib.rs`
+- `crates/aglet-tui/src/app.rs`
+- `crates/aglet-tui/src/modes/category.rs`
+- `crates/aglet-tui/src/render/mod.rs`
 - relevant unit/integration test sections in CLI/TUI/core crates
 - `AGENTS.md` if any surprising implementation gotchas are discovered during implementation
 
@@ -354,5 +354,5 @@ Treat malformed JSON as unconfigured at runtime rather than crashing the TUI ref
 - reopening an item does not auto-reclaim it.
 - primary release command is `release`; `unclaim` is a visible alias.
 - `Ready Queue` is a generated immutable system view.
-- `agenda ready` supports list-like sorting and output formatting, but not arbitrary filter overrides.
+- `aglet ready` supports list-like sorting and output formatting, but not arbitrary filter overrides.
 - no CLI workflow-config editing is added in v1; configuration is TUI-accessible via Category Manager.

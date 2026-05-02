@@ -46,7 +46,7 @@ Addresses observations #2, #9, #12, #17, #18.
 ### ViewEdit details
 
 Today, only fields at indices 0, 1, 6 get a selected-row style via
-`section_details_field_index` (`crates/agenda-tui/src/render/mod.rs:8570-8579`).
+`section_details_field_index` (`crates/aglet-tui/src/render/mod.rs:8570-8579`).
 Extend coverage to all detail row types and expose the active field in
 the footer:
 
@@ -58,7 +58,7 @@ the footer:
 
 ### Category Manager
 
-At `crates/agenda-tui/src/render/mod.rs:7123-7135` the `> Details` title is
+At `crates/aglet-tui/src/render/mod.rs:7123-7135` the `> Details` title is
 gated on `CategoryManagerFocus::Details`, but flag-row `>` markers and
 contextual help render regardless of focus (#18). Fix:
 
@@ -71,7 +71,7 @@ contextual help render regardless of focus (#18). Fix:
 
 ### InputPanel copy audit
 
-Current strings in `crates/agenda-tui/src/render/mod.rs:5413-5436` are
+Current strings in `crates/aglet-tui/src/render/mod.rs:5413-5436` are
 stale relative to Esc-cancel semantics:
 
 | Line | Current | Replace with |
@@ -105,14 +105,14 @@ Addresses observations #1, #3.
 ### Repurpose `J` / `K` on the board
 
 Today both `J`/`K` and `[`/`]` call `move_selected_item_between_slots`
-(`crates/agenda-tui/src/modes/board.rs:2503-2549`) — `J`/`K` are
+(`crates/aglet-tui/src/modes/board.rs:2503-2549`) — `J`/`K` are
 redundant. Repurpose them to section cursor jump:
 
 - `J` = next section (same path as `Tab`).
 - `K` = previous section (same path as `BackTab`).
 - `[` / `]` and `Shift-Up` / `Shift-Down` remain item moves.
 - **Keep** the ViewEdit Sections mode `J`/`K` = section-reorder mapping at
-  `crates/agenda-tui/src/modes/view_edit/sections.rs:315-342`; that
+  `crates/aglet-tui/src/modes/view_edit/sections.rs:315-342`; that
   surface is unambiguous and the user is in a structural editor, not the
   board.
 
@@ -121,7 +121,7 @@ Update `?` help panel, footer hints, and
 
 ### Section-move outcome and status feedback
 
-`move_item_between_sections` (`crates/agenda-core/src/agenda.rs:592-608`)
+`move_item_between_sections` (`crates/aglet-core/src/workspace.rs:592-608`)
 applies `on_remove_unassign` silently today. Change:
 
 - Return a `SectionMoveOutcome { added: Vec<CategoryId>, removed:
@@ -147,19 +147,19 @@ Addresses observation #6 (data-model promotion), #13 (view-save flow).
 ### Promote `EmptySections` to view-level
 
 `EmptySections { Show, Collapse, Hide }` already exists at
-`crates/agenda-core/src/model.rs:891-917`, currently on `DatebookConfig`
+`crates/aglet-core/src/model.rs:891-917`, currently on `DatebookConfig`
 (line 928). Promote it:
 
 - Add `empty_sections: EmptySections` to `View` in
-  `crates/agenda-core/src/model.rs`.
+  `crates/aglet-core/src/model.rs`.
 - Default to `Show` for existing views on read (migration).
 - Datebook keeps its field (datebook-specific behavior is already layered
   on top via `effective_empty_sections()` at
-  `crates/agenda-tui/src/render/mod.rs:2327, 2382, 2408`).
+  `crates/aglet-tui/src/render/mod.rs:2327, 2382, 2408`).
 - Wire **board rendering only** in this pass. No change to query
   semantics, membership, or section counts.
 - Expose an editor row in ViewEdit details next to the existing datebook
-  row at `crates/agenda-tui/src/modes/view_edit/details.rs:385`.
+  row at `crates/aglet-tui/src/modes/view_edit/details.rs:385`.
 
 ### View save flow
 
@@ -184,14 +184,14 @@ Addresses observations #5, #11, #14, #15, #16, #19.
 
 - **Section-search zero-match hint**: when section search returns 0
   matches, include `g/:search all sections` in the footer/status
-  (renders at `crates/agenda-tui/src/render/mod.rs:4511-4525`).
+  (renders at `crates/aglet-tui/src/render/mod.rs:4511-4525`).
 - **Global-search header**: keep the current view name; append
   `search: global` scope marker rather than showing `All Items`.
 - **System-view lane label**: rename the default single-lane label from
   `Unassigned` to `All Items` (or `Items`) in the system view only
-  (`crates/agenda-core/src/model.rs:1309`). Real unmatched lanes in
+  (`crates/aglet-core/src/model.rs:1309`). Real unmatched lanes in
   custom views keep `Unassigned`. Requires coordinating with test
-  fixtures at `crates/agenda-core/src/store.rs:97, 2647, 2715, 2750` and
+  fixtures at `crates/aglet-core/src/store.rs:97, 2647, 2715, 2750` and
   `query.rs:1029, 1045, 1061`.
 - **Assignment picker legend**: one-line legend explaining `[+]`, `[-]`,
   `[x]`, `[ ]`. No behavior change.
@@ -229,15 +229,15 @@ Addresses observations #5, #11, #14, #15, #16, #19.
 ## Test plan
 
 ```bash
-cargo test -p agenda-tui view_edit
-cargo test -p agenda-tui category_manager
-cargo test -p agenda-tui footer
-cargo test -p agenda-tui search
-cargo test -p agenda-tui
-cargo test -p agenda-core
+cargo test -p aglet-tui view_edit
+cargo test -p aglet-tui category_manager
+cargo test -p aglet-tui footer
+cargo test -p aglet-tui search
+cargo test -p aglet-tui
+cargo test -p aglet-core
 ```
 
-Run `cargo test -p agenda-core` whenever Phase 2 (section-move outcome)
+Run `cargo test -p aglet-core` whenever Phase 2 (section-move outcome)
 or Phase 3a (empty-section persistence) lands.
 
 ## Manual tmux smoke test
@@ -272,6 +272,6 @@ Smoke flow:
 - `docs/specs/proposals/tui-ux-redesign.md` remains the long-term design
   target; this plan does not depend on it.
 - ViewEdit implementation is rooted at
-  `crates/agenda-tui/src/modes/view_edit/`.
+  `crates/aglet-tui/src/modes/view_edit/`.
 - Cursor/focus work must be validated with plain `tmux capture-pane`,
   not only color-aware local rendering.

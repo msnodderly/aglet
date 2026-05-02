@@ -164,17 +164,17 @@ undo_stack: Vec<UndoEntry>,  // bounded to 50 entries
 - **`lib.rs` (App struct):** Add `undo_stack: Vec<UndoEntry>` with max capacity 50.
   Add `push_undo(&mut self, entry: UndoEntry)` helper that pushes and truncates.
 
-- **`lib.rs` (new `undo` module or inline):** `fn apply_undo(app, agenda, entry)` that
+- **`lib.rs` (new `undo` module or inline):** `fn apply_undo(app, workspace, entry)` that
   dispatches on UndoEntry variant to reverse the operation:
-  - `ItemCreated` → `agenda.delete_item(item_id, "undo")`
-  - `ItemEdited` → load item, restore text+note, `agenda.update_item()`
-  - `ItemDeleted` → `agenda.create_item(&item)` + re-assign all categories
-  - `ItemDoneToggled` → `agenda.toggle_item_done(item_id)`
-  - `CategoryAssigned` → `agenda.unassign_item_manual(item_id, category_id)`
-  - `CategoryUnassigned` → `agenda.assign_item_manual(item_id, category_id)`
+  - `ItemCreated` → `workspace.delete_item(item_id, "undo")`
+  - `ItemEdited` → load item, restore text+note, `workspace.update_item()`
+  - `ItemDeleted` → `workspace.create_item(&item)` + re-assign all categories
+  - `ItemDoneToggled` → `workspace.toggle_item_done(item_id)`
+  - `CategoryAssigned` → `workspace.unassign_item_manual(item_id, category_id)`
+  - `CategoryUnassigned` → `workspace.assign_item_manual(item_id, category_id)`
   - `NumericValueSet` → restore old value or unassign
-  - `LinkCreated` → `agenda.store().delete_item_link()`
-  - `LinkRemoved` → `agenda.store().create_item_link()`
+  - `LinkCreated` → `workspace.store().delete_item_link()`
+  - `LinkRemoved` → `workspace.store().create_item_link()`
   - `BatchDone` → toggle each back
 
 - **Mode handlers (board.rs, category.rs):** Before each mutation, push the

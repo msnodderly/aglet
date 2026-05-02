@@ -20,20 +20,20 @@ We're adding OpenRouter as an alternative semantic classification provider along
 - Fixed confidence template (0.0 → 0.85), group filtering, already-assigned exclusion
 - User-friendly error messages for timeouts and connection failures
 - Ollama model discovery picker in Global Settings
-- Read the architecture: `Agenda` struct, `OllamaTransport` trait, `OllamaProvider`, `ClassificationConfig`, `classification_service()` wiring
+- Read the architecture: `Aglet` struct, `OllamaTransport` trait, `OllamaProvider`, `ClassificationConfig`, `classification_service()` wiring
 
 ## Architecture Analysis
 
 Key files:
-- `crates/agenda-core/src/classification.rs` — providers, transport trait, config, prompts
-- `crates/agenda-core/src/agenda.rs` — `Agenda` struct wires providers into `ClassificationService`
+- `crates/aglet-core/src/classification.rs` — providers, transport trait, config, prompts
+- `crates/aglet-core/src/workspace.rs` — `Aglet` struct wires providers into `ClassificationService`
 
 Current flow:
 1. `ClassificationConfig` has `ollama: OllamaProviderSettings` (base_url, model, timeout_secs, enabled)
 2. `OllamaTransport` trait abstracts HTTP calls (`complete()` method)
 3. `ReqwestOllamaTransport` implements it for local Ollama
 4. `OllamaProvider` uses the transport + shared system/user prompt logic
-5. `Agenda::classification_service()` wires providers based on config flags
+5. `Workspace::classification_service()` wires providers based on config flags
 6. `PROVIDER_ID_OLLAMA_OPENAI_COMPAT` is the provider ID string
 
 OpenRouter API is OpenAI-compatible (`/v1/chat/completions`), so the transport layer is nearly identical. Key differences:
@@ -63,8 +63,8 @@ Either:
 
 Option (b) is cleaner since both are OpenAI-compatible. The `OllamaProvider` can be generalized or a new `OpenRouterProvider` can share the same prompt logic.
 
-### 3. Wire into Agenda
-- Add `openrouter_transport` to `Agenda` struct (or reuse shared transport)
+### 3. Wire into Aglet
+- Add `openrouter_transport` to `Aglet` struct (or reuse shared transport)
 - Add OpenRouter provider to `classification_service()` when enabled
 - Pass API key securely (env var `OPENROUTER_API_KEY` or stored in config)
 

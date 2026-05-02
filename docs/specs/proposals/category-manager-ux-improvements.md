@@ -152,7 +152,7 @@ Those should read like actionable settings with direct hints, not just nouns wit
 Suggested mockup:
 
 ```text
-Agenda Reborn  view:Aglet  mode:CategoryManager
+Aglet Reborn  view:Aglet  mode:CategoryManager
 Auto classification: Suggest/Review (m change)  |  Ready queue: Ready  |  Claim result: In Progress (w roles)
 
 Action / Filter

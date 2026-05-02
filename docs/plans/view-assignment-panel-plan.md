@@ -30,7 +30,7 @@ Each phase is independently testable and can be merged on its own.
 
 ### A1. Expose `section_insert_targets` / `section_remove_targets` as public helpers
 
-**File:** `crates/agenda-core/src/agenda.rs`
+**File:** `crates/aglet-core/src/workspace.rs`
 
 These two private functions already encode exactly the category arithmetic for
 section transitions. Make them `pub(crate)` (or fully `pub` if useful for tests)
@@ -46,9 +46,9 @@ pub fn section_insert_targets(view: &View, section: &Section) -> HashSet<Categor
 pub fn section_remove_targets(view: &View, section: &Section) -> HashSet<CategoryId>
 ```
 
-### A2. Add `preview_section_move` on `Agenda`
+### A2. Add `preview_section_move` on `Aglet`
 
-**File:** `crates/agenda-core/src/agenda.rs`
+**File:** `crates/aglet-core/src/workspace.rs`
 
 Pure read-only computation. Returns the net set of categories that would be
 assigned and unassigned if the item moved from `from_section` to `to_section`
@@ -90,7 +90,7 @@ sets cancel out).
 
 ### B1. New types
 
-**File:** `crates/agenda-tui/src/lib.rs`
+**File:** `crates/aglet-tui/src/lib.rs`
 
 ```rust
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,7 +131,7 @@ pub(crate) struct AssignmentPreview {
 
 ### B2. New fields on `App`
 
-**File:** `crates/agenda-tui/src/lib.rs` (App struct)
+**File:** `crates/aglet-tui/src/lib.rs` (App struct)
 
 ```rust
 item_assign_pane: ItemAssignPane,           // default: Categories
@@ -142,7 +142,7 @@ item_assign_preview: AssignmentPreview,     // rebuilt on cursor move
 
 ### B3. `build_view_assign_rows()`
 
-**File:** `crates/agenda-tui/src/ui_support.rs`
+**File:** `crates/aglet-tui/src/ui_support.rs`
 
 Iterates `app.views`; for each view emits one `ViewHeader` then one `SectionRow`
 per section plus one `SectionRow { section_idx: None }` if `view.show_unmatched`.
@@ -150,14 +150,14 @@ Returns `Vec<ViewAssignRow>`.
 
 ### B4. `compute_assignment_preview()`
 
-**File:** `crates/agenda-tui/src/app.rs`
+**File:** `crates/aglet-tui/src/app.rs`
 
 Called whenever the cursor moves in either pane. Updates `self.item_assign_preview`.
 
 **Right pane cursor moved to a `SectionRow`:**
 1. Determine the item's current section in the target view (by calling
    `resolve_view` on the action items and finding where they sit).
-2. Call `Agenda::preview_section_move(item_id, view, from_section, to_section)`.
+2. Call `Workspace::preview_section_move(item_id, view, from_section, to_section)`.
 3. For multi-select: union of all individual previews (an item that is already
    in the target section contributes nothing to the preview).
 4. Store result in `self.item_assign_preview`.
@@ -177,7 +177,7 @@ Clear `self.item_assign_preview`.
 
 ### B5. `item_in_section_counts()`
 
-**File:** `crates/agenda-tui/src/app.rs`
+**File:** `crates/aglet-tui/src/app.rs`
 
 Mirrors `effective_action_assignment_counts` but for view/section placement.
 Runs `resolve_view` for one view and returns `(placed_count, total_count)` for
@@ -189,7 +189,7 @@ each section. Used by the right-pane renderer to produce `[x]`/`[~]`/`[ ]`.
 
 ### C1. Open panel initialisation
 
-**File:** `crates/agenda-tui/src/modes/board.rs`
+**File:** `crates/aglet-tui/src/modes/board.rs`
 
 When `a` is pressed:
 - Set `self.item_assign_pane = ItemAssignPane::Categories` (existing default).
@@ -207,7 +207,7 @@ Switch `self.item_assign_pane`:
 
 ### C3. New `handle_item_assign_view_key()`
 
-**File:** `crates/agenda-tui/src/modes/board.rs`
+**File:** `crates/aglet-tui/src/modes/board.rs`
 
 Handles input when `item_assign_pane == ViewSection`:
 
@@ -231,7 +231,7 @@ the top:
 
 ```rust
 if self.item_assign_pane == ItemAssignPane::ViewSection {
-    return self.handle_item_assign_view_key(key, agenda);
+    return self.handle_item_assign_view_key(key, workspace);
 }
 ```
 
@@ -243,7 +243,7 @@ if self.item_assign_pane == ItemAssignPane::ViewSection {
 
 ### D1. Widen the popup
 
-**File:** `crates/agenda-tui/src/render/mod.rs`
+**File:** `crates/aglet-tui/src/render/mod.rs`
 
 Change the dispatch site:
 
@@ -326,7 +326,7 @@ let header = match self.item_assign_pane {
 
 ### D7. Footer hints
 
-**File:** `crates/agenda-tui/src/render/mod.rs` (footer hint table)
+**File:** `crates/aglet-tui/src/render/mod.rs` (footer hint table)
 
 Add/update hints for `Mode::ItemAssignPicker` to reflect the active pane. Two
 static arrays, selected by `self.item_assign_pane`.
@@ -335,12 +335,12 @@ static arrays, selected by `self.item_assign_pane`.
 
 ## Testing
 
-### Unit tests (agenda-core)
+### Unit tests (aglet-core)
 
 - `preview_section_move` for all four input combinations.
 - Verify no store mutation occurs.
 
-### Unit tests (agenda-tui)
+### Unit tests (aglet-tui)
 
 - `build_view_assign_rows` emits correct row types and count for a view with
   sections and `show_unmatched = true`.
@@ -366,12 +366,12 @@ static arrays, selected by `self.item_assign_pane`.
 
 | File | Change |
 |------|--------|
-| `crates/agenda-core/src/agenda.rs` | Expose `section_insert_targets`, `section_remove_targets`; add `SectionMovePreview` and `preview_section_move` |
-| `crates/agenda-tui/src/lib.rs` | Add `ItemAssignPane`, `ViewAssignRow`, `AssignmentPreview` types; new fields on `App` |
-| `crates/agenda-tui/src/ui_support.rs` | Add `build_view_assign_rows()` |
-| `crates/agenda-tui/src/app.rs` | Add `compute_assignment_preview()`, `item_in_section_counts()` |
-| `crates/agenda-tui/src/modes/board.rs` | Add `handle_item_assign_view_key()`; update `handle_item_assign_category_key()` (Tab branch, init); update open-panel code |
-| `crates/agenda-tui/src/render/mod.rs` | Widen popup; two-pane layout; `render_view_assign_list()`; preview indicators in category rows; dynamic header; footer hints |
+| `crates/aglet-core/src/workspace.rs` | Expose `section_insert_targets`, `section_remove_targets`; add `SectionMovePreview` and `preview_section_move` |
+| `crates/aglet-tui/src/lib.rs` | Add `ItemAssignPane`, `ViewAssignRow`, `AssignmentPreview` types; new fields on `App` |
+| `crates/aglet-tui/src/ui_support.rs` | Add `build_view_assign_rows()` |
+| `crates/aglet-tui/src/app.rs` | Add `compute_assignment_preview()`, `item_in_section_counts()` |
+| `crates/aglet-tui/src/modes/board.rs` | Add `handle_item_assign_view_key()`; update `handle_item_assign_category_key()` (Tab branch, init); update open-panel code |
+| `crates/aglet-tui/src/render/mod.rs` | Widen popup; two-pane layout; `render_view_assign_list()`; preview indicators in category rows; dynamic header; footer hints |
 
-No changes to `agenda-core` data model, store, or query engine. No changes to
+No changes to `aglet-core` data model, store, or query engine. No changes to
 any other TUI mode.

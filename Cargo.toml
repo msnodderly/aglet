@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/agenda-core",
-    "crates/agenda-tui",
-    "crates/agenda-cli",
+    "crates/aglet-core",
+    "crates/aglet-tui",
+    "crates/aglet-cli",
 ]

@@ -3,7 +3,7 @@ title: NLSpec v0.6 Product Specification
 updated: 2026-04-02
 ---
 
-# Agenda Reborn — NLSpec v0.6
+# Aglet Reborn — NLSpec v0.6
 
 > A modern clone of Lotus Agenda (1988–1992), the free-form personal information manager
 > designed by Mitch Kapor, Ed Belove, and Jerry Kaplan.
@@ -40,10 +40,10 @@ changed item.
 
 ### 1.2 Why Every Clone Failed
 
-Chandler (2001–2009) was Kapor's own attempt to rebuild Agenda as open-source software.
+Chandler (2001–2009) was Kapor's own attempt to rebuild Aglet as open-source software.
 It burned through $8M+ over 7+ years and never shipped a usable 1.0. The failure modes:
 
-- **Feature creep**: tried to be Outlook/Exchange instead of Agenda
+- **Feature creep**: tried to be Outlook/Exchange instead of Aglet
 - **Over-engineering**: chose architectural purity over working software
 - **Loss of focus**: the core insight (schema-last, multifiling, views-as-interface) was
   diluted into a generic calendaring/email app
@@ -52,7 +52,7 @@ It burned through $8M+ over 7+ years and never shipped a usable 1.0. The failure
 
 ### 1.3 Design Principles for This Project
 
-These are non-negotiable constraints derived from what made Agenda great and what killed
+These are non-negotiable constraints derived from what made Aglet great and what killed
 its successors:
 
 1. **Schema-last**: The user types first. Structure is inferred or added after the fact.
@@ -73,11 +73,11 @@ its successors:
 
 ### 1.4 What Kapor Said About It
 
-> "The greatest thing about Agenda and the reason why it still has a cadre of followers
+> "The greatest thing about Aglet and the reason why it still has a cadre of followers
 > is also the one thing that hasn't been incorporated into recent PIMs: multifiling."
 >
 > "Today's PIMs are very Web-influenced and they have connectivity features, but they're
-> stuck in the old mindset. They're focused on managing contacts and calendars. Agenda
+> stuck in the old mindset. They're focused on managing contacts and calendars. Aglet
 > was all about managing ideas."
 >
 > "God, I wish there was a modern version of this."
@@ -585,7 +585,7 @@ documented here as design intent:
 - **Recordable macros** — user-recordable sequences of commands for repetitive operations.
 
 These are listed here (not in §6 Out of Scope) because they are part of the original
-Agenda design and will be needed to support the full range of "application builder"
+Aglet design and will be needed to support the full range of "application builder"
 use cases. They are deferred only because the declarative subset comes first.
 
 ### 2.8 Classification Settings (Modernized for LLM Era)
@@ -675,7 +675,7 @@ browsed and items can be restored from it even after application restart.
 
 The date parser extracts temporal expressions from item text and populates `when_date`.
 For recurring expressions, it also populates `recurrence`. Parsing is timezone-aware and
-uses the database timezone (default: system local timezone). This was one of Agenda's
+uses the database timezone (default: system local timezone). This was one of Aglet's
 most polished features. The parser must handle:
 
 **Absolute dates:**
@@ -1202,7 +1202,7 @@ should be a child of "Engineering".
 
 **Satisfaction criteria:** Reorganizing the category tree is a safe operation. The user
 can refactor their organizational structure as their understanding evolves — exactly as
-Agenda intended.
+Aglet intended.
 
 ---
 
@@ -1221,7 +1221,7 @@ lines. They import it.
 
 **Satisfaction criteria:** Bulk import of messy, unstructured text is a first-class
 operation. The system handles the "I have a pile of notes and I want to make sense of
-them" use case gracefully. This was Agenda's secret weapon for research and reference
+them" use case gracefully. This was Aglet's secret weapon for research and reference
 material.
 
 ---
@@ -1299,7 +1299,7 @@ capture.
 
 **Expected behavior:**
 
-1. A CLI command (e.g., `agenda add "Call Fred about the deploy schedule Friday"`)
+1. A CLI command (e.g., `aglet add "Call Fred about the deploy schedule Friday"`)
    creates an item in the database without launching the full TUI.
 2. The date parser and classification engine run against the new item.
 3. Next time the user opens the TUI, the item is there, properly assigned.
@@ -1310,7 +1310,7 @@ context-switch into the full application to record a thought. This supports the 
 
 ---
 
-### Scenario 20: The "Agenda Moment" — Emergence of Structure
+### Scenario 20: The "Aglet Moment" — Emergence of Structure
 
 **Context:** A new user has been using the system for two weeks. They started by just
 typing items — no categories, no views, no rules. Just raw text capture.
@@ -1464,8 +1464,8 @@ Chandler-style scope creep.
 
 - Kapor, M., Belove, E., Kaplan, J. (1990). "AGENDA: A Personal Information Manager."
   *Communications of the ACM*, 33(7). — The foundational paper describing the data model.
-- Fallows, J. (1992). "Agenda" (draft). *The Atlantic Monthly*. — The best plain-English
-  description of what Agenda does and why it matters.
+- Fallows, J. (1992). "Aglet" (draft). *The Atlantic Monthly*. — The best plain-English
+  description of what Aglet does and why it matters.
 - Ormandy, T. (2020). "Lotus Agenda." — Modern hands-on exploration with working examples.
   https://lock.cmpxchg8b.com/lotusagenda.html
 - Rosenberg, S. (2007). *Dreaming in Code*. — Documents Chandler's failure. Required

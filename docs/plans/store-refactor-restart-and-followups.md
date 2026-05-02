@@ -32,7 +32,7 @@ PR #48 explicitly stated it implemented items **A, C, D, E, F** from `docs/plans
   - `RESERVED_CATEGORY_NAME_ENTRY`
   - `RESERVED_CATEGORY_NAME_DONE`
   - `RESERVED_CATEGORY_NAMES`
-- Replaced bare `"When"`, `"Entry"`, `"Done"` references in `agenda.rs` and `store.rs`.
+- Replaced bare `"When"`, `"Entry"`, `"Done"` references in `workspace.rs` and `store.rs`.
 
 ### C. JSON serde error handling conventions
 
@@ -55,7 +55,7 @@ PR #48 explicitly stated it implemented items **A, C, D, E, F** from `docs/plans
 
 ### E. Dead-code suppression documentation
 
-- Added explanatory comments to each `#[allow(dead_code)]` usage in `agenda-tui`.
+- Added explanatory comments to each `#[allow(dead_code)]` usage in `aglet-tui`.
 
 ### F. Origin semantics constants
 
@@ -75,7 +75,7 @@ As of `origin/main` commit `af080a3`:
 4. **C is partially complete** on `main`:
    - many `serde_json::to_string` paths use `map_err(...)` or `expect(...)`,
    - but some paths still use fallback forms (for example `board_display_mode` serialization fallback).
-5. **D is not merged**: `main` still has monolithic `crates/agenda-core/src/store.rs`.
+5. **D is not merged**: `main` still has monolithic `crates/aglet-core/src/store.rs`.
 6. **B remains unimplemented** (ID-to-SQL conversion centralization from the original quality plan).
 
 ## Why We Should Restart Instead of Merging PR #48 Directly
@@ -112,14 +112,14 @@ The restart must preserve these existing `main` behaviors exactly:
 1. Branch from latest `origin/main` (new branch name under `codex/` prefix).
 2. Record baseline:
    - `cargo check --workspace`
-   - `cargo test -p agenda-core`
+   - `cargo test -p aglet-core`
 3. Freeze behavioral contract:
    - capture list of `pub fn` methods on `impl Store`,
    - capture migration test list and schema version expectations.
 
 ### Phase 1: Mechanical module split only
 
-1. Move `crates/agenda-core/src/store.rs` to `crates/agenda-core/src/store/mod.rs`.
+1. Move `crates/aglet-core/src/store.rs` to `crates/aglet-core/src/store/mod.rs`.
 2. Introduce child modules:
    - `items.rs`
    - `categories.rs`
@@ -187,7 +187,7 @@ These should be separate PRs to keep risk isolated:
 Minimum required checks for the decomposition PR:
 
 1. `cargo check --workspace`
-2. `cargo test -p agenda-core`
+2. `cargo test -p aglet-core`
 3. `cargo test --workspace` (preferred before merge)
 4. Migration test subset:
    - v5 item_links creation path

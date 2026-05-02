@@ -1,6 +1,6 @@
 # aglet
 
-Rust CLI/TUI for managing agenda items, categories, views, and item dependency links.
+Rust CLI/TUI for managing items, categories, views, and item dependency links.
 
 ## Quick Start
 

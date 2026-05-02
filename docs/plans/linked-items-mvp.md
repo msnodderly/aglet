@@ -24,9 +24,9 @@ Out of scope for this MVP:
 
 This plan is designed for the current aglet architecture:
 
-- storage in `crates/agenda-core/src/store.rs`
-- behavior validation in `crates/agenda-core/src/agenda.rs`
-- CLI surfaces in `crates/agenda-cli/src/main.rs`
+- storage in `crates/aglet-core/src/store.rs`
+- behavior validation in `crates/aglet-core/src/workspace.rs`
+- CLI surfaces in `crates/aglet-cli/src/main.rs`
 - TUI read-only display first, editing later
 
 ## Codebase Sync Notes (2026-02-26)
@@ -37,12 +37,12 @@ current architecture.
 
 Important updates for implementation on the current branch:
 
-- Workspace paths should use `crates/...` (not `agenda-core/...` at repo root).
-- `crates/agenda-core/src/store.rs` already has `SCHEMA_VERSION = 5`.
+- Workspace paths should use `crates/...` (not `aglet-core/...` at repo root).
+- `crates/aglet-core/src/store.rs` already has `SCHEMA_VERSION = 5`.
   Linked-items schema work must target **v6** (or later if more migrations land first).
 - `ItemLinkKind`, `ItemLink`, and `ItemLinksForItem` are already present in
-  `crates/agenda-core/src/model.rs` with serde-name tests.
-- Linked-items storage, Agenda semantics, CLI commands, CLI `show` rendering,
+  `crates/aglet-core/src/model.rs` with serde-name tests.
+- Linked-items storage, Aglet semantics, CLI commands, CLI `show` rendering,
   and TUI read-only preview display are implemented on this branch.
 - TUI link editing, view-level mark/batch linking UX, dependency row markers,
   and dependency-tree browsing are not implemented yet.
@@ -96,7 +96,7 @@ Important updates for implementation on the current branch:
 | `A blocks B` | inverse hard prerequisite | `depends-on` | store as `B -> A` |
 | `A related B` | soft association | `related` | normalized pair only |
 
-## Data Model Additions (`crates/agenda-core/src/model.rs`)
+## Data Model Additions (`crates/aglet-core/src/model.rs`)
 
 Add explicit link types to the domain model. Do not embed links into `Item` yet for MVP; keep link loading/querying explicit through `Store` to minimize churn.
 
@@ -135,7 +135,7 @@ pub struct ItemLinksForItem {
 }
 ```
 
-## Exact MVP SQLite Schema (`crates/agenda-core/src/store.rs`)
+## Exact MVP SQLite Schema (`crates/aglet-core/src/store.rs`)
 
 ### `SCHEMA_VERSION`
 
@@ -214,7 +214,7 @@ fn apply_migrations(&self, from_version: i32) -> Result<()> {
 }
 ```
 
-## Store Layer Design (`crates/agenda-core/src/store.rs`)
+## Store Layer Design (`crates/aglet-core/src/store.rs`)
 
 Keep `Store` focused on persistence and retrieval; do not put cycle detection here.
 
@@ -250,14 +250,14 @@ impl Store {
     /// Immediate related items (symmetric query over normalized `related` rows).
     pub fn list_related_ids_for_item(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
 
-    /// Optional convenience for `agenda show` / TUI panels.
+    /// Optional convenience for `aglet show` / TUI panels.
     pub fn list_item_links_for_item(&self, item_id: ItemId) -> Result<Vec<ItemLink>>;
 }
 ```
 
 ### Store implementation notes
 
-- `create_item_link` should fail with FK error if item IDs do not exist (Agenda will pre-validate for nicer errors).
+- `create_item_link` should fail with FK error if item IDs do not exist (Aglet will pre-validate for nicer errors).
 - `delete_item_link` should be idempotent (`DELETE ...` and return `Ok(())` even if absent), matching assignment removal style.
 - `item_link_exists` is useful to avoid duplicate insert errors and produce clean status messages in batch linking.
 
@@ -300,7 +300,7 @@ let neighbor_id = if row.item_id == item_id {
 };
 ```
 
-## Agenda Layer Design (`crates/agenda-core/src/agenda.rs`)
+## Aglet Layer Design (`crates/aglet-core/src/workspace.rs`)
 
 Put all semantic rules here:
 
@@ -310,7 +310,7 @@ Put all semantic rules here:
 - `depends-on` cycle detection
 - batch linking support for future TUI multi-marking
 
-### Exact MVP Agenda API signatures (as proposed, now concretized)
+### Exact MVP Aglet API signatures (as proposed, now concretized)
 
 ```rust
 use crate::error::Result;
@@ -322,7 +322,7 @@ pub struct LinkItemsResult {
     pub skipped_existing: usize,
 }
 
-impl<'a> Agenda<'a> {
+impl<'a> Workspace<'a> {
     pub fn link_items_depends_on(
         &self,
         dependent_id: ItemId,
@@ -371,7 +371,7 @@ impl<'a> Agenda<'a> {
 ### Optional read APIs (Lotus-style utilities support)
 
 ```rust
-impl<'a> Agenda<'a> {
+impl<'a> Workspace<'a> {
     pub fn immediate_prereq_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
     pub fn immediate_dependent_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
     pub fn immediate_related_ids(&self, item_id: ItemId) -> Result<Vec<ItemId>>;
@@ -384,7 +384,7 @@ impl<'a> Agenda<'a> {
 }
 ```
 
-### Canonicalization helpers (Agenda private)
+### Canonicalization helpers (Aglet private)
 
 ```rust
 fn normalize_related_pair(a: ItemId, b: ItemId) -> (ItemId, ItemId) {
@@ -423,7 +423,7 @@ fn ensure_depends_on_no_cycle(
     use std::collections::HashSet;
 
     if dependent_id == dependency_id {
-        return Err(AgendaError::InvalidOperation {
+        return Err(AgletError::InvalidOperation {
             message: "item cannot depend on itself".to_string(),
         });
     }
@@ -436,7 +436,7 @@ fn ensure_depends_on_no_cycle(
             continue;
         }
         if current == dependent_id {
-            return Err(AgendaError::InvalidOperation {
+            return Err(AgletError::InvalidOperation {
                 message: format!(
                     "adding dependency would create a cycle: {} depends-on ... depends-on {}",
                     dependency_id, dependent_id
@@ -450,7 +450,7 @@ fn ensure_depends_on_no_cycle(
 }
 ```
 
-## CLI Implementation Plan (`crates/agenda-cli/src/main.rs`)
+## CLI Implementation Plan (`crates/aglet-cli/src/main.rs`)
 
 ### Phase 1 (MVP CLI)
 
@@ -479,12 +479,12 @@ enum LinkCommand {
 
 Command behavior:
 
-- `depends-on` calls `agenda.link_items_depends_on(...)`
-- `blocks` calls `agenda.link_items_blocks(...)` (inverts args internally)
-- `related` calls `agenda.link_items_related(...)`
+- `depends-on` calls `workspace.link_items_depends_on(...)`
+- `blocks` calls `workspace.link_items_blocks(...)` (inverts args internally)
+- `related` calls `workspace.link_items_related(...)`
 - unlink variants mirror the same semantics
 
-### Extend `agenda show`
+### Extend `aglet show`
 
 Add link sections after assignments:
 
@@ -511,10 +511,10 @@ Implementation approach:
 
 Add traversal commands after MVP:
 
-- `agenda link prereqs <ITEM_ID> --all-levels`
-- `agenda link depends <ITEM_ID> --all-levels`
-- `agenda link prereqs --every-item`
-- `agenda link depends --every-item`
+- `aglet link prereqs <ITEM_ID> --all-levels`
+- `aglet link depends <ITEM_ID> --all-levels`
+- `aglet link prereqs --every-item`
+- `aglet link depends --every-item`
 
 These map directly to Lotus Agenda “Show Prereqs / Show Depends” menus.
 
@@ -538,7 +538,7 @@ Design implication for Aglet:
 - modernize the UX with a richer wizard/picker + explicit preview
 - keep dependency browsing (tree/chain viewing) separate from link editing
 
-## TUI Plan (`crates/agenda-tui`)
+## TUI Plan (`crates/aglet-tui`)
 
 ### Phase 1 (read-only)
 
@@ -685,7 +685,7 @@ Add view-level link editing workflow and item-edit-panel convenience actions:
 ### Phase 3 (Lotus-style multi-item marking)
 
 This is implied by “make current item dependent on marked item(s)” and should be
-built on top of the batch API already in `Agenda`, reusing the same Link Wizard.
+built on top of the batch API already in `Aglet`, reusing the same Link Wizard.
 
 This phase is intentionally deferred until after single-item wizard stabilization
 and relationship-aware filtering/readiness work.
@@ -779,17 +779,17 @@ Follow-up (recommended):
 
 ## Testing Plan
 
-### `crates/agenda-core/src/store.rs`
+### `crates/aglet-core/src/store.rs`
 
 - schema init creates `item_links`
 - migration from v4 adds `item_links`
 - create/delete `depends-on`
 - create/delete `related`
-- `related` normalization check enforced (via Agenda + DB CHECK)
+- `related` normalization check enforced (via Aglet + DB CHECK)
 - cascade delete removes links when item deleted
 - inbound/outbound/symmetric query helpers return correct IDs
 
-### `crates/agenda-core/src/agenda.rs`
+### `crates/aglet-core/src/workspace.rs`
 
 - rejects self `depends-on`
 - rejects self `related`
@@ -799,33 +799,33 @@ Follow-up (recommended):
 - `related` insert is idempotent via normalized pair + exists check
 - `link_items_depends_on_many` reports created/skipped counts correctly
 
-### `crates/agenda-cli/src/main.rs`
+### `crates/aglet-cli/src/main.rs`
 
 - parse/dispatch `link` subcommands
-- `agenda show` prints prereqs/dependents/related sections
+- `aglet show` prints prereqs/dependents/related sections
 - `blocks` and `depends-on` produce same stored edge semantics
 
-### `crates/agenda-tui` (Phase 1)
+### `crates/aglet-tui` (Phase 1)
 
 - preview summary renders link lines for selected item
 - no regressions to existing category/provenance panels
 
 ## Implementation Order (Recommended)
 
-1. `agenda-core/model.rs`
+1. `aglet-core/model.rs`
    - add `ItemLinkKind` + `ItemLink`
-2. `agenda-core/store.rs`
+2. `aglet-core/store.rs`
    - schema v5 + migration
    - persistence/query helpers
-3. `agenda-core/agenda.rs`
+3. `aglet-core/workspace.rs`
    - link/unlink APIs
    - normalization + cycle detection
    - batch depends-on helper
-4. `agenda-core` tests
-5. `agenda-cli`
+4. `aglet-core` tests
+5. `aglet-cli`
    - `link` subcommands
    - `show` output enhancements
-6. `agenda-tui` Phase 1
+6. `aglet-tui` Phase 1
    - read-only preview display
 7. Follow-up issues
    - transitive CLI commands (Lotus utilities)
@@ -858,7 +858,7 @@ impl ItemLinkKind {
 
 Resolved so far:
 
-- `agenda show` should display **one-level** links only in MVP (no transitive expansion)
+- `aglet show` should display **one-level** links only in MVP (no transitive expansion)
 - display layers should sort rendered neighbors by **item text** for readability
 - CLI batch syntax can be deferred; batch linking should be handled by future TUI
   multi-marking + Link Wizard batch mode
@@ -880,11 +880,11 @@ This checklist is the execution plan broken into concrete tasks. Phases are orde
 ### Phase 0: Pre-Implementation Decisions and Task Breakdown
 
 - [x] Confirm MVP command naming in CLI:
-  - `agenda link depends-on`
-  - `agenda link blocks`
-  - `agenda link related`
-- [x] Confirm whether unlink commands should be nested under `agenda link` (recommended) or split top-level.
-- [x] Confirm `agenda show` scope is immediate links only (one-level) for MVP.
+  - `aglet link depends-on`
+  - `aglet link blocks`
+  - `aglet link related`
+- [x] Confirm whether unlink commands should be nested under `aglet link` (recommended) or split top-level.
+- [x] Confirm `aglet show` scope is immediate links only (one-level) for MVP.
 - [x] Confirm `related` rendering sort order (recommended: by item text in display layer).
 - [ ] Decide whether `metadata_json` ships in MVP schema now (recommended yes, unused initially).
 - [ ] Decide whether `Store::list_item_links_for_item` is required in MVP or deferred in favor of dedicated per-kind query methods.
@@ -897,13 +897,13 @@ This checklist is the execution plan broken into concrete tasks. Phases are orde
 - [x] Prioritize relationship-aware filtering follow-up (`Ready` / not blocked) over batch mode polish.
 - [ ] Convert this plan into tracked implementation tasks (feature requests / issues) with explicit dependencies:
   - core schema/store
-  - agenda validation + traversal
+  - workspace validation + traversal
   - CLI commands
   - CLI show output
   - TUI read-only display
   - tests + docs follow-up
 
-### Phase 1: Domain Model Additions (`crates/agenda-core/src/model.rs`)
+### Phase 1: Domain Model Additions (`crates/aglet-core/src/model.rs`)
 
 - [x] Add `ItemLinkKind` enum with serde names:
   - `depends-on`
@@ -923,10 +923,10 @@ This checklist is the execution plan broken into concrete tasks. Phases are orde
 
 Phase 1 exit criteria:
 
-- [x] New link types compile in `agenda-core`.
+- [x] New link types compile in `aglet-core`.
 - [x] Serde names for `depends-on` / `related` are explicit and stable.
 
-### Phase 2: SQLite Schema and Migration (`crates/agenda-core/src/store.rs`)
+### Phase 2: SQLite Schema and Migration (`crates/aglet-core/src/store.rs`)
 
 - [x] Bump `SCHEMA_VERSION` from `5` to `6` (or next available version if drifted again).
 - [x] Add `item_links` table to `SCHEMA_SQL`.
@@ -953,7 +953,7 @@ Phase 2 exit criteria:
 - [x] Fresh and upgraded DBs have `item_links`.
 - [x] Existing tests still pass around init/migration behavior.
 
-### Phase 3: Store Persistence + Query APIs (`crates/agenda-core/src/store.rs`)
+### Phase 3: Store Persistence + Query APIs (`crates/aglet-core/src/store.rs`)
 
 #### 3A. Helpers and Row Parsing
 
@@ -969,7 +969,7 @@ Phase 2 exit criteria:
 - [x] Implement `create_item_link(&self, link: &ItemLink) -> Result<()>`.
 - [x] Implement `delete_item_link(...) -> Result<()>` as idempotent delete.
 - [x] Implement `item_link_exists(...) -> Result<bool>`.
-- [x] Confirm FK behavior is acceptable for non-existent items (Agenda will pre-validate but Store can still return storage error).
+- [x] Confirm FK behavior is acceptable for non-existent items (Aglet will pre-validate but Store can still return storage error).
 
 #### 3C. Read APIs (Immediate Neighbors)
 
@@ -996,7 +996,7 @@ Phase 3 exit criteria:
 - [x] Store APIs persist and retrieve both link kinds correctly.
 - [x] Symmetric `related` behavior works via single normalized row.
 
-### Phase 4: Agenda Semantic APIs + Validation (`crates/agenda-core/src/agenda.rs`)
+### Phase 4: Aglet Semantic APIs + Validation (`crates/aglet-core/src/workspace.rs`)
 
 #### 4A. Public APIs
 
@@ -1043,7 +1043,7 @@ Phase 3 exit criteria:
   - `list_items_with_dependents`
 - [ ] Decide whether these ship in MVP CLI/TUI or remain internal-only until follow-up commands.
 
-#### 4E. Agenda Tests
+#### 4E. Aglet Tests
 
 - [x] Add test: `depends-on` rejects self-link.
 - [x] Add test: `related` rejects self-link.
@@ -1058,10 +1058,10 @@ Phase 3 exit criteria:
 
 Phase 4 exit criteria:
 
-- [x] Agenda enforces all semantic invariants.
+- [x] Aglet enforces all semantic invariants.
 - [x] `blocks` and `depends-on` are equivalent user vocabularies over one stored representation.
 
-### Phase 5: CLI Link Commands (`crates/agenda-cli/src/main.rs`)
+### Phase 5: CLI Link Commands (`crates/aglet-cli/src/main.rs`)
 
 #### 5A. Command Definitions and Dispatch
 
@@ -1083,7 +1083,7 @@ Phase 4 exit criteria:
   - silent success on existing link
   - explicit "already exists"
   - count-based output
-- [x] Map Agenda errors to user-friendly CLI messages (especially cycle/self-link).
+- [x] Map Aglet errors to user-friendly CLI messages (especially cycle/self-link).
 
 #### 5C. CLI Tests
 
@@ -1100,7 +1100,7 @@ Phase 5 exit criteria:
 
 - [x] CLI can create and remove all MVP link types with both vocabularies.
 
-### Phase 6: CLI `show` Enhancements (`crates/agenda-cli/src/main.rs`)
+### Phase 6: CLI `show` Enhancements (`crates/aglet-cli/src/main.rs`)
 
 #### 6A. Read and Render Immediate Links
 
@@ -1121,14 +1121,14 @@ Phase 5 exit criteria:
 
 #### 6C. CLI Tests / Manual Checks
 
-- [x] Add tests (if practical) or documented manual checks for `agenda show` link sections.
+- [x] Add tests (if practical) or documented manual checks for `aglet show` link sections.
 - [x] Manual check one-level semantics:
   - only immediate neighbors shown
   - no transitive chain expansion yet
 
 Phase 6 exit criteria:
 
-- [x] `agenda show` presents link information clearly without regressions.
+- [x] `aglet show` presents link information clearly without regressions.
 
 ### Phase 7: TUI Phase 1 (Read-Only Link Display)
 
@@ -1187,12 +1187,12 @@ Phase 8 exit criteria:
 
 #### 9A. Lotus-Style CLI Traversal Utilities
 
-- [ ] Add `agenda link prereqs <ITEM_ID>` (One Level default).
-- [ ] Add `agenda link prereqs <ITEM_ID> --all-levels`.
-- [ ] Add `agenda link depends <ITEM_ID>` (One Level default).
-- [ ] Add `agenda link depends <ITEM_ID> --all-levels`.
-- [ ] Add `agenda link prereqs --every-item`.
-- [ ] Add `agenda link depends --every-item`.
+- [ ] Add `aglet link prereqs <ITEM_ID>` (One Level default).
+- [ ] Add `aglet link prereqs <ITEM_ID> --all-levels`.
+- [ ] Add `aglet link depends <ITEM_ID>` (One Level default).
+- [ ] Add `aglet link depends <ITEM_ID> --all-levels`.
+- [ ] Add `aglet link prereqs --every-item`.
+- [ ] Add `aglet link depends --every-item`.
 - [ ] Add output formatting for chain/tree display.
 
 #### 9B. TUI Editing for Links
@@ -1224,7 +1224,7 @@ Deferred follow-up phase (do not block current single-item linking/readiness wor
 - [ ] Add mark/unmark current item keybinding(s).
 - [ ] Add clear-marks command.
 - [ ] Make `b` / `B` open Link Wizard in batch mode when marks exist.
-- [ ] Add “blocked by” / “depends on” batch actions using `Agenda::link_items_depends_on_many` (or equivalent batch APIs).
+- [ ] Add “blocked by” / “depends on” batch actions using `Workspace::link_items_depends_on_many` (or equivalent batch APIs).
 - [ ] Add batch `clear dependencies` action.
 - [ ] Add UI affordance showing marked count and/or mark indicators.
 - [ ] Add tests for marks surviving refresh/view changes.
@@ -1281,6 +1281,6 @@ When implementation starts, track each phase as:
 Recommended milestone checkpoints:
 
 - [x] Milestone A: Core schema + Store APIs + tests
-- [x] Milestone B: Agenda semantics + cycle detection + tests
+- [x] Milestone B: Aglet semantics + cycle detection + tests
 - [x] Milestone C: CLI commands + `show` output
 - [x] Milestone D: TUI read-only preview (optional for MVP cut if time-boxed)

@@ -9,7 +9,7 @@ shipped: 2026-04-01
 
 ## Summary
 
-Unify dependency-blocked evaluation in `agenda-core` so CLI and TUI both use
+Unify dependency-blocked evaluation in `aglet-core` so CLI and TUI both use
 the same rules for:
 
 - single-item blocked checks
@@ -24,9 +24,9 @@ that derived blocked state as one input.
 ## Implementation Checklist
 
 - [x] Confirm and document the current duplication points in core, CLI, and TUI
-- [x] Add shared batch dependency-state helpers in `crates/agenda-core/src/workflow.rs`
+- [x] Add shared batch dependency-state helpers in `crates/aglet-core/src/workflow.rs`
 - [x] Keep `claimability_for_item(...)` layered on top of the shared dependency-state helpers
-- [x] Add/expand `agenda-core` tests for:
+- [x] Add/expand `aglet-core` tests for:
   - [x] unresolved dependency means blocked
   - [x] done dependency means not blocked
   - [x] batch blocked-id computation matches single-item checks
@@ -39,7 +39,7 @@ that derived blocked state as one input.
   - [x] ready queue excludes blocked items
   - [x] hide-dependent-items excludes blocked items
   - [x] single-item blocked detection flips when dependency becomes done
-- [x] Run targeted test suites for `agenda-core`, `agenda-cli`, and `agenda-tui`
+- [x] Run targeted test suites for `aglet-core`, `aglet-cli`, and `aglet-tui`
 - [x] Update this checklist to fully complete with any implementation notes
 
 ## Detailed Implementation Notes
@@ -61,7 +61,7 @@ call the shared blocked helper rather than open-coding dependency traversal.
 ### CLI
 
 Replace local dependency-state implementations in
-`crates/agenda-cli/src/main.rs` with calls into `agenda_core::workflow`.
+`crates/aglet-cli/src/main.rs` with calls into `aglet_core::workflow`.
 
 Impacted surfaces:
 
@@ -88,9 +88,9 @@ CLI and workflow code.
 At minimum, run:
 
 ```bash
-cargo test -p agenda-core workflow
-cargo test -p agenda-cli dependency_state_filter
-cargo test -p agenda-tui is_item_blocked_returns_true_when_dependency_undone
+cargo test -p aglet-core workflow
+cargo test -p aglet-cli dependency_state_filter
+cargo test -p aglet-tui is_item_blocked_returns_true_when_dependency_undone
 ```
 
 If targeted test names drift during refactor, run the nearest equivalent focused
@@ -99,19 +99,19 @@ tests and record the exact commands used below.
 Executed verification commands:
 
 ```bash
-cargo test -p agenda-core workflow
-cargo test -p agenda-cli dependency_state_filter
-cargo test -p agenda-cli blocked_item_ids_marks_open_dependency_as_blocked
-cargo test -p agenda-tui is_item_blocked_returns_true_when_dependency_undone
-cargo test -p agenda-tui view_picker_enter_switches_to_ready_queue_and_filters_blocked_items
-cargo test -p agenda-tui hide_dependent_items_view_setting_filters_blocked_items_from_slots
+cargo test -p aglet-core workflow
+cargo test -p aglet-cli dependency_state_filter
+cargo test -p aglet-cli blocked_item_ids_marks_open_dependency_as_blocked
+cargo test -p aglet-tui is_item_blocked_returns_true_when_dependency_undone
+cargo test -p aglet-tui view_picker_enter_switches_to_ready_queue_and_filters_blocked_items
+cargo test -p aglet-tui hide_dependent_items_view_setting_filters_blocked_items_from_slots
 ```
 
 ## Progress Notes
 
 - Initial draft created on 2026-03-31.
 - Core now owns batch blocked-id computation and dependency-state filtering.
-- CLI list/search/view paths were switched from local helpers to `agenda_core::workflow`.
+- CLI list/search/view paths were switched from local helpers to `aglet_core::workflow`.
 - TUI now caches core-computed blocked item ids during `App::refresh()`.
 - Focused verification passed in all three crates after one test adjustment to
   avoid `toggle_item_done()`'s actionable-category precondition in a core-only

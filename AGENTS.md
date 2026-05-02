@@ -176,9 +176,9 @@ Practical implications:
 - If a proposal doc disagrees with current behavior, update the doc before
   using it as implementation guidance.
 
-## `Agenda::unassign_item_manual` Reprocesses After Removal (Updated)
+## `Workspace::unassign_item_manual` Reprocesses After Removal (Updated)
 
-`Agenda::unassign_item_manual(...)` now mirrors other manual assignment flows:
+`Workspace::unassign_item_manual(...)` now mirrors other manual assignment flows:
 after validating descendant constraints and removing the explicit assignment
 row, it immediately reprocesses the item.
 
@@ -201,30 +201,30 @@ Practical implications:
 - If you add an action to `Escalated`, existing items already in `Escalated`
   will not immediately gain/remove the target categories just because the
   action was added.
-- Do not write tests that assume `agenda.update_category(...)` or action-authoring
+- Do not write tests that assume `workspace.update_category(...)` or action-authoring
   commands will backfill action effects across historical assignments unless we
   intentionally change that semantic later.
 
-## CLI And TUI Search Semantics Are Centralized In `agenda-core` (Updated)
+## CLI And TUI Search Semantics Are Centralized In `aglet-core` (Updated)
 
 CLI `aglet search <query>` and the TUI per-lane `/` search now both route
-through `agenda_core::query::matches_text_search(...)`.
+through `aglet_core::query::matches_text_search(...)`.
 
 Practical implications:
 - Do not reintroduce TUI-local search helpers for text/note/UUID/category-name
-  matching; shared semantics live in `agenda-core`
-- If search behavior changes, update `agenda-core` matcher tests first and then
-  re-run both `agenda-core` and `agenda-tui` search-focused tests
+  matching; shared semantics live in `aglet-core`
+- If search behavior changes, update `aglet-core` matcher tests first and then
+  re-run both `aglet-core` and `aglet-tui` search-focused tests
 
 ## `view_edit2.rs` Was An Incremental Bridge, Not A Stable Boundary (Surprising)
 
-The former `crates/agenda-tui/src/modes/view_edit2.rs` existed as an
+The former `crates/aglet-tui/src/modes/view_edit2.rs` existed as an
 incremental bridge during the unified ViewEdit rollout, not because cargo tests
 needed a split implementation.
 
 Practical implications:
 - Treat the view editor as one feature rooted at
-  `crates/agenda-tui/src/modes/view_edit/`
+  `crates/aglet-tui/src/modes/view_edit/`
 - Organize the code by responsibility (`picker`, `editor`, `inline`,
   `overlay`, `sections`, `details`, `state`), not by historical spillover
 - If you need to extend view editing, prefer the feature module directory over
@@ -350,7 +350,7 @@ Practical implications:
 
 ## Edit Panel Category Checks Include Derived Assignments (Current)
 
-In `agenda-tui` `Mode::InputPanel` edit-item flow, category checkboxes are
+In `aglet-tui` `Mode::InputPanel` edit-item flow, category checkboxes are
 initialized from all current assignment keys, including derived sources
 (`AutoMatch`, `Subsumption`), so Edit Item matches Assign/Column picker state.
 
@@ -508,7 +508,7 @@ Practical implications:
   `when: -` in CLI/TUI because `Store::row_to_item` currently parses
   `"%Y-%m-%d %H:%M:%S"` only.
 - Direct SQLite updates to `items.when_date` do **not** create/update the
-  reserved `When` assignment or provenance rows; use agenda/CLI app logic if
+  reserved `When` assignment or provenance rows; use workspace/CLI app logic if
   you need the item to carry a synced `When | Manual | ...` assignment in
   addition to the datetime value itself.
 
@@ -783,7 +783,7 @@ Practical implications:
 ## TUI Auto-Refresh Interval Is DB-Backed In `app_settings` (Surprising)
 
 TUI auto-refresh mode (`off` / `1s` / `5s`) now persists per database in
-`agenda-core` table `app_settings` under key `tui.auto_refresh_interval`.
+`aglet-core` table `app_settings` under key `tui.auto_refresh_interval`.
 
 Practical implications:
 - `App::run` must load this setting at startup; do not assume `Off` default is
@@ -844,7 +844,7 @@ section with empty criteria for `insert_item_in_section`.
 
 Practical implications:
 - Generated-slot inserts must preserve the backing section criteria so
-  `Agenda::insert_item_in_section` can apply section/view `And` criteria
+  `Workspace::insert_item_in_section` can apply section/view `And` criteria
   assignments.
 - Regression example: a `Ready` section with `show_children=true` and no child
   categories renders `Ready (Other)` as a generated slot; adding there must
@@ -875,7 +875,7 @@ Practical implications:
 ## Normal Mode Preview Hint Must Be In Footer (Discoverability)
 
 `p` already toggles item preview in `Mode::Normal`, but discoverability depends
-on `footer_hint_text()` in `crates/agenda-tui/src/render/mod.rs`.
+on `footer_hint_text()` in `crates/aglet-tui/src/render/mod.rs`.
 
 Practical implications:
 - Keep `p:preview` in both normal footer variants:

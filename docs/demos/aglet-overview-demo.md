@@ -3,7 +3,7 @@ title: Aglet Overview Demo
 updated: 2026-04-19
 ---
 
-# Aglet: Agenda Reborn — Project Overview Demo
+# Aglet: Aglet Reborn — Project Overview Demo
 
 *2026-03-18T06:37:02Z by Showboat 0.6.1*
 <!-- showboat-id: d7a8c06e-bf80-4e40-b8d4-571aab1e4e94 -->
@@ -18,20 +18,20 @@ echo "=== Workspace Crates ===" && cargo metadata --no-deps --format-version 1 2
 
 ```output
 === Workspace Crates ===
-  agenda-core v0.1.0
-  agenda-tui v0.1.0
-  agenda-cli v0.1.0
+  aglet-core v0.1.0
+  aglet-tui v0.1.0
+  aglet-cli v0.1.0
 ```
 
 ```bash
-echo "=== Source Lines by Crate ===" && for crate in agenda-core agenda-tui agenda-cli; do lines=$(find crates/$crate/src -name "*.rs" -exec cat {} + | wc -l | tr -d " "); echo "  $crate: $lines lines"; done
+echo "=== Source Lines by Crate ===" && for crate in aglet-core aglet-tui aglet-cli; do lines=$(find crates/$crate/src -name "*.rs" -exec cat {} + | wc -l | tr -d " "); echo "  $crate: $lines lines"; done
 ```
 
 ```output
 === Source Lines by Crate ===
-  agenda-core: 11843 lines
-  agenda-tui: 36135 lines
-  agenda-cli: 5521 lines
+  aglet-core: 11843 lines
+  aglet-tui: 36135 lines
+  aglet-cli: 5521 lines
 ```
 
 The TUI is the bulk of the codebase (~66% of lines) — it implements 17 distinct modes, a shared TextBuffer for all text editing, an InputPanel abstraction for add/edit flows, per-section filters, a category manager, a view editor, numeric column displays, and a kanban board view.

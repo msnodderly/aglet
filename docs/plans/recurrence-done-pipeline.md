@@ -13,7 +13,7 @@ Tracking issue: `95d70980-088d-4c5c-a09a-499a0d1be7aa`
 ## Summary
 
 Implement recurrence as part of the item completion pipeline, not as a generic
-category action. The core hook is `Agenda::mark_item_done(...)`: once an item is
+category action. The core hook is `Workspace::mark_item_done(...)`: once an item is
 completed, aglet should be able to generate the next instance and preserve
 clear sequencing for future post-done automation.
 

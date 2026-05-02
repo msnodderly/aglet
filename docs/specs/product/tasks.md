@@ -3,7 +3,7 @@ title: Backlog Tasks
 updated: 2026-03-21
 ---
 
-# Tasks: Agenda Reborn (Current Roadmap)
+# Tasks: Aglet Reborn (Current Roadmap)
 
 Date: 2026-02-17
 Input: `docs/specs/product/roadmap.md`

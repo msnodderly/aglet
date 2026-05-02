@@ -69,11 +69,11 @@ Update the Normal-mode footer hints to include `F:summary`.
 
 | File | Change |
 |------|--------|
-| `crates/agenda-core/src/model.rs` | `SummaryFn::next()` and `label()` methods |
-| `crates/agenda-tui/src/modes/board.rs` | `F` keybinding handler |
-| `crates/agenda-tui/src/render/mod.rs` | Footer hint for `F` |
+| `crates/aglet-core/src/model.rs` | `SummaryFn::next()` and `label()` methods |
+| `crates/aglet-tui/src/modes/board.rs` | `F` keybinding handler |
+| `crates/aglet-tui/src/render/mod.rs` | Footer hint for `F` |
 | `crates/aglet/src/main.rs` | `view set-summary` subcommand |
-| `crates/agenda-tui/src/lib.rs` | TUI tests |
+| `crates/aglet-tui/src/lib.rs` | TUI tests |
 
 ## Out of scope
 

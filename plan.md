@@ -71,7 +71,7 @@ For the first usable slice:
 
 ### Ollama provider and prompt contract
 
-- Add an `OllamaProvider` in `agenda-core` using OpenAI-compatible chat
+- Add an `OllamaProvider` in `aglet-core` using OpenAI-compatible chat
   completions over blocking HTTP.
 - Use `mistral` as the default model.
 - Semantic category candidate pool:
@@ -134,7 +134,7 @@ For the first usable slice:
 - [x] Leave category-change semantic runs disabled in MVP.
 
 ### 3. Ollama provider implementation
-- [x] Add blocking HTTP client dependency to `agenda-core`.
+- [x] Add blocking HTTP client dependency to `aglet-core`.
 - [x] Add testable transport abstraction.
 - [x] Implement OpenAI-compatible request builder for Ollama.
 - [x] Implement strict JSON response parsing.
@@ -170,7 +170,7 @@ For the first usable slice:
 - [x] Config roundtrip test for new dual-mode config and Ollama settings.
 - [x] Backward-compat test for loading old `continuous_mode` configs.
 - [x] Store migration test for `enable_semantic_classification`.
-- [x] Agenda tests for all key combinations:
+- [x] Aglet tests for all key combinations:
   - literal `AutoApply`, semantic `Off`
   - literal `AutoApply`, semantic `SuggestReview`
   - literal `Off`, semantic `SuggestReview`
@@ -191,9 +191,9 @@ For the first usable slice:
 
 ## Test Plan
 
-- Unit tests in `agenda-core` for config compatibility, provider routing,
+- Unit tests in `aglet-core` for config compatibility, provider routing,
   semantic candidate filtering, and Ollama response parsing.
-- Agenda-level tests for combined literal + semantic mode behavior and
+- Aglet-level tests for combined literal + semantic mode behavior and
   suggestion persistence.
 - TUI tests for:
   - separate literal/semantic mode rows

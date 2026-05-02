@@ -9,7 +9,7 @@ shipped: 2026-03-21
 
 **Status:** Complete
 **Branch:** `claude/evaluate-jiff-library-M0vi2`
-**Scope:** Replace `chrono` with `jiff` across `agenda-core`, `agenda-cli`, and `agenda-tui`
+**Scope:** Replace `chrono` with `jiff` across `aglet-core`, `aglet-cli`, and `aglet-tui`
 
 ---
 
@@ -98,7 +98,7 @@ Confirm:
 Add jiff alongside chrono so the two can coexist during migration. Do not remove chrono yet.
 
 ```toml
-# crates/agenda-core/Cargo.toml
+# crates/aglet-core/Cargo.toml
 [dependencies]
 chrono  = { version = "0.4", features = ["serde"] }   # keep until migration complete
 jiff    = { version = "0.2", features = ["serde"] }
@@ -415,7 +415,7 @@ from all `Cargo.toml` files and verify tests pass.
 ## Implementation Checklist
 
 ### Phase 0: Spike
-- [x] Add `jiff = { version = "0.2", features = ["serde"] }` to `agenda-core/Cargo.toml` as dev-dependency
+- [x] Add `jiff = { version = "0.2", features = ["serde"] }` to `aglet-core/Cargo.toml` as dev-dependency
 - [x] Write spike test: `jiff::civil::DateTime` display produces `YYYY-MM-DDTHH:MM:SS`
 - [x] Write spike test: `jiff::civil::DateTime` parses ISO 8601 with `T` separator
 - [x] Write spike test: `jiff::Timestamp` round-trips via RFC 3339 (matches chrono `DateTime<Utc>`)
@@ -423,9 +423,9 @@ from all `Cargo.toml` files and verify tests pass.
 - [x] Write spike test: serde round-trip for `civil::DateTime` and `Timestamp`
 
 ### Phase 1: Add jiff dependency
-- [x] Add `jiff = { version = "0.2", features = ["serde"] }` to `agenda-core/Cargo.toml` (production dep)
-- [x] Add `jiff = "0.2"` to `agenda-cli/Cargo.toml`
-- [x] Add `jiff = "0.2"` to `agenda-tui/Cargo.toml`
+- [x] Add `jiff = { version = "0.2", features = ["serde"] }` to `aglet-core/Cargo.toml` (production dep)
+- [x] Add `jiff = "0.2"` to `aglet-cli/Cargo.toml`
+- [x] Add `jiff = "0.2"` to `aglet-tui/Cargo.toml`
 - [x] Verify clean compile with both chrono and jiff present
 
 ### Phase 2: Migrate `dates.rs`
@@ -476,18 +476,18 @@ from all `Cargo.toml` files and verify tests pass.
 - [x] Verify all existing query tests pass
 
 ### Phase 6: Migrate remaining files and remove chrono
-- [x] Migrate `agenda.rs`: `Utc::now()` → `Timestamp::now()`, update `NaiveDate`/`NaiveDateTime` refs, remove `Timelike` import
+- [x] Migrate `workspace.rs`: `Utc::now()` → `Timestamp::now()`, update `NaiveDate`/`NaiveDateTime` refs, remove `Timelike` import
 - [x] Migrate `engine.rs`: `Utc::now()` → `Timestamp::now()`
 - [x] Migrate `classification.rs`: update date type references (if file exists)
-- [x] Migrate `agenda-cli/src/main.rs`: `Local::now().date_naive()` → `jiff::Zoned::now().date()`, update parse helpers
-- [x] Migrate `agenda-tui/src/lib.rs`: same Local→Zoned pattern, update `Utc::now()` calls
-- [x] Migrate `agenda-tui/src/app.rs`: `Local::now().date_naive()` → `jiff::Zoned::now().date()`
-- [x] Migrate `agenda-tui/src/modes/board.rs`: update `parse_when_datetime_input`, `.format()` → `.strftime()`, Local/Utc calls
-- [x] Migrate `agenda-tui/src/modes/view_edit.rs`: Local→Zoned
-- [x] Migrate `agenda-tui/src/render/mod.rs`: Local→Zoned
-- [x] Migrate `agenda-tui/src/ui_support.rs`: update test fixtures
-- [x] Remove `chrono` from `agenda-core/Cargo.toml`
-- [x] Remove `chrono` from `agenda-cli/Cargo.toml`
-- [x] Remove `chrono` from `agenda-tui/Cargo.toml`
+- [x] Migrate `aglet-cli/src/main.rs`: `Local::now().date_naive()` → `jiff::Zoned::now().date()`, update parse helpers
+- [x] Migrate `aglet-tui/src/lib.rs`: same Local→Zoned pattern, update `Utc::now()` calls
+- [x] Migrate `aglet-tui/src/app.rs`: `Local::now().date_naive()` → `jiff::Zoned::now().date()`
+- [x] Migrate `aglet-tui/src/modes/board.rs`: update `parse_when_datetime_input`, `.format()` → `.strftime()`, Local/Utc calls
+- [x] Migrate `aglet-tui/src/modes/view_edit.rs`: Local→Zoned
+- [x] Migrate `aglet-tui/src/render/mod.rs`: Local→Zoned
+- [x] Migrate `aglet-tui/src/ui_support.rs`: update test fixtures
+- [x] Remove `chrono` from `aglet-core/Cargo.toml`
+- [x] Remove `chrono` from `aglet-cli/Cargo.toml`
+- [x] Remove `chrono` from `aglet-tui/Cargo.toml`
 - [x] Verify no remaining `use chrono` imports
 - [x] Full test suite green: `cargo test --workspace`
