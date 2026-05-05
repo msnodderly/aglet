@@ -640,7 +640,7 @@ fn enforce_mutual_exclusion(
 }
 ```
 
-## 8. The Integration Layer (`aglet-core/src/agenda.rs`)
+## 8. The Integration Layer (`aglet-core/src/aglet.rs`)
 
 `Aglet` is the synchronous API surface that wires together the Store, Classifier, and Engine. Every mutating operation goes through `Aglet` — it is the single entry point that ensures the engine runs after each change. Here is how item creation flows:
 
@@ -1195,7 +1195,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 - **`store.rs`** — CRUD for all entities, schema migrations, reserved category creation, deletion log, restore, hierarchy building.
 - **`engine.rs`** — fixed-point convergence, cycle detection (cap at 10 passes with savepoint rollback), action cascading, mutual exclusion, deferred removals, idempotent re-runs.
-- **`agenda.rs`** — end-to-end integration: item creation with auto-categorization, manual assignment with exclusive enforcement, done/not-done toggling, section insert/remove, view resolution with filters.
+- **`aglet.rs`** — end-to-end integration: item creation with auto-categorization, manual assignment with exclusive enforcement, done/not-done toggling, section insert/remove, view resolution with filters.
 - **`matcher.rs`** — word-boundary matching, case insensitivity, hashtag extraction.
 - **`dates.rs`** — all date formats, weekday disambiguation policies, compound time parsing, boundary conditions.
 - **`query.rs`** — query evaluation with AND/NOT/OR, WhenBucket resolution, view resolution with sections and show_children expansion.
@@ -1212,7 +1212,7 @@ Aglet is a carefully layered system:
 | **Classifier** | `matcher.rs` | Word-boundary substring matching, hashtag extraction |
 | **Date parser** | `dates.rs` | Natural language → NaiveDateTime |
 | **Rule engine** | `engine.rs` | Fixed-point auto-assignment, actions, mutual exclusion |
-| **Integration** | `agenda.rs` | Wires Store + Engine + Classifier, transaction boundary, linking |
+| **Integration** | `aglet.rs` | Wires Store + Engine + Classifier, transaction boundary, linking |
 | **Query resolution** | `query.rs` | WhenBuckets, view/section evaluation, show_children |
 | **CLI** | `main.rs` (cli) | Clap commands, text output, link management |
 | **TUI** | `lib.rs` + modules | Ratatui modal interface, board views, category manager, link wizard |

@@ -13,7 +13,7 @@ Profile conditions are fully implemented in the engine (`engine.rs`) and data mo
 Users currently cannot create or manage profile conditions through CLI or TUI — only through
 direct database manipulation. This plan adds the missing user-facing layer.
 
-The Beeswax/Aglet article states profile conditions are "identical in form to the view criteria."
+The Beeswax/Agenda article states profile conditions are "identical in form to the view criteria."
 The view criteria picker in `crates/aglet-tui/src/modes/view_edit/details.rs` already edits
 `Query` objects with AND/NOT/OR logic.
 We reuse this same pattern for category profile condition editing.

@@ -817,7 +817,7 @@ Follow-up (recommended):
 2. `aglet-core/store.rs`
    - schema v5 + migration
    - persistence/query helpers
-3. `aglet-core/agenda.rs`
+3. `aglet-core/aglet.rs`
    - link/unlink APIs
    - normalization + cycle detection
    - batch depends-on helper

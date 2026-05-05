@@ -104,7 +104,7 @@ shipped: 2026-04-02
 
   Conditional vs. Explicit Assignments: The Lifecycle
 
-  This is the most nuanced part of the Aglet classification UX:
+  This is the most nuanced part of the Agenda classification UX:
 
   Conditional assignments (marked *c in the assignment profile):
   - Created automatically by conditions (text match or profile match)
@@ -181,7 +181,7 @@ shipped: 2026-04-02
 
   The Natural Language Date Parser
 
-  The most visible auto-classification to new users was the When category. Aglet parsed English date expressions from item text:
+  The most visible auto-classification to new users was the When category. Agenda parsed English date expressions from item text:
 
   - Call Fred next Tuesday → When: next Tuesday
   - File taxes by April 15 → When: April 15

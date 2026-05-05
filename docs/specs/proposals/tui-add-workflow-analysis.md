@@ -30,7 +30,7 @@ From the Lotus Agenda essay, the three core concepts are:
 - **Categories**: attributes (time, priority, people, themes)
 - **Views**: presentations of items filtered by categories
 
-The genius of Aglet was **automatic category assignment on input**. Rules could trigger: "Any item with 'Call Mom' goes to High Priority." The Fallows article emphasizes that the simplicity and power came from treating input as an intelligent operation, not just text capture.
+The genius of Agenda was **automatic category assignment on input**. Rules could trigger: "Any item with 'Call Mom' goes to High Priority." The Fallows article emphasizes that the simplicity and power came from treating input as an intelligent operation, not just text capture.
 
 ### 1.2 Current TUI Add (Mode::AddInput)
 

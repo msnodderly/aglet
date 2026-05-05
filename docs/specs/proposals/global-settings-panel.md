@@ -144,7 +144,7 @@ Primary: `g` `s` (two-key sequence in Normal mode, vim-style) — mnemonic for "
 
 Secondary: `F10` — also opens GlobalSettings for discoverability and single-key access.
 
-**Historical note:** In Lotus Agenda, `F10` was the general-purpose menu key (equivalent to a menu bar), not a settings shortcut. Global settings in Aglet lived at `F10 → File → Properties → Auto-assign settings` — two levels deep. There is no Aglet precedent for `F10` as a direct settings destination, so using it as a secondary convenience binding here is fine.
+**Historical note:** In Lotus Agenda, `F10` was the general-purpose menu key (equivalent to a menu bar), not a settings shortcut. Global settings in Agenda lived at `F10 → File → Properties → Auto-assign settings` — two levels deep. There is no Agenda precedent for `F10` as a direct settings destination, so using it as a secondary convenience binding here is fine.
 
 ---
 
