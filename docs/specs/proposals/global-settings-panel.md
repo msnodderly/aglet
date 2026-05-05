@@ -166,7 +166,7 @@ enum GlobalSettingsRow {
 }
 ```
 
-**New file:** `crates/agenda-tui/src/modes/global_settings.rs` — key handling and render logic.
+**New file:** `crates/aglet-tui/src/modes/global_settings.rs` — key handling and render logic.
 
 **Storage:** No schema changes. All settings continue to use their existing persistence:
 - `store.set_app_setting("tui.auto_refresh_interval", ...)`

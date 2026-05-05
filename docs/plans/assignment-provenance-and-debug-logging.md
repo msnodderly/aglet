@@ -275,12 +275,12 @@ events.
 
 Use existing debug plumbing:
 
-- `Agenda::with_debug(...)`
+- `Aglet::with_debug(...)`
 - TUI `--debug`
 
 Plan:
 
-- introduce a shared debug event emitter in `agenda-core`
+- introduce a shared debug event emitter in `aglet-core`
 - log to stderr / existing debug output path only when `debug == true`
 - keep logs compact and line-oriented
 
@@ -394,11 +394,11 @@ Do not force one structure to do both jobs.
 - populate explanation on assignment creation
 - populate `assignment_events` during processing
 
-### Phase 3: Agenda integration
+### Phase 3: Aglet integration
 
 - propagate explanation/event plumbing through manual assign/unassign, preview,
   suggestion acceptance, date parser flows, and action-trigger paths
-- add debug event emitter wired to `Agenda.debug`
+- add debug event emitter wired to `Aglet.debug`
 
 ### Phase 4: User-facing read-only surfaces
 

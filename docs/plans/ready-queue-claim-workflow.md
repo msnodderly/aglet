@@ -36,7 +36,7 @@ Add a new core type:
 }
 ```
 
-Add a new public model type in `agenda-core`:
+Add a new public model type in `aglet-core`:
 
 ```rust
 pub struct WorkflowConfig {
@@ -162,7 +162,7 @@ This means reopened items naturally re-enter the ready queue if they are still R
 
 ### 1. Core workflow config and claimability helpers
 
-Add `WorkflowConfig` to `agenda-core`.
+Add `WorkflowConfig` to `aglet-core`.
 
 Add store helpers to serialize/deserialize it through `app_settings`.
 
@@ -180,20 +180,20 @@ Do not persist `Ready Queue` as a normal DB row. The current `View` query model 
 
 Replace the current name-based `claim` wrapper behavior with workflow-aware core operations.
 
-Add a new transactional claim method in `Agenda` that:
+Add a new transactional claim method in `Aglet` that:
 
 - loads current item state inside `with_immediate_transaction`
 - re-evaluates claimability inside the transaction
 - assigns the configured claim category if allowed
 - returns `ProcessItemResult`
 
-Add a release method in `Agenda` that:
+Add a release method in `Aglet` that:
 
 - checks the configured claim category is present
 - removes it
 - reprocesses the item
 
-Update `mark_item_done` in `Agenda` so it auto-clears the configured claim category before final processing.
+Update `mark_item_done` in `Aglet` so it auto-clears the configured claim category before final processing.
 
 ### 3. CLI surface
 
@@ -334,14 +334,14 @@ Treat malformed JSON as unconfigured at runtime rather than crashing the TUI ref
 
 ## Files Expected to Change
 
-- `crates/agenda-core/src/model.rs`
-- `crates/agenda-core/src/store.rs`
-- `crates/agenda-core/src/agenda.rs`
-- `crates/agenda-cli/src/main.rs`
-- `crates/agenda-tui/src/lib.rs`
-- `crates/agenda-tui/src/app.rs`
-- `crates/agenda-tui/src/modes/category.rs`
-- `crates/agenda-tui/src/render/mod.rs`
+- `crates/aglet-core/src/model.rs`
+- `crates/aglet-core/src/store.rs`
+- `crates/aglet-core/src/aglet.rs`
+- `crates/aglet-cli/src/main.rs`
+- `crates/aglet-tui/src/lib.rs`
+- `crates/aglet-tui/src/app.rs`
+- `crates/aglet-tui/src/modes/category.rs`
+- `crates/aglet-tui/src/render/mod.rs`
 - relevant unit/integration test sections in CLI/TUI/core crates
 - `AGENTS.md` if any surprising implementation gotchas are discovered during implementation
 

@@ -46,7 +46,7 @@ Commands:
   help      Print this message or the help of the given subcommand(s)
 
 Options:
-      --db <DB>  SQLite database path [env: AGENDA_DB=]
+      --db <DB>  SQLite database path [env: AGLET_DB=]
   -h, --help     Print help
 ```
 
@@ -110,10 +110,10 @@ created 4fcf7aa8-33ba-434b-9523-63664cc33adf
 
 **Gotcha:** The CLI accepts an empty string as item text without any validation error. This creates an item with blank text, which is likely unintentional. Consider adding validation to reject empty/whitespace-only text.
 
-### Edge case: Adding without --db flag and no AGENDA_DB env
+### Edge case: Adding without --db flag and no AGLET_DB env
 
 ```bash
-AGENDA_DB= cargo run --bin aglet -- add 'test' 2>&1
+AGLET_DB= cargo run --bin aglet -- add 'test' 2>&1
 ```
 
 ```output

@@ -112,9 +112,9 @@ fn visible_slot_range(&self, heights: &[u16], viewport_height: u16) -> Vec<usize
 
 | File | Change |
 |------|--------|
-| `crates/agenda-tui/src/lib.rs` | Add `board_scroll_offset: usize` to App struct |
-| `crates/agenda-tui/src/app.rs` | Clamp scroll offset in `refresh()`, adjust in `move_slot_cursor()` |
-| `crates/agenda-tui/src/render/mod.rs` | Slot height estimation, visible window, windowed render loop, viewport scrollbar |
+| `crates/aglet-tui/src/lib.rs` | Add `board_scroll_offset: usize` to App struct |
+| `crates/aglet-tui/src/app.rs` | Clamp scroll offset in `refresh()`, adjust in `move_slot_cursor()` |
+| `crates/aglet-tui/src/render/mod.rs` | Slot height estimation, visible window, windowed render loop, viewport scrollbar |
 
 ## What this does NOT change
 
@@ -125,7 +125,7 @@ fn visible_slot_range(&self, heights: &[u16], viewport_height: u16) -> Vec<usize
 
 ## Verification
 
-1. `cargo test --lib -p agenda-tui` — existing tests pass (windowing is render-only, doesn't affect test assertions on state)
+1. `cargo test --lib -p aglet-tui` — existing tests pass (windowing is render-only, doesn't affect test assertions on state)
 2. Manual test: Month + Daily interval → 30+ slots should scroll smoothly with Tab
 3. Manual test: Year + Monthly + Collapse → 12 slots, most collapsed, focused slot always visible
 4. Manual test: Scroll position stable when items change (refresh doesn't jump)

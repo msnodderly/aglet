@@ -9,9 +9,9 @@ updated: 2026-04-01
 
 Aglet is a personal agenda and task-management system built in Rust. It is a workspace of three crates:
 
-- **`agenda-core`** — the domain library: data model, SQLite storage, a rule engine that auto-categorises items, natural-language date parsing, and view resolution.
-- **`agenda-cli`** — a Clap-powered command-line interface.
-- **`agenda-tui`** — an interactive terminal UI built with ratatui / crossterm.
+- **`aglet-core`** — the domain library: data model, SQLite storage, a rule engine that auto-categorises items, natural-language date parsing, and view resolution.
+- **`aglet-cli`** — a Clap-powered command-line interface.
+- **`aglet-tui`** — an interactive terminal UI built with ratatui / crossterm.
 
 The database is a single SQLite file (`.ag` extension). Items flow through a pipeline: text is parsed for dates, matched against category names for auto-assignment, and rules cascade through a fixed-point engine. Views then slice and group items for display.
 
@@ -29,15 +29,15 @@ cat Cargo.toml
 [workspace]
 resolver = "2"
 members = [
-    "crates/agenda-core",
-    "crates/agenda-tui",
-    "crates/agenda-cli",
+    "crates/aglet-core",
+    "crates/aglet-tui",
+    "crates/aglet-cli",
 ]```
 ```
 
-Each crate has a focused purpose. `agenda-core` depends on rusqlite, uuid, chrono, serde, and rust_decimal. The CLI adds clap. The TUI adds ratatui and crossterm. Both frontends depend on `agenda-core`.
+Each crate has a focused purpose. `aglet-core` depends on rusqlite, uuid, chrono, serde, and rust_decimal. The CLI adds clap. The TUI adds ratatui and crossterm. Both frontends depend on `aglet-core`.
 
-## 2. The Data Model (`agenda-core/src/model.rs`)
+## 2. The Data Model (`aglet-core/src/model.rs`)
 
 Everything starts with four core entities: **Items**, **Categories**, **Views**, and **Assignments**. Let us look at each.
 
@@ -46,7 +46,7 @@ Everything starts with four core entities: **Items**, **Categories**, **Views**,
 Before the core entities, the model defines **item-to-item links**. Links come in two kinds: `DependsOn` (directed dependency) and `Related` (bidirectional). The `ItemLinksForItem` struct provides a convenience view of all links for a single item.
 
 ```bash
-sed -n "10,35p" crates/agenda-core/src/model.rs
+sed -n "10,35p" crates/aglet-core/src/model.rs
 ```
 
 ```output
@@ -83,7 +83,7 @@ pub struct ItemLinksForItem {
 An Item is a task or note. It has text, an optional note, timestamps, an optional `when_date` (parsed from natural language), and a `done` state. Its `assignments` map holds all the categories it belongs to.
 
 ```bash
-sed -n "37,49p" crates/agenda-core/src/model.rs
+sed -n "37,49p" crates/aglet-core/src/model.rs
 ```
 
 ```output
@@ -107,7 +107,7 @@ pub struct Item {
 Each assignment records *how* an item came to be in a category. The `AssignmentSource` enum distinguishes manual assignments from engine-driven ones: `Manual` (user did it), `AutoMatch` (implicit string matching), `Action` (a rule fired), or `Subsumption` (inherited from a child category up to its parent). Numeric categories can carry a `numeric_value` on their assignment.
 
 ```bash
-sed -n "51,67p" crates/agenda-core/src/model.rs
+sed -n "51,67p" crates/aglet-core/src/model.rs
 ```
 
 ```output
@@ -135,7 +135,7 @@ pub enum AssignmentSource {
 Categories form a tree. A parent can be marked `is_exclusive`, meaning only one of its children can be assigned to an item at a time (e.g., a "Priority" parent with children "High" / "Medium" / "Low"). Categories can carry **conditions** (rules that auto-match items) and **actions** (side-effects that fire when the category is assigned). Categories also have a `value_kind` (Tag or Numeric) and an optional `numeric_format` for display formatting.
 
 ```bash
-sed -n "69,130p" crates/agenda-core/src/model.rs
+sed -n "69,130p" crates/aglet-core/src/model.rs
 ```
 
 ```output
@@ -216,7 +216,7 @@ Both views and sections use **Query**, which combines:
 - **Text search**: optional free-text filter.
 
 ```bash
-sed -n "132,167p" crates/agenda-core/src/model.rs
+sed -n "132,167p" crates/aglet-core/src/model.rs
 ```
 
 ```output
@@ -258,16 +258,16 @@ pub struct Section {
 }
 ```
 
-## 3. Error Handling (`agenda-core/src/error.rs`)
+## 3. Error Handling (`aglet-core/src/error.rs`)
 
-The crate defines a single `AgendaError` enum with five variants that cover all failure modes. Every public function returns `Result<T, AgendaError>`. SQLite errors are wrapped via a `From<rusqlite::Error>` impl.
+The crate defines a single `AgletError` enum with five variants that cover all failure modes. Every public function returns `Result<T, AgletError>`. SQLite errors are wrapped via a `From<rusqlite::Error>` impl.
 
 ```bash
-sed -n "6,23p" crates/agenda-core/src/error.rs
+sed -n "6,23p" crates/aglet-core/src/error.rs
 ```
 
 ```output
-pub enum AgendaError {
+pub enum AgletError {
     /// Referenced entity not found.
     NotFound { entity: &'static str, id: Uuid },
 
@@ -287,12 +287,12 @@ pub enum AgendaError {
 }
 ```
 
-## 4. The Storage Layer (`agenda-core/src/store.rs`)
+## 4. The Storage Layer (`aglet-core/src/store.rs`)
 
 `Store` wraps a `rusqlite::Connection` and owns the SQLite schema. On first open it creates six tables and their indices:
 
 ```bash
-sed -n "21,109p" crates/agenda-core/src/store.rs
+sed -n "21,109p" crates/aglet-core/src/store.rs
 ```
 
 ```output
@@ -398,12 +398,12 @@ On first launch, the store also creates three **reserved categories** (`When`, `
 
 The `Store` exposes CRUD methods for each entity. Category hierarchy is assembled by `get_hierarchy()`, which queries all categories, sorts by `sort_order`, and builds the parent-child tree via a depth-first flattening pass.
 
-## 5. The Text Classifier (`agenda-core/src/matcher.rs`)
+## 5. The Text Classifier (`aglet-core/src/matcher.rs`)
 
 The `Classifier` trait is the extension point for text-to-category matching. The MVP implementation, `SubstringClassifier`, does **case-insensitive word-boundary substring matching**. It finds the category name in the item text, but only if surrounded by non-alphanumeric boundaries—preventing "Condone" from matching "Done" or "Sarahville" from matching "Sarah".
 
 ```bash
-sed -n "1,38p" crates/agenda-core/src/matcher.rs
+sed -n "1,38p" crates/aglet-core/src/matcher.rs
 ```
 
 ```output
@@ -449,7 +449,7 @@ impl Classifier for SubstringClassifier {
 
 The module also provides `extract_hashtag_tokens()` and `unknown_hashtag_tokens()` — these parse `#hashtag` tokens from item text and compare them against known category names. The CLI uses this to warn users about unknown hashtags when adding items.
 
-## 6. Date Parsing (`agenda-core/src/dates.rs`)
+## 6. Date Parsing (`aglet-core/src/dates.rs`)
 
 The `DateParser` trait and its `BasicDateParser` implementation extract dates from natural language in item text. It supports:
 
@@ -463,7 +463,7 @@ The `DateParser` trait and its `BasicDateParser` implementation extract dates fr
 The parser is deterministic — no AI, no ambiguity. A `WeekdayDisambiguationPolicy` controls whether "next Tuesday" means the following calendar week (StrictNextWeek, the default) or the next occurrence (InclusiveNext).
 
 ```bash
-sed -n "60,73p" crates/agenda-core/src/dates.rs
+sed -n "60,73p" crates/aglet-core/src/dates.rs
 ```
 
 ```output
@@ -485,7 +485,7 @@ impl DateParser for BasicDateParser {
 
 The parser runs all scanners and picks the best match. It then checks for a trailing "at <time>" suffix and merges it into the datetime. The `ParsedDate` struct carries byte-offset spans so callers know which part of the text was consumed.
 
-## 7. The Rule Engine (`agenda-core/src/engine.rs`)
+## 7. The Rule Engine (`aglet-core/src/engine.rs`)
 
 This is the heart of aglet's automation. When an item is created or updated, `process_item()` runs a **fixed-point loop** over the full category hierarchy. Each pass:
 
@@ -500,7 +500,7 @@ The loop converges when a pass produces no new assignments, or errors if it exce
 All engine writes happen inside a SQLite **savepoint**. If the engine errors (e.g. cycle cap), the savepoint is rolled back and no partial assignments are left behind.
 
 ```bash
-sed -n "47,139p" crates/agenda-core/src/engine.rs
+sed -n "47,139p" crates/aglet-core/src/engine.rs
 ```
 
 ```output
@@ -602,7 +602,7 @@ fn process_item_inner(
 The engine also handles **mutual exclusion** during the cascade. When assigning a category whose parent is exclusive, `enforce_mutual_exclusion()` removes any siblings that are already assigned:
 
 ```bash
-sed -n "351,382p" crates/agenda-core/src/engine.rs
+sed -n "351,382p" crates/aglet-core/src/engine.rs
 ```
 
 ```output
@@ -640,17 +640,17 @@ fn enforce_mutual_exclusion(
 }
 ```
 
-## 8. The Integration Layer (`agenda-core/src/agenda.rs`)
+## 8. The Integration Layer (`aglet-core/src/aglet.rs`)
 
-`Agenda` is the synchronous API surface that wires together the Store, Classifier, and Engine. Every mutating operation goes through `Agenda` — it is the single entry point that ensures the engine runs after each change. Here is how item creation flows:
+`Aglet` is the synchronous API surface that wires together the Store, Classifier, and Engine. Every mutating operation goes through `Aglet` — it is the single entry point that ensures the engine runs after each change. Here is how item creation flows:
 
 ```bash
-sed -n "16,60p" crates/agenda-core/src/agenda.rs
+sed -n "16,60p" crates/aglet-core/src/aglet.rs
 ```
 
 ```output
 /// Synchronous integration layer that wires Store mutations to engine execution.
-pub struct Agenda<'a> {
+pub struct Aglet<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
@@ -661,7 +661,7 @@ pub struct LinkItemsResult {
     pub created: bool,
 }
 
-impl<'a> Agenda<'a> {
+impl<'a> Aglet<'a> {
     pub fn new(store: &'a Store, classifier: &'a dyn Classifier) -> Self {
         Self {
             store,
@@ -706,9 +706,9 @@ The flow for `create_item` is:
 3. If a date was parsed, assign the reserved "When" category (provenance tracking).
 4. Run the rule engine via `process_item()` → auto-assigns categories, fires actions, builds subsumption chain.
 
-The Agenda layer also handles **manual assignment** with exclusive sibling enforcement, **mark done/not-done** (toggles the "Done" reserved category), **view/section insert/remove** (translates drag-and-drop semantics into category mutations), **category CRUD** (creating a category triggers `evaluate_all_items` to retroactively match existing items), and **item linking** (creating/removing dependency and related links between items).
+The Aglet layer also handles **manual assignment** with exclusive sibling enforcement, **mark done/not-done** (toggles the "Done" reserved category), **view/section insert/remove** (translates drag-and-drop semantics into category mutations), **category CRUD** (creating a category triggers `evaluate_all_items` to retroactively match existing items), and **item linking** (creating/removing dependency and related links between items).
 
-## 9. Query & View Resolution (`agenda-core/src/query.rs`)
+## 9. Query & View Resolution (`aglet-core/src/query.rs`)
 
 When it is time to display data, `resolve_view()` evaluates a View against the full item set:
 
@@ -720,7 +720,7 @@ When it is time to display data, `resolve_view()` evaluates a View against the f
 The query evaluator checks AND criteria (item must have all), NOT criteria (item must lack all), OR criteria (item must have at least one), virtual WhenBucket filters, and text search.
 
 ```bash
-sed -n "101,162p" crates/agenda-core/src/query.rs
+sed -n "101,162p" crates/aglet-core/src/query.rs
 ```
 
 ```output
@@ -791,7 +791,7 @@ pub fn resolve_view(
 The `WhenBucket` system provides temporal grouping. `resolve_when_bucket()` maps a `when_date` to one of: Overdue, Today, Tomorrow, ThisWeek, NextWeek, ThisMonth, Future, or NoDate. Views can include or exclude items based on these buckets without needing actual date-range criteria.
 
 ```bash
-sed -n "6,56p" crates/agenda-core/src/query.rs
+sed -n "6,56p" crates/aglet-core/src/query.rs
 ```
 
 ```output
@@ -848,12 +848,12 @@ pub fn resolve_when_bucket(
 }
 ```
 
-## 10. The CLI (`agenda-cli/src/main.rs`)
+## 10. The CLI (`aglet-cli/src/main.rs`)
 
-The CLI is a single-file binary using Clap's derive API. It parses a `--db` path (or `AGENDA_DB` env var, defaulting to `~/.agenda/default.ag`), opens a Store, creates an Agenda, and dispatches commands.
+The CLI is a single-file binary using Clap's derive API. It parses a `--db` path (or `AGLET_DB` env var, defaulting to `~/.aglet/default.ag`), opens a Store, creates an Aglet, and dispatches commands.
 
 ```bash
-sed -n "47,123p" crates/agenda-cli/src/main.rs
+sed -n "47,123p" crates/aglet-cli/src/main.rs
 ```
 
 ```output
@@ -950,7 +950,7 @@ The CLI provides:
 - **`unlink`** subcommands — depends-on, blocks, related.
 - **`tui`** — launches the interactive terminal UI.
 
-A key detail: running `aglet` with no subcommand opens the TUI. Use `aglet list` for the scriptable list command. The `tui` command is still available explicitly and delegates to `agenda_tui::run_with_options()` before the normal Store/Agenda setup, since the TUI manages its own lifecycle.
+A key detail: running `aglet` with no subcommand opens the TUI. Use `aglet list` for the scriptable list command. The `tui` command is still available explicitly and delegates to `aglet_tui::run_with_options()` before the normal Store/Aglet setup, since the TUI manages its own lifecycle.
 
 Let us see the CLI in action against the project's own dogfooding database (`aglet-features.ag`):
 
@@ -997,33 +997,33 @@ Software Projects (sections=2, and=1, not=0, or=0)
 hint: use `aglet view show "<name>"` to see view contents
 ```
 
-## 11. The TUI (`agenda-tui/`)
+## 11. The TUI (`aglet-tui/`)
 
 The TUI is a full ratatui application with a rich modal interface. Its structure:
 
 ```bash
-find crates/agenda-tui/src -type f -name "*.rs" | sort
+find crates/aglet-tui/src -type f -name "*.rs" | sort
 ```
 
 ```output
-crates/agenda-tui/src/app.rs
-crates/agenda-tui/src/input/mod.rs
-crates/agenda-tui/src/input_panel.rs
-crates/agenda-tui/src/lib.rs
-crates/agenda-tui/src/modes/board.rs
-crates/agenda-tui/src/modes/category.rs
-crates/agenda-tui/src/modes/mod.rs
-crates/agenda-tui/src/modes/view_edit/details.rs
-crates/agenda-tui/src/modes/view_edit/editor.rs
-crates/agenda-tui/src/modes/view_edit/inline.rs
-crates/agenda-tui/src/modes/view_edit/mod.rs
-crates/agenda-tui/src/modes/view_edit/overlay.rs
-crates/agenda-tui/src/modes/view_edit/picker.rs
-crates/agenda-tui/src/modes/view_edit/sections.rs
-crates/agenda-tui/src/modes/view_edit/state.rs
-crates/agenda-tui/src/render/mod.rs
-crates/agenda-tui/src/text_buffer.rs
-crates/agenda-tui/src/ui_support.rs
+crates/aglet-tui/src/app.rs
+crates/aglet-tui/src/input/mod.rs
+crates/aglet-tui/src/input_panel.rs
+crates/aglet-tui/src/lib.rs
+crates/aglet-tui/src/modes/board.rs
+crates/aglet-tui/src/modes/category.rs
+crates/aglet-tui/src/modes/mod.rs
+crates/aglet-tui/src/modes/view_edit/details.rs
+crates/aglet-tui/src/modes/view_edit/editor.rs
+crates/aglet-tui/src/modes/view_edit/inline.rs
+crates/aglet-tui/src/modes/view_edit/mod.rs
+crates/aglet-tui/src/modes/view_edit/overlay.rs
+crates/aglet-tui/src/modes/view_edit/picker.rs
+crates/aglet-tui/src/modes/view_edit/sections.rs
+crates/aglet-tui/src/modes/view_edit/state.rs
+crates/aglet-tui/src/render/mod.rs
+crates/aglet-tui/src/text_buffer.rs
+crates/aglet-tui/src/ui_support.rs
 ```
 
 The TUI is organized as:
@@ -1042,7 +1042,7 @@ The TUI is organized as:
 The TUI uses a modal architecture. The `Mode` enum has 17+ variants:
 
 ```bash
-sed -n "177,200p" crates/agenda-tui/src/lib.rs
+sed -n "177,200p" crates/aglet-tui/src/lib.rs
 ```
 
 ```output
@@ -1077,7 +1077,7 @@ enum Mode {
 The `App::run()` method in `app.rs` is straightforward: draw, poll for key events (200ms timeout), dispatch via `handle_key_event()`. Errors during key handling are caught and displayed in the status bar rather than crashing:
 
 ```bash
-sed -n "4,43p" crates/agenda-tui/src/app.rs
+sed -n "4,43p" crates/aglet-tui/src/app.rs
 ```
 
 ```output
@@ -1085,7 +1085,7 @@ impl App {
     pub(crate) fn run(
         &mut self,
         terminal: &mut TuiTerminal,
-        agenda: &Agenda<'_>,
+        agenda: &Aglet<'_>,
     ) -> Result<(), String> {
         self.refresh(agenda.store())?;
 
@@ -1135,9 +1135,9 @@ Let us trace what happens end-to-end when a user types:
 aglet --db my.ag add "Call Sarah about Project Atlas tomorrow at 3pm"
 ```
 
-1. **CLI** parses args, opens `my.ag`, creates `Agenda`.
+1. **CLI** parses args, opens `my.ag`, creates `Aglet`.
 2. **`cmd_add()`** checks for unknown hashtags, creates an `Item::new()`.
-3. **`Agenda::create_item_with_reference_date()`**:
+3. **`Aglet::create_item_with_reference_date()`**:
    - Runs `BasicDateParser::parse()` → finds "tomorrow at 3pm" → sets `when_date` to tomorrow 15:00.
    - Calls `store.create_item()` → INSERT into SQLite.
    - Assigns the "When" reserved category (provenance: `nlp:date`).
@@ -1171,19 +1171,19 @@ cargo test --workspace 2>&1 | tail -20
 ```output
 test result: ok. 278 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
 
-     Running unittests src/main.rs (target/debug/deps/agenda_tui-...)
+     Running unittests src/main.rs (target/debug/deps/aglet_tui-...)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-   Doc-tests agenda_core
+   Doc-tests aglet_core
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-   Doc-tests agenda_tui
+   Doc-tests aglet_tui
 
 running 0 tests
 
@@ -1195,7 +1195,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 - **`store.rs`** — CRUD for all entities, schema migrations, reserved category creation, deletion log, restore, hierarchy building.
 - **`engine.rs`** — fixed-point convergence, cycle detection (cap at 10 passes with savepoint rollback), action cascading, mutual exclusion, deferred removals, idempotent re-runs.
-- **`agenda.rs`** — end-to-end integration: item creation with auto-categorization, manual assignment with exclusive enforcement, done/not-done toggling, section insert/remove, view resolution with filters.
+- **`aglet.rs`** — end-to-end integration: item creation with auto-categorization, manual assignment with exclusive enforcement, done/not-done toggling, section insert/remove, view resolution with filters.
 - **`matcher.rs`** — word-boundary matching, case insensitivity, hashtag extraction.
 - **`dates.rs`** — all date formats, weekday disambiguation policies, compound time parsing, boundary conditions.
 - **`query.rs`** — query evaluation with AND/NOT/OR, WhenBucket resolution, view resolution with sections and show_children expansion.
@@ -1212,7 +1212,7 @@ Aglet is a carefully layered system:
 | **Classifier** | `matcher.rs` | Word-boundary substring matching, hashtag extraction |
 | **Date parser** | `dates.rs` | Natural language → NaiveDateTime |
 | **Rule engine** | `engine.rs` | Fixed-point auto-assignment, actions, mutual exclusion |
-| **Integration** | `agenda.rs` | Wires Store + Engine + Classifier, transaction boundary, linking |
+| **Integration** | `aglet.rs` | Wires Store + Engine + Classifier, transaction boundary, linking |
 | **Query resolution** | `query.rs` | WhenBuckets, view/section evaluation, show_children |
 | **CLI** | `main.rs` (cli) | Clap commands, text output, link management |
 | **TUI** | `lib.rs` + modules | Ratatui modal interface, board views, category manager, link wizard |

@@ -13,9 +13,9 @@ The TUI board currently hardcodes three columns: `When | Item | All Categories`.
 
 ## Files to Modify
 
-- `crates/agenda-core/src/model.rs` — data model changes
-- `crates/agenda-core/src/store.rs` — schema migration, persistence
-- `crates/agenda-tui/src/lib.rs` — rendering pipeline + view manager columns tab
+- `crates/aglet-core/src/model.rs` — data model changes
+- `crates/aglet-core/src/store.rs` — schema migration, persistence
+- `crates/aglet-tui/src/lib.rs` — rendering pipeline + view manager columns tab
 
 ---
 

@@ -17,7 +17,7 @@ The bar is **section-scoped**: it filters within the focused section and uses th
 Current (3-region):
 ```
 ┌──────────────────────────────────────────────────────┐
-│ Agenda Reborn  view:MyView  mode:Normal              │  header (1 line)
+│ view:MyView  mode:Normal              │  header (1 line)
 ├──────────────────────────────────────────────────────┤
 │ Board columns / list content                         │  main (fills)
 ├──────────────────────────────────────────────────────┤
@@ -29,7 +29,7 @@ Current (3-region):
 Proposed (4-region, search bar inserted between header and main):
 ```
 ┌──────────────────────────────────────────────────────┐
-│ Agenda Reborn  view:MyView                           │  header (1 line)
+│ view:MyView                           │  header (1 line)
 ├──────────────────────────────────────────────────────┤
 │ [High] Search or create...                           │  search bar (1 line)
 ├──────────────────────────────────────────────────────┤
@@ -87,7 +87,7 @@ The search bar only appears on board/list screens — not during ViewEdit, Categ
 
 ### 1. Data Model Changes
 
-**File: `crates/agenda-tui/src/lib.rs`**
+**File: `crates/aglet-tui/src/lib.rs`**
 
 Add to `App` struct:
 ```rust
@@ -103,7 +103,7 @@ Remove `filter_target_section` from `Default` impl (line 749). Add `search_buffe
 
 ### 2. Mode Rename
 
-**File: `crates/agenda-tui/src/lib.rs` (line 185)**
+**File: `crates/aglet-tui/src/lib.rs` (line 185)**
 
 Rename `Mode::FilterInput` → `Mode::SearchBarFocused`.
 
@@ -120,13 +120,13 @@ Update all references:
 
 ### 3. Key Handling
 
-**File: `crates/agenda-tui/src/modes/board.rs`**
+**File: `crates/aglet-tui/src/modes/board.rs`**
 
 **3a. Replace `handle_filter_key` (line 4173) with `handle_search_bar_key`:**
 
 ```rust
 pub(crate) fn handle_search_bar_key(
-    &mut self, code: KeyCode, agenda: &Agenda<'_>,
+    &mut self, code: KeyCode, agenda: &Aglet<'_>,
 ) -> Result<bool, String> {
     match code {
         KeyCode::Esc => {
@@ -199,7 +199,7 @@ fn find_exact_match_in_slot(&self, query: &str) -> Option<usize> {
         .position(|item| item.text.to_ascii_lowercase() == needle)
 }
 
-fn open_add_item_with_title(&mut self, title: String, agenda: &Agenda<'_>) -> Result<(), String> {
+fn open_add_item_with_title(&mut self, title: String, agenda: &Aglet<'_>) -> Result<(), String> {
     // Same section context extraction as open_input_panel_add_item
     let (section_title, on_insert_assign) = /* extract from current_slot().context */;
     let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
@@ -238,7 +238,7 @@ Add `self.search_buffer.clear()` before the existing filter-clear logic.
 
 ### 4. Input Dispatch
 
-**File: `crates/agenda-tui/src/input/mod.rs` (line 31)**
+**File: `crates/aglet-tui/src/input/mod.rs` (line 31)**
 
 ```rust
 Mode::SearchBarFocused => self.handle_search_bar_key(code, agenda),
@@ -246,7 +246,7 @@ Mode::SearchBarFocused => self.handle_search_bar_key(code, agenda),
 
 ### 5. Rendering
 
-**File: `crates/agenda-tui/src/render/mod.rs`**
+**File: `crates/aglet-tui/src/render/mod.rs`**
 
 **5a. Layout change in `draw()` (line 33):**
 
@@ -287,7 +287,7 @@ The search bar cursor is now rendered directly by `render_search_bar`, not via t
 
 ### 6. Refresh Integration
 
-**File: `crates/agenda-tui/src/app.rs`**
+**File: `crates/aglet-tui/src/app.rs`**
 
 In `refresh()` (line 156), when section count changes and filters reset, also clear search buffer:
 ```rust
@@ -319,11 +319,11 @@ This changes test `filter_esc_in_filter_input_cancels_without_clearing` (line 88
 
 | File | Changes |
 |------|---------|
-| `crates/agenda-tui/src/lib.rs` | Add `search_buffer` field, remove `filter_target_section`, rename `Mode::FilterInput` → `SearchBarFocused`, update tests |
-| `crates/agenda-tui/src/modes/board.rs` | Replace `handle_filter_key` with `handle_search_bar_key`, add helpers, update `/` and `Esc` handlers |
-| `crates/agenda-tui/src/render/mod.rs` | 4-region layout, `render_search_bar`, remove FilterInput from `input_prompt_prefix`, update footer |
-| `crates/agenda-tui/src/input/mod.rs` | Rename dispatch (1 line) |
-| `crates/agenda-tui/src/app.rs` | Clear `search_buffer` in `refresh()` and `reset_section_filters()`, remove `filter_target_section` usage |
+| `crates/aglet-tui/src/lib.rs` | Add `search_buffer` field, remove `filter_target_section`, rename `Mode::FilterInput` → `SearchBarFocused`, update tests |
+| `crates/aglet-tui/src/modes/board.rs` | Replace `handle_filter_key` with `handle_search_bar_key`, add helpers, update `/` and `Esc` handlers |
+| `crates/aglet-tui/src/render/mod.rs` | 4-region layout, `render_search_bar`, remove FilterInput from `input_prompt_prefix`, update footer |
+| `crates/aglet-tui/src/input/mod.rs` | Rename dispatch (1 line) |
+| `crates/aglet-tui/src/app.rs` | Clear `search_buffer` in `refresh()` and `reset_section_filters()`, remove `filter_target_section` usage |
 
 ## Tests
 
@@ -341,7 +341,7 @@ Add new tests:
 ## Verification
 
 1. `cargo clippy --all-targets` — no warnings
-2. `cargo test -p agenda-tui` — all tests pass
+2. `cargo test -p aglet-tui` — all tests pass
 3. Manual TUI test:
    - Launch TUI with a populated database
    - Press `/` → search bar activates, section label shows

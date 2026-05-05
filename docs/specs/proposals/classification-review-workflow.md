@@ -354,7 +354,7 @@ User has 3 items with pending suggestions.
 
 ### Step 1: `?` glyph in board view
 
-**`crates/agenda-tui/src/ui_support.rs`:**
+**`crates/aglet-tui/src/ui_support.rs`:**
 - [ ] Add `pub(super) const SUGGESTION_MARKER_SYMBOL: &str = "?";`
 - [ ] Update `item_indicator_glyphs(is_done, is_blocked, has_note)` signature
       to `item_indicator_glyphs(is_done, is_blocked, has_pending, has_note)` —
@@ -362,7 +362,7 @@ User has 3 items with pending suggestions.
 - [ ] Update existing test `item_indicator_glyphs_supports_all_three_indicators`
       → rename to `..._all_four_indicators`, assert `"✓&?♪"`
 
-**`crates/agenda-tui/src/render/mod.rs`:**
+**`crates/aglet-tui/src/render/mod.rs`:**
 - [ ] Update call site ~line 2052 (table/column board mode): pass
       `self.pending_suggestion_count_for_item(item.id) > 0` as `has_pending`
 - [ ] Update call site ~line 2386 (list board mode): same
@@ -370,14 +370,14 @@ User has 3 items with pending suggestions.
 - [ ] Update Normal mode footer status (~line 3345): change
       `classification_pending_suffix()` format to `"? N pending suggestions"`
 
-**`crates/agenda-tui/src/app.rs`:**
+**`crates/aglet-tui/src/app.rs`:**
 - [ ] Update `classification_pending_suffix()` (~line 873) to return
       `"? N pending suggestions"` instead of
       `"N classification suggestion(s) pending"`
 
 ### Step 2: New types and `Mode::SuggestionReview`
 
-**`crates/agenda-tui/src/lib.rs`:**
+**`crates/aglet-tui/src/lib.rs`:**
 - [ ] Add `Mode::SuggestionReview` variant to `enum Mode`
 - [ ] Add `SuggestionReviewState` struct:
       ```rust
@@ -409,15 +409,15 @@ User has 3 items with pending suggestions.
 
 ### Step 3: Wire `g?` entry point
 
-**`crates/agenda-tui/src/modes/board.rs`:**
+**`crates/aglet-tui/src/modes/board.rs`:**
 - [ ] In `handle_normal_key`, extend the `NormalModePrefix::G` match arm:
       add `(NormalModePrefix::G, KeyCode::Char('?')) => { self.open_suggestion_review(agenda)?; }`
 - [ ] Update the g-prefix status text (~line 2258) to:
       `"g-prefix: ga=All Items, g/=Global search, g?=Review suggestions"`
 
-**`crates/agenda-tui/src/modes/` — new file `suggestion_review.rs`:**
-- [ ] Create `crates/agenda-tui/src/modes/suggestion_review.rs`
-- [ ] Add `mod suggestion_review;` to `crates/agenda-tui/src/modes/mod.rs`
+**`crates/aglet-tui/src/modes/` — new file `suggestion_review.rs`:**
+- [ ] Create `crates/aglet-tui/src/modes/suggestion_review.rs`
+- [ ] Add `mod suggestion_review;` to `crates/aglet-tui/src/modes/mod.rs`
 - [ ] Implement `App::open_suggestion_review(&mut self, agenda)`:
       - Call `rebuild_classification_ui()` to ensure fresh data
       - Find first item in `classification_ui.review_items` that has suggestions
@@ -434,7 +434,7 @@ User has 3 items with pending suggestions.
 
 ### Step 4: Key handling for `g?` review mode
 
-**`crates/agenda-tui/src/modes/suggestion_review.rs`:**
+**`crates/aglet-tui/src/modes/suggestion_review.rs`:**
 - [ ] Implement `App::handle_suggestion_review_key(code, agenda) -> TuiResult<bool>`:
       - `Esc`: set `self.suggestion_review = None`, `self.mode = Mode::Normal`
       - `j`/`Down`: increment cursor (clamped to suggestions.len() - 1)
@@ -453,7 +453,7 @@ User has 3 items with pending suggestions.
 
 ### Step 5: Render the `g?` review overlay
 
-**`crates/agenda-tui/src/render/mod.rs`:**
+**`crates/aglet-tui/src/render/mod.rs`:**
 - [ ] Add `fn render_suggestion_review(&self, frame, area)`:
       - Calculate centered overlay rect (e.g., 60 wide × suggestion count + 10 tall,
         capped at 80% of terminal)
@@ -473,7 +473,7 @@ User has 3 items with pending suggestions.
 
 ### Step 6: Edit-item panel — inline suggestions
 
-**`crates/agenda-tui/src/input_panel.rs`:**
+**`crates/aglet-tui/src/input_panel.rs`:**
 - [ ] Add field `pub(crate) pending_suggestions: Vec<(ClassificationSuggestion, SuggestionDecision)>`
       (empty by default; populated when opening edit panel for item with `?`)
 - [ ] In `InputPanel::new()` or builder, initialize `pending_suggestions` to empty vec
@@ -485,7 +485,7 @@ User has 3 items with pending suggestions.
         `ToggleSuggestion` (or handle inline with three-state cycle)
       - Separator row: cursor skips (delta jumps over it)
 
-**`crates/agenda-tui/src/app.rs`:**
+**`crates/aglet-tui/src/app.rs`:**
 - [ ] In `open_input_panel_edit_item()`: look up pending suggestions for the item
       via `pending_suggestion_count_for_item()` / `classification_ui.review_items`;
       populate `panel.pending_suggestions` with `(suggestion, SuggestionDecision::Pending)`
@@ -495,7 +495,7 @@ User has 3 items with pending suggestions.
       - `Reject` → `agenda.reject_classification_suggestion(id)`
       - `Pending` → skip (no action)
 
-**`crates/agenda-tui/src/render/mod.rs`:**
+**`crates/aglet-tui/src/render/mod.rs`:**
 - [ ] In the InputPanel category list rendering (AddItem/EditItem):
       after the normal category rows, if `pending_suggestions` is non-empty:
       - Render a `"─── Suggested ───"` separator line (dimmed, non-selectable)
@@ -505,14 +505,14 @@ User has 3 items with pending suggestions.
 
 ### Step 7: Remove old ClassificationReview mode
 
-**`crates/agenda-tui/src/lib.rs`:**
+**`crates/aglet-tui/src/lib.rs`:**
 - [ ] Remove `Mode::ClassificationReview` variant from `enum Mode`
 - [ ] Remove `ClassificationFocus` enum
 - [ ] Remove `focus` field from `ClassificationUiState`
       (keep `pending_count`, `review_items`, `config`, `selected_item_index`,
       `selected_suggestion_index` — these are still used by `pending_suggestion_count_for_item`)
 
-**`crates/agenda-tui/src/modes/classification.rs`:**
+**`crates/aglet-tui/src/modes/classification.rs`:**
 - [ ] Remove `open_classification_review()` method
 - [ ] Remove `handle_classification_review_key()` method
 - [ ] Remove `cycle_classification_focus()`, `move_classification_selection()`
@@ -524,18 +524,18 @@ User has 3 items with pending suggestions.
       `continuous_mode_label()` — still used by Category Manager mode picker
 - [ ] (Or delete the file entirely and move the 3 helpers elsewhere)
 
-**`crates/agenda-tui/src/modes/board.rs`:**
+**`crates/aglet-tui/src/modes/board.rs`:**
 - [ ] Remove `KeyCode::Char('C') => { self.open_classification_review(); }` (~line 2162)
 - [ ] Free the `C` key (leave unbound or repurpose later)
 
-**`crates/agenda-tui/src/render/mod.rs`:**
+**`crates/aglet-tui/src/render/mod.rs`:**
 - [ ] Remove `fn render_classification_review()` (~line 2960, ~220 lines)
 - [ ] Remove `Mode::ClassificationReview` arms from footer hints (~line 3367)
       and status text (~line 3340)
 
 ### Step 8: Tests
 
-**`crates/agenda-tui/src/lib.rs` (test module) and/or new test file:**
+**`crates/aglet-tui/src/lib.rs` (test module) and/or new test file:**
 
 `?` glyph tests:
 - [ ] `item_indicator_glyphs_shows_question_mark_for_pending` — assert `"?"` when

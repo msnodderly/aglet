@@ -37,7 +37,7 @@ This document covers the remaining items, ordered by priority.
 1. Move the constant to `model.rs` or a new `constants.rs` file (both crates can see it):
 
    ```rust
-   // crates/agenda-core/src/model.rs (or constants.rs)
+   // crates/aglet-core/src/model.rs (or constants.rs)
    pub const RESERVED_CATEGORY_NAME_WHEN: &str = "When";
    pub const RESERVED_CATEGORY_NAME_ENTRY: &str = "Entry";
    pub const RESERVED_CATEGORY_NAME_DONE: &str = "Done";
@@ -56,7 +56,7 @@ This document covers the remaining items, ordered by priority.
 
 ### Verification
 
-`grep -r '"When"\|"Entry"\|"Done"' crates/agenda-core/src/` should return zero results except in tests using realistic fixture data and in the constant definition itself.
+`grep -r '"When"\|"Entry"\|"Done"' crates/aglet-core/src/` should return zero results except in tests using realistic fixture data and in the constant definition itself.
 
 ---
 
@@ -77,7 +77,7 @@ This document covers the remaining items, ordered by priority.
 `CategoryId`, `ItemId`, etc. are `pub struct CategoryId(pub Uuid)` newtypes in `model.rs`. Add:
 
 ```rust
-// crates/agenda-core/src/model.rs
+// crates/aglet-core/src/model.rs
 use rusqlite::types::{ToSql, ToSqlOutput, ValueRef};
 
 impl ToSql for ItemId {
@@ -128,7 +128,7 @@ Three patterns coexist in `store.rs` for JSON serde:
 |---|---|---|
 | `.unwrap_or_else(\|_\| "{}".to_string())` | 275 | Silently produce empty JSON object on ser failure |
 | `.unwrap_or_default()` | 367, 694, 1025 | Silently produce `Default` on de failure |
-| `.map_err(\|err\| AgendaError::StorageError { ... })?` | 394–408, 738–750 | Propagate as hard error |
+| `.map_err(\|err\| AgletError::StorageError { ... })?` | 394–408, 738–750 | Propagate as hard error |
 
 The inconsistency makes it hard to reason about data loss scenarios.
 
@@ -173,7 +173,7 @@ let assignments = serde_json::from_str(&assignments_json).unwrap_or_default();
 Convert `store.rs` → `store/` module directory using file-level decomposition without changing the public API surface:
 
 ```
-crates/agenda-core/src/store/
+crates/aglet-core/src/store/
     mod.rs         ← Store struct definition, constructor, conn(), app settings, transactions
     migrations.rs  ← SCHEMA_SQL, SCHEMA_VERSION, run_migrations()
     items.rs       ← CRUD for Item (create, get, update, delete, list, prefix)
@@ -186,7 +186,7 @@ crates/agenda-core/src/store/
 
 **Steps:**
 
-1. Create `crates/agenda-core/src/store/` directory.
+1. Create `crates/aglet-core/src/store/` directory.
 2. Copy `store.rs` → `store/mod.rs`.
 3. Extract one module at a time, starting with the lowest-dependency code:
    - `row_mappers.rs` first (pure functions, no dependencies on other Store methods)
@@ -249,7 +249,7 @@ Check each target:
 **Option 1 (recommended): Define an enum**
 
 ```rust
-// crates/agenda-core/src/model.rs
+// crates/aglet-core/src/model.rs
 /// How an assignment or link was created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
