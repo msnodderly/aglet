@@ -41,6 +41,7 @@ use uuid::Uuid;
 mod app;
 mod async_classify;
 mod error;
+mod fuzzy;
 mod input;
 mod input_panel;
 mod modes;
@@ -207,6 +208,44 @@ enum AutoRefreshInterval {
     Off,
     OneSecond,
     FiveSeconds,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SearchMode {
+    Substring,
+    Fuzzy,
+}
+
+impl SearchMode {
+    fn next(self) -> Self {
+        match self {
+            Self::Substring => Self::Fuzzy,
+            Self::Fuzzy => Self::Substring,
+        }
+    }
+
+    fn prev(self) -> Self {
+        self.next()
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Substring => "substring",
+            Self::Fuzzy => "fuzzy",
+        }
+    }
+
+    fn persisted_value(self) -> &'static str {
+        self.label()
+    }
+
+    fn from_persisted_value(value: &str) -> Option<Self> {
+        match value {
+            "substring" => Some(Self::Substring),
+            "fuzzy" => Some(Self::Fuzzy),
+            _ => None,
+        }
+    }
 }
 
 impl AutoRefreshInterval {
@@ -446,6 +485,7 @@ struct App {
     auto_refresh_interval: AutoRefreshInterval,
     section_border_mode: SectionBorderMode,
     show_note_glyphs: bool,
+    search_mode: SearchMode,
     auto_refresh_last_tick: Instant,
     last_temporal_refresh_minute: Option<(i16, i8, i8, i8, i8)>,
     transient: TransientUiState,
@@ -525,6 +565,7 @@ impl Default for App {
             auto_refresh_interval: AutoRefreshInterval::Off,
             section_border_mode: SectionBorderMode::Full,
             show_note_glyphs: false,
+            search_mode: SearchMode::Substring,
             auto_refresh_last_tick: Instant::now(),
             last_temporal_refresh_minute: None,
             transient: TransientUiState::default(),

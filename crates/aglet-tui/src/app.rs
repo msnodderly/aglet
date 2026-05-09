@@ -22,6 +22,7 @@ impl App {
     const AUTO_REFRESH_SETTING_KEY: &'static str = "tui.auto_refresh_interval";
     const SECTION_BORDER_MODE_SETTING_KEY: &'static str = "tui.section_border_mode";
     const SHOW_NOTE_GLYPHS_SETTING_KEY: &'static str = "tui.show_note_glyphs";
+    const SEARCH_MODE_SETTING_KEY: &'static str = "tui.search_mode";
     const LAST_VIEW_NAME_SETTING_KEY: &'static str = "tui.last_view_name";
 
     pub(crate) fn active_transient_status_text(&self) -> Option<&str> {
@@ -145,6 +146,22 @@ impl App {
         }
     }
 
+    pub(crate) fn search_mode_label(&self) -> &'static str {
+        self.search_mode.label()
+    }
+
+    pub(crate) fn cycle_search_mode(&mut self, store: &Store, forward: bool) -> TuiResult<()> {
+        self.search_mode = if forward {
+            self.search_mode.next()
+        } else {
+            self.search_mode.prev()
+        };
+        self.persist_search_mode(store)?;
+        self.refresh(store)?;
+        self.status = format!("Search mode: {}", self.search_mode_label());
+        Ok(())
+    }
+
     pub(crate) fn load_show_note_glyphs(&mut self, store: &Store) -> TuiResult<()> {
         let persisted = store.get_app_setting(Self::SHOW_NOTE_GLYPHS_SETTING_KEY)?;
         self.show_note_glyphs = persisted.as_deref() == Some("on");
@@ -155,6 +172,23 @@ impl App {
         store.set_app_setting(
             Self::SHOW_NOTE_GLYPHS_SETTING_KEY,
             if self.show_note_glyphs { "on" } else { "off" },
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn load_search_mode(&mut self, store: &Store) -> TuiResult<()> {
+        let persisted = store.get_app_setting(Self::SEARCH_MODE_SETTING_KEY)?;
+        self.search_mode = persisted
+            .as_deref()
+            .and_then(SearchMode::from_persisted_value)
+            .unwrap_or(SearchMode::Substring);
+        Ok(())
+    }
+
+    pub(crate) fn persist_search_mode(&self, store: &Store) -> TuiResult<()> {
+        store.set_app_setting(
+            Self::SEARCH_MODE_SETTING_KEY,
+            self.search_mode.persisted_value(),
         )?;
         Ok(())
     }
@@ -185,6 +219,7 @@ impl App {
         self.load_auto_refresh_interval(store)?;
         self.load_section_border_mode(store)?;
         self.load_show_note_glyphs(store)?;
+        self.load_search_mode(store)?;
         self.settings.global_settings = Some(GlobalSettingsState::default());
         self.mode = Mode::GlobalSettings;
         self.status =
@@ -245,6 +280,7 @@ impl App {
         self.load_auto_refresh_interval(aglet.store())?;
         self.load_section_border_mode(aglet.store())?;
         self.load_show_note_glyphs(aglet.store())?;
+        self.load_search_mode(aglet.store())?;
         self.auto_refresh_last_tick = Instant::now();
         self.mark_temporal_refresh_now();
         let mut needs_redraw = true;
@@ -1434,16 +1470,62 @@ impl App {
     }
 
     pub(crate) fn item_assign_visible_category_row_indices(&self) -> Vec<usize> {
-        let query = self.input.trimmed().to_ascii_lowercase();
-        self.category_rows
+        let query = self.input.trimmed();
+        let rows: Vec<usize> = self
+            .category_rows
             .iter()
             .enumerate()
-            .filter(|(_, row)| {
-                !row.is_reserved
-                    && (query.is_empty() || row.name.to_ascii_lowercase().contains(&query))
-            })
+            .filter(|(_, row)| !row.is_reserved)
             .map(|(idx, _)| idx)
-            .collect()
+            .collect();
+        self.filter_category_row_indices_by_query(rows, query)
+    }
+
+    pub(crate) fn filter_category_row_indices_by_query(
+        &self,
+        row_indices: Vec<usize>,
+        query: &str,
+    ) -> Vec<usize> {
+        Self::filter_category_row_indices_by_query_for_rows(
+            &self.category_rows,
+            self.search_mode,
+            row_indices,
+            query,
+        )
+    }
+
+    fn filter_category_row_indices_by_query_for_rows(
+        category_rows: &[CategoryListRow],
+        search_mode: SearchMode,
+        row_indices: Vec<usize>,
+        query: &str,
+    ) -> Vec<usize> {
+        let query = query.trim();
+        if query.is_empty() {
+            return row_indices;
+        }
+        if search_mode == SearchMode::Substring {
+            let query = query.to_ascii_lowercase();
+            return row_indices
+                .into_iter()
+                .filter(|row_index| {
+                    category_rows
+                        .get(*row_index)
+                        .map(|row| row.name.to_ascii_lowercase().contains(&query))
+                        .unwrap_or(false)
+                })
+                .collect();
+        }
+
+        crate::fuzzy::ranked_indices_by_label(&row_indices, query, |row_index| {
+            category_rows
+                .get(*row_index)
+                .map(|row| row.name.clone())
+                .unwrap_or_default()
+        })
+        .into_iter()
+        .filter_map(|index| row_indices.get(index).copied())
+        .collect()
     }
 
     pub(crate) fn item_assign_selected_category_row_index(&self) -> Option<usize> {
@@ -2324,22 +2406,25 @@ impl App {
     }
 
     pub(crate) fn rebuild_category_manager_visible_rows(&mut self) {
+        let Some(query) = self
+            .category_manager
+            .as_ref()
+            .map(|state| state.filter.trimmed().to_string())
+        else {
+            return;
+        };
+        let visible: Vec<usize> = (0..self.category_rows.len()).collect();
+        let mut visible = Self::filter_category_row_indices_by_query_for_rows(
+            &self.category_rows,
+            self.search_mode,
+            visible,
+            &query,
+        );
+        // Keep deterministic fallback and avoid stale indices after refresh.
+        visible.retain(|idx| *idx < self.category_rows.len());
         let Some(state) = &mut self.category_manager else {
             return;
         };
-        let query = state.filter.trimmed().to_ascii_lowercase();
-        let mut visible: Vec<usize> = if query.is_empty() {
-            (0..self.category_rows.len()).collect()
-        } else {
-            self.category_rows
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| row.name.to_ascii_lowercase().contains(&query))
-                .map(|(idx, _)| idx)
-                .collect()
-        };
-        // Keep deterministic fallback and avoid stale indices after refresh.
-        visible.retain(|idx| *idx < self.category_rows.len());
         state.visible_row_indices = visible;
 
         if state.visible_row_indices.is_empty() {

@@ -2121,7 +2121,6 @@ impl App {
         } else {
             ""
         };
-        let mode = format!("{:?}", self.mode);
         let active_filters = self.section_filters.iter().filter(|f| f.is_some()).count();
         let filter = if active_filters > 0 {
             format!(" filters:{active_filters}")
@@ -2135,7 +2134,7 @@ impl App {
         };
         let workflow_hint = self.ready_queue_header_hint().unwrap_or_default();
         Paragraph::new(Line::raw(format!(
-            "view:{view_name}{view_flags}{workflow_hint}{search}  mode:{mode}{filter}"
+            "view:{view_name}{view_flags}{workflow_hint}{search}{filter}"
         )))
     }
 
@@ -2160,7 +2159,7 @@ impl App {
                 .map(|s| s.title.as_str())
                 .unwrap_or("section")
         };
-        let label = format!("[{section_name}] ");
+        let label = format!("[{section_name} | {}] ", self.search_mode_label());
         let is_focused = self.mode == Mode::SearchBarFocused;
 
         let label_style = Style::default().fg(Color::Cyan);
@@ -4219,7 +4218,10 @@ impl App {
                     .map(|s| s.title.as_str())
                     .unwrap_or("section");
                 let match_count = self.current_slot().map(|s| s.items.len()).unwrap_or(0);
-                format!("[{section_name}] {match_count} matches")
+                format!(
+                    "[{section_name}] {match_count} matches ({})",
+                    self.search_mode_label()
+                )
             }
             Mode::ConfirmDelete => {
                 if let Some(done_confirm) = &self.done_blocks_confirm {
@@ -6039,6 +6041,9 @@ impl App {
                 let text = match row {
                     GlobalSettingsRow::AutoRefresh => {
                         format!("Auto-refresh        < {} >", self.auto_refresh_mode_label())
+                    }
+                    GlobalSettingsRow::SearchMode => {
+                        format!("Search mode         < {} >", self.search_mode_label())
                     }
                     GlobalSettingsRow::SectionBorders => {
                         format!(

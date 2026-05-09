@@ -102,12 +102,10 @@ impl App {
             )));
         }
         let single_visible_match = if exact_match.is_none() {
-            let query = name.to_ascii_lowercase();
             let mut matching_rows = self
                 .item_assign_visible_category_row_indices()
                 .into_iter()
-                .filter_map(|row_index| self.category_rows.get(row_index))
-                .filter(|row| row.name.to_ascii_lowercase().contains(&query));
+                .filter_map(|row_index| self.category_rows.get(row_index));
             match (matching_rows.next(), matching_rows.next()) {
                 (Some(row), None) => Some((row.id, row.name.clone())),
                 _ => None,
@@ -375,7 +373,14 @@ impl App {
     pub(crate) fn category_column_picker_matches(&self) -> Vec<CategoryId> {
         let child_ids = self.get_current_column_child_ids();
         let query = self.category_column_picker_filter_text().unwrap_or("");
-        filter_category_ids_by_query(&child_ids, &self.categories, query, true, true)
+        filter_category_ids_by_query(
+            &child_ids,
+            &self.categories,
+            query,
+            self.search_mode,
+            true,
+            true,
+        )
     }
 
     fn clamp_category_column_picker_list_index(&mut self) {
@@ -393,23 +398,25 @@ impl App {
         &self,
         panel: &input_panel::InputPanel,
     ) -> Vec<usize> {
-        let query = panel.category_filter.text().trim().to_ascii_lowercase();
+        let query = panel.category_filter.text().trim();
         // Hide reserved categories in AddItem/EditItem panels
         let hide_reserved = matches!(
             panel.kind,
             input_panel::InputPanelKind::AddItem | input_panel::InputPanelKind::EditItem
         );
-        self.category_rows
+        let rows: Vec<usize> = self
+            .category_rows
             .iter()
             .enumerate()
             .filter(|(_, row)| {
                 if hide_reserved && row.is_reserved {
                     return false;
                 }
-                query.is_empty() || row.name.to_ascii_lowercase().contains(&query)
+                true
             })
             .map(|(idx, _)| idx)
-            .collect()
+            .collect();
+        self.filter_category_row_indices_by_query(rows, query)
     }
 
     pub(crate) fn input_panel_visible_category_row_indices(&self) -> Vec<usize> {
@@ -855,7 +862,14 @@ impl App {
     pub(crate) fn get_board_add_column_suggest_matches(&self) -> Vec<CategoryId> {
         let scope_ids = self.board_add_column_scope_ids();
         let query = self.board_add_column_input_text().unwrap_or("");
-        filter_category_ids_by_query(&scope_ids, &self.categories, query, true, false)
+        filter_category_ids_by_query(
+            &scope_ids,
+            &self.categories,
+            query,
+            self.search_mode,
+            true,
+            false,
+        )
     }
 
     fn exact_board_add_column_match_id(&self) -> Option<CategoryId> {
@@ -2039,7 +2053,14 @@ impl App {
     pub(crate) fn get_current_suggest_matches(&self) -> Vec<CategoryId> {
         let child_ids = self.get_current_column_child_ids();
         let active_input = self.active_category_direct_edit_input_text().unwrap_or("");
-        filter_category_ids_by_query(&child_ids, &self.categories, active_input, true, true)
+        filter_category_ids_by_query(
+            &child_ids,
+            &self.categories,
+            active_input,
+            self.search_mode,
+            true,
+            true,
+        )
     }
 
     fn update_suggestions(&mut self) {
@@ -3309,7 +3330,8 @@ impl App {
         let Some(state) = self.link_wizard_state() else {
             return Vec::new();
         };
-        let query = state.target_filter.trimmed().to_ascii_lowercase();
+        let query = state.target_filter.trimmed();
+        let query_lower = query.to_ascii_lowercase();
         let closed_category_ids: HashSet<CategoryId> = self
             .categories
             .iter()
@@ -3319,7 +3341,7 @@ impl App {
             })
             .map(|category| category.id)
             .collect();
-        let mut rows: Vec<(String, ItemId)> = self
+        let mut rows: Vec<(String, ItemId, String)> = self
             .all_items
             .iter()
             .filter(|item| !state.source_item_ids.contains(&item.id))
@@ -3330,17 +3352,32 @@ impl App {
                     .keys()
                     .any(|category_id| closed_category_ids.contains(category_id))
             })
-            .filter(|item| {
-                if query.is_empty() {
-                    return true;
-                }
-                item.text.to_ascii_lowercase().contains(&query)
-                    || item.id.to_string().contains(&query)
-            })
-            .map(|item| (item.text.to_ascii_lowercase(), item.id))
+            .map(|item| (item.text.to_ascii_lowercase(), item.id, item.text.clone()))
             .collect();
         rows.sort_by(|a, b| a.0.cmp(&b.0));
-        rows.into_iter().map(|(_, id)| id).collect()
+        if query.is_empty() {
+            return rows.into_iter().map(|(_, id, _)| id).collect();
+        }
+        if self.search_mode == SearchMode::Substring {
+            return rows
+                .into_iter()
+                .filter(|(_, id, text)| {
+                    text.to_ascii_lowercase().contains(&query_lower)
+                        || id.to_string().contains(&query_lower)
+                })
+                .map(|(_, id, _)| id)
+                .collect();
+        }
+
+        crate::fuzzy::ranked_indices_with_substring_fallback(
+            &rows,
+            query,
+            |(_, _, text)| text.clone(),
+            |(_, id, _), needle| id.to_string().contains(needle),
+        )
+        .into_iter()
+        .filter_map(|index| rows.get(index).map(|(_, id, _)| *id))
+        .collect()
     }
 
     fn clamp_link_wizard_target_index(&mut self) {

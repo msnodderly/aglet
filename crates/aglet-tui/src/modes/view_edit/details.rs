@@ -23,24 +23,29 @@ impl App {
         }
     }
 
-    pub(crate) fn view_edit_visible_section_indices(state: &ViewEditState) -> Vec<usize> {
+    pub(crate) fn view_edit_visible_section_indices(&self, state: &ViewEditState) -> Vec<usize> {
         let Some(filter) = Self::view_edit_section_filter_query(state) else {
             return (0..state.draft.sections.len()).collect();
         };
-        state
-            .draft
-            .sections
-            .iter()
-            .enumerate()
-            .filter_map(|(i, section)| {
-                let title = section.title.to_ascii_lowercase();
-                if title.contains(&filter) {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        if self.search_mode == SearchMode::Substring {
+            return state
+                .draft
+                .sections
+                .iter()
+                .enumerate()
+                .filter_map(|(i, section)| {
+                    let title = section.title.to_ascii_lowercase();
+                    if title.contains(&filter) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+        crate::fuzzy::ranked_indices_by_label(&state.draft.sections, &filter, |section| {
+            section.title.clone()
+        })
     }
 
     pub(crate) fn view_edit_filter_is_active(state: &ViewEditState) -> bool {
@@ -72,21 +77,22 @@ impl App {
         } else {
             HashMap::new()
         };
-        self.category_rows
+        let rows: Vec<usize> = self
+            .category_rows
             .iter()
             .enumerate()
             .filter_map(|(i, row)| {
-                if let Some(ref q) = filter {
-                    if !row.name.to_ascii_lowercase().contains(q) {
-                        return None;
-                    }
-                }
                 if is_column_picker && !cat_by_id.contains_key(&row.id) {
                     return None;
                 }
                 Some(i)
             })
-            .collect()
+            .collect();
+        if let Some(filter) = filter {
+            self.filter_category_row_indices_by_query(rows, &filter)
+        } else {
+            rows
+        }
     }
 
     pub(crate) fn clear_view_edit_section_filter(&mut self) {
@@ -104,10 +110,16 @@ impl App {
     }
 
     pub(crate) fn normalize_view_edit_sections_selection_for_filter(&mut self) {
+        let Some(visible) = self
+            .view_edit_state
+            .as_ref()
+            .map(|state| self.view_edit_visible_section_indices(state))
+        else {
+            return;
+        };
         let Some(state) = &mut self.view_edit_state else {
             return;
         };
-        let visible = Self::view_edit_visible_section_indices(state);
         if visible.is_empty() {
             state.sections_view_row_selected = true;
             if state.region == ViewEditRegion::Sections {

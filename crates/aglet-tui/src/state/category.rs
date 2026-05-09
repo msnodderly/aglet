@@ -270,6 +270,7 @@ pub(crate) enum WorkflowRolePickerOrigin {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum GlobalSettingsRow {
     AutoRefresh,
+    SearchMode,
     SectionBorders,
     NoteGlyphs,
     LiteralClassificationMode,
@@ -293,6 +294,7 @@ impl GlobalSettingsRow {
         use aglet_core::classification::SemanticProviderKind;
         let mut rows = vec![
             Self::AutoRefresh,
+            Self::SearchMode,
             Self::SectionBorders,
             Self::NoteGlyphs,
             Self::LiteralClassificationMode,

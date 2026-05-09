@@ -122,13 +122,6 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
 
     for (slot_index, (slot, filter)) in slots.iter_mut().zip(app.section_filters.iter()).enumerate()
     {
-        if let Some(needle) = filter {
-            let needle = needle.to_ascii_lowercase();
-            slot.items.retain(|item| {
-                matches_text_search(item, &needle, Some(&category_names_lower_ascii))
-            });
-        }
-
         let mut sort_keys = app.slot_sort_keys[slot_index].clone();
         sort_keys
             .retain(|key| app.slot_sort_key_is_valid_for_slot(active_view.as_ref(), slot, key));
@@ -137,6 +130,31 @@ pub(crate) fn project_slots(app: &mut App, store: &Store, items: &[Item]) -> Tui
         }
         if !sort_keys.is_empty() {
             app.sort_slot_items(slot, &sort_keys);
+        }
+
+        if let Some(needle) = filter {
+            match app.search_mode {
+                SearchMode::Substring => {
+                    let needle = needle.to_ascii_lowercase();
+                    slot.items.retain(|item| {
+                        matches_text_search(item, &needle, Some(&category_names_lower_ascii))
+                    });
+                }
+                SearchMode::Fuzzy => {
+                    let ranked_indices = crate::fuzzy::ranked_indices_with_substring_fallback(
+                        &slot.items,
+                        needle,
+                        |item| item.text.clone(),
+                        |item, needle| {
+                            matches_text_search(item, needle, Some(&category_names_lower_ascii))
+                        },
+                    );
+                    slot.items = ranked_indices
+                        .into_iter()
+                        .filter_map(|index| slot.items.get(index).cloned())
+                        .collect();
+                }
+            }
         }
     }
 

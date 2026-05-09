@@ -878,6 +878,7 @@ pub(super) fn filter_category_ids_by_query(
     scope_ids: &[CategoryId],
     categories: &[Category],
     query: &str,
+    search_mode: SearchMode,
     empty_query_returns_all: bool,
     exclude_when: bool,
 ) -> Vec<CategoryId> {
@@ -886,7 +887,7 @@ pub(super) fn filter_category_ids_by_query(
         return Vec::new();
     }
     let query_lower = trimmed.to_ascii_lowercase();
-    scope_ids
+    let eligible: Vec<CategoryId> = scope_ids
         .iter()
         .filter(|id| {
             categories
@@ -896,12 +897,28 @@ pub(super) fn filter_category_ids_by_query(
                     if exclude_when && c.name.eq_ignore_ascii_case("When") {
                         return false;
                     }
-                    trimmed.is_empty() || c.name.to_ascii_lowercase().contains(&query_lower)
+                    trimmed.is_empty()
+                        || search_mode == SearchMode::Fuzzy
+                        || c.name.to_ascii_lowercase().contains(&query_lower)
                 })
                 .unwrap_or(false)
         })
         .cloned()
-        .collect()
+        .collect();
+    if trimmed.is_empty() || search_mode == SearchMode::Substring {
+        return eligible;
+    }
+
+    crate::fuzzy::ranked_indices_by_label(&eligible, trimmed, |id| {
+        categories
+            .iter()
+            .find(|category| category.id == *id)
+            .map(|category| category.name.clone())
+            .unwrap_or_default()
+    })
+    .into_iter()
+    .filter_map(|index| eligible.get(index).copied())
+    .collect()
 }
 
 pub(super) fn exact_category_name_match_in_scope(
@@ -928,7 +945,14 @@ pub(super) fn filter_child_categories(
     categories: &[Category],
     query: &str,
 ) -> Vec<CategoryId> {
-    filter_category_ids_by_query(child_ids, categories, query, false, true)
+    filter_category_ids_by_query(
+        child_ids,
+        categories,
+        query,
+        SearchMode::Substring,
+        false,
+        true,
+    )
 }
 
 pub(super) fn first_non_reserved_category_index(category_rows: &[CategoryListRow]) -> usize {
