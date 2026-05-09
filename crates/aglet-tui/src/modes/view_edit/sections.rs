@@ -244,7 +244,7 @@ impl App {
         let len = state.draft.sections.len();
         let idx = state.section_index;
         let selecting_view_row = state.sections_view_row_selected;
-        let visible_indices = Self::view_edit_visible_section_indices(state);
+        let visible_indices = self.view_edit_visible_section_indices(state);
         let current_visible_pos = visible_indices.iter().position(|&i| i == idx);
 
         match code {

@@ -11,7 +11,7 @@ use super::{
     CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
     CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, DateConditionDraftKind,
     DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext,
-    OllamaModelPickerState, SectionBorderMode, SlotSortDirection, SuggestionDecision,
+    OllamaModelPickerState, SearchMode, SectionBorderMode, SlotSortDirection, SuggestionDecision,
     ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
 };
 use aglet_core::aglet::Aglet;
@@ -1240,6 +1240,60 @@ fn board_cell_enter_opens_category_column_picker_for_exclusive_parent() {
     assert_eq!(app.mode, Mode::CategoryColumnPicker);
     let state = app.category_column_picker.as_ref().expect("picker");
     assert!(state.is_exclusive);
+}
+
+#[test]
+fn category_column_picker_filter_uses_fuzzy_mode_for_category_names() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut area = Category::new("Area".to_string());
+    let mut target = Category::new("Nucleo Search".to_string());
+    target.parent = Some(area.id);
+    let mut other = Category::new("Backlog".to_string());
+    other.parent = Some(area.id);
+    area.children = vec![target.id, other.id];
+    for cat in [&area, &target, &other] {
+        store.create_category(cat).expect("create category");
+    }
+    store
+        .create_item(&Item::new("Demo".to_string()))
+        .expect("create item");
+
+    let mut view = View::new("Board".to_string());
+    view.sections.push(Section {
+        title: "Main".to_string(),
+        criteria: Query::default(),
+        columns: vec![Column {
+            kind: ColumnKind::Standard,
+            heading: area.id,
+            width: 12,
+            summary_fn: None,
+        }],
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    store.create_view(&view).expect("create view");
+
+    let mut app = App {
+        search_mode: SearchMode::Fuzzy,
+        ..App::default()
+    };
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Board");
+    app.refresh(&store).expect("refresh board");
+    app.column_index = 1;
+    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    for ch in "ns".chars() {
+        app.handle_key(KeyCode::Char(ch), &aglet)
+            .expect("type fuzzy filter");
+    }
+
+    assert_eq!(app.category_column_picker_matches(), vec![target.id]);
 }
 
 #[test]
@@ -2766,6 +2820,39 @@ fn link_wizard_target_filter_clamps_selection_and_selects_match() {
         !matches.contains(&anchor.id),
         "anchor item must never appear in target matches"
     );
+}
+
+#[test]
+fn link_wizard_target_filter_uses_fuzzy_mode_for_item_titles() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let anchor = Item::new("Anchor task".to_string());
+    let target = Item::new("Fix timeout bug".to_string());
+    let unrelated = Item::new("Write docs".to_string());
+    for item in [&anchor, &target, &unrelated] {
+        store.create_item(item).expect("create item");
+    }
+
+    let mut app = App {
+        search_mode: SearchMode::Fuzzy,
+        ..App::default()
+    };
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(anchor.id);
+    app.handle_key(KeyCode::Char('b'), &aglet)
+        .expect("open link wizard");
+    app.handle_key(KeyCode::Char('/'), &aglet)
+        .expect("focus target filter");
+    for ch in "ftb".chars() {
+        app.handle_key(KeyCode::Char(ch), &aglet)
+            .expect("type fuzzy filter");
+    }
+
+    let matches = app.link_wizard_target_matches();
+    assert_eq!(matches, vec![target.id]);
+    assert_eq!(app.link_wizard_selected_target_id(), Some(target.id));
 }
 
 #[test]
@@ -5631,6 +5718,78 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
 }
 
 #[test]
+fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!(
+        "aglet-tui-assign-picker-fuzzy-semantics-{nanos}.ag"
+    ));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let work = Category::new("Work".to_string());
+    let workshop = Category::new("Workshop".to_string());
+    store.create_category(&work).expect("create Work");
+    store.create_category(&workshop).expect("create Workshop");
+    let item = Item::new("demo item".to_string());
+    let second_item = Item::new("second demo item".to_string());
+    store.create_item(&item).expect("create item");
+    store.create_item(&second_item).expect("create second item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.set_input("wrk".to_string());
+    assert!(
+        app.item_assign_visible_category_row_indices().is_empty(),
+        "substring mode should not treat approximate category queries as matches"
+    );
+
+    app.search_mode = SearchMode::Fuzzy;
+    let fuzzy_names: Vec<String> = app
+        .item_assign_visible_category_row_indices()
+        .into_iter()
+        .filter_map(|row_index| app.category_rows.get(row_index))
+        .map(|row| row.name.clone())
+        .collect();
+    assert!(
+        fuzzy_names.contains(&"Work".to_string()),
+        "fuzzy mode should find approximate category names: {fuzzy_names:?}"
+    );
+
+    app.set_input("Work".to_string());
+    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+        .expect("enter should resolve exact match and close");
+    let updated = store.get_item(item.id).expect("load updated item");
+    assert!(updated.assignments.contains_key(&work.id));
+    assert!(!updated.assignments.contains_key(&workshop.id));
+
+    app.set_item_selection_by_id(second_item.id);
+    app.mode = Mode::Normal;
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker again");
+    app.search_mode = SearchMode::Fuzzy;
+    app.set_input("NewTag".to_string());
+    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+        .expect("enter should create a non-matching category and close");
+    assert!(
+        app.categories
+            .iter()
+            .any(|category| category.name == "NewTag"),
+        "fuzzy mode should still create a category when there is no exact or single visible match"
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn normal_mode_u_in_preview_provenance_is_ignored() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -6298,8 +6457,7 @@ fn global_settings_section_borders_row_cycles_mode_with_keys() {
         .expect("gs should open global settings");
     assert_eq!(app.mode, Mode::GlobalSettings);
 
-    app.handle_key(KeyCode::Char('j'), &aglet)
-        .expect("move to section borders");
+    select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::SectionBorders);
     assert_eq!(
         app.global_settings_selected_kind(),
         GlobalSettingsRow::SectionBorders
@@ -6386,8 +6544,7 @@ fn section_border_mode_persists_across_app_instances_for_same_db() {
         .expect("g prefix should start");
     app.handle_normal_key(KeyCode::Char('s'), &aglet)
         .expect("gs should open global settings");
-    app.handle_key(KeyCode::Char('j'), &aglet)
-        .expect("move to section borders");
+    select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::SectionBorders);
     app.handle_key(KeyCode::Enter, &aglet)
         .expect("enter should persist compact mode");
     assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
@@ -6400,6 +6557,76 @@ fn section_border_mode_persists_across_app_instances_for_same_db() {
         .load_section_border_mode(&store)
         .expect("load persisted border mode");
     assert_eq!(reopened_app.section_border_mode, SectionBorderMode::Compact);
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn search_mode_defaults_to_substring_for_missing_or_invalid_setting() {
+    let store = Store::open_memory().expect("memory store");
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+
+    app.load_search_mode(&store)
+        .expect("missing setting should load");
+    assert_eq!(app.search_mode, SearchMode::Substring);
+
+    store
+        .set_app_setting("tui.search_mode", "sideways")
+        .expect("persist invalid value");
+    app.search_mode = SearchMode::Fuzzy;
+    app.load_search_mode(&store)
+        .expect("invalid setting should load");
+    assert_eq!(app.search_mode, SearchMode::Substring);
+}
+
+#[test]
+fn global_settings_search_mode_row_cycles_and_persists() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!(
+        "aglet-tui-search-mode-persist-roundtrip-{nanos}.ag"
+    ));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.mode = Mode::Normal;
+    open_global_settings_for_test(&mut app, &aglet);
+    select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::SearchMode);
+
+    app.handle_key(KeyCode::Enter, &aglet)
+        .expect("enter should persist fuzzy mode");
+    assert_eq!(app.search_mode, SearchMode::Fuzzy);
+    assert_eq!(
+        store
+            .get_app_setting("tui.search_mode")
+            .expect("load search setting"),
+        Some("fuzzy".to_string())
+    );
+
+    app.handle_key(KeyCode::Left, &aglet)
+        .expect("left should persist substring mode");
+    assert_eq!(app.search_mode, SearchMode::Substring);
+    assert_eq!(
+        store
+            .get_app_setting("tui.search_mode")
+            .expect("load search setting"),
+        Some("substring".to_string())
+    );
+
+    app.handle_key(KeyCode::Right, &aglet)
+        .expect("right should persist fuzzy mode");
+    let mut reopened_app = App::default();
+    reopened_app
+        .load_search_mode(&store)
+        .expect("load persisted search mode");
+    assert_eq!(reopened_app.search_mode, SearchMode::Fuzzy);
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);
@@ -11981,6 +12208,41 @@ fn category_manager_filter_focus_types_text_instead_of_triggering_commands() {
 
     drop(store);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn category_manager_filter_uses_fuzzy_mode_for_category_names() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let target = Category::new("Nucleo Search".to_string());
+    let other = Category::new("Backlog".to_string());
+    store.create_category(&target).expect("create target");
+    store.create_category(&other).expect("create other");
+
+    let mut app = App {
+        search_mode: SearchMode::Fuzzy,
+        ..App::default()
+    };
+    app.refresh(&store).expect("refresh app");
+    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+        .expect("open category manager");
+    app.handle_category_manager_key(KeyCode::Char('/'), &aglet)
+        .expect("focus filter");
+    for ch in "ns".chars() {
+        app.handle_category_manager_key(KeyCode::Char(ch), &aglet)
+            .expect("type fuzzy category filter");
+    }
+
+    let visible_names: Vec<String> = app
+        .category_manager_visible_row_indices()
+        .expect("visible rows")
+        .iter()
+        .filter_map(|row_index| app.category_rows.get(*row_index))
+        .map(|row| row.name.clone())
+        .collect();
+    assert_eq!(visible_names, vec!["Nucleo Search".to_string()]);
 }
 
 #[test]
@@ -18570,6 +18832,50 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
 }
 
 #[test]
+fn view_edit_section_filter_uses_fuzzy_mode_for_section_titles() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut view = View::new("Filtered".to_string());
+    view.sections.push(Section {
+        title: "Nucleo Search".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    view.sections.push(Section {
+        title: "Backlog".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+
+    let mut app = App {
+        search_mode: SearchMode::Fuzzy,
+        ..App::default()
+    };
+    app.open_view_edit(view);
+    {
+        let state = app.view_edit_state.as_mut().expect("state");
+        state.sections_filter_buf.set("ns".to_string());
+    }
+
+    let state = app.view_edit_state.as_ref().expect("state");
+    assert_eq!(app.view_edit_visible_section_indices(state), vec![0]);
+
+    drop(aglet);
+}
+
+#[test]
 fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
     let (store, db_path) = make_test_store_with_view("view-edit-preview-toggle");
     let classifier = SubstringClassifier;
@@ -20167,6 +20473,147 @@ fn search_bar_filters_match_item_uuid_prefix() {
         "uuid prefix should match one item"
     );
     assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn fuzzy_search_ranks_title_matches_before_substring_fallback_and_uses_sort_as_tie_break() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("aglet-tui-fuzzy-rank-sort-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let fallback_category = Category::new("ftb".to_string());
+    store
+        .create_category(&fallback_category)
+        .expect("create fallback category");
+    let fuzzy_title = Item::new("Fix timeout bug".to_string());
+    let fallback_only = Item::new("Zzz cleanup".to_string());
+    store.create_item(&fuzzy_title).expect("create fuzzy title");
+    store
+        .create_item(&fallback_only)
+        .expect("create fallback-only item");
+    aglet
+        .assign_item_manual(fallback_only.id, fallback_category.id, None)
+        .expect("assign fallback category");
+
+    let mut view = View::new("Board".to_string());
+    view.sections.push(Section {
+        title: "Main".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    store.create_view(&view).expect("create board view");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Board");
+    app.refresh(&store).expect("refresh board");
+    app.column_index = 0;
+    app.handle_key(KeyCode::Char('s'), &aglet)
+        .expect("sort item asc");
+    app.handle_key(KeyCode::Char('s'), &aglet)
+        .expect("sort item desc");
+    let sorted_order: Vec<String> = app.slots[0]
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
+    assert_eq!(
+        sorted_order,
+        vec!["Zzz cleanup".to_string(), "Fix timeout bug".to_string()]
+    );
+
+    app.search_mode = SearchMode::Fuzzy;
+    app.section_filters[0] = Some("ftb".to_string());
+    app.refresh(&store).expect("refresh fuzzy search");
+
+    let ranked_order: Vec<String> = app.slots[0]
+        .items
+        .iter()
+        .map(|item| item.text.clone())
+        .collect();
+    assert_eq!(
+        ranked_order,
+        vec!["Fix timeout bug".to_string(), "Zzz cleanup".to_string()],
+        "fuzzy title score should outrank substring fallback even when slot sort would put fallback first"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn fuzzy_search_preserves_note_category_and_uuid_substring_fallbacks() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("aglet-tui-fuzzy-fallbacks-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let category = Category::new("FallbackCategory".to_string());
+    store.create_category(&category).expect("create category");
+    let mut note_item = Item::new("Plain note carrier".to_string());
+    note_item.note = Some("needle lives in the note".to_string());
+    let category_item = Item::new("Plain category carrier".to_string());
+    let uuid_item = Item::new("Plain uuid carrier".to_string());
+    store.create_item(&note_item).expect("create note item");
+    store
+        .create_item(&category_item)
+        .expect("create category item");
+    store.create_item(&uuid_item).expect("create uuid item");
+    aglet
+        .assign_item_manual(category_item.id, category.id, None)
+        .expect("assign category");
+
+    let mut view = View::new("Board".to_string());
+    view.sections.push(Section {
+        title: "Main".to_string(),
+        criteria: Query::default(),
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    store.create_view(&view).expect("create board view");
+
+    let mut app = App {
+        search_mode: SearchMode::Fuzzy,
+        ..App::default()
+    };
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Board");
+    app.refresh(&store).expect("refresh board");
+
+    app.section_filters[0] = Some("needle".to_string());
+    app.refresh(&store).expect("refresh note fallback");
+    assert_eq!(app.slots[0].items.len(), 1);
+    assert_eq!(app.slots[0].items[0].id, note_item.id);
+
+    app.section_filters[0] = Some("fallbackcategory".to_string());
+    app.refresh(&store).expect("refresh category fallback");
+    assert_eq!(app.slots[0].items.len(), 1);
+    assert_eq!(app.slots[0].items[0].id, category_item.id);
+
+    let uuid_prefix = uuid_item.id.to_string()[..8].to_string();
+    app.section_filters[0] = Some(uuid_prefix);
+    app.refresh(&store).expect("refresh uuid fallback");
+    assert_eq!(app.slots[0].items.len(), 1);
+    assert_eq!(app.slots[0].items[0].id, uuid_item.id);
 
     let _ = std::fs::remove_file(&db_path);
 }

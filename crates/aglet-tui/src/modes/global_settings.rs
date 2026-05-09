@@ -72,6 +72,14 @@ impl App {
         Ok(())
     }
 
+    fn cycle_global_settings_search_mode(
+        &mut self,
+        aglet: &Aglet<'_>,
+        forward: bool,
+    ) -> TuiResult<()> {
+        self.cycle_search_mode(aglet.store(), forward)
+    }
+
     fn cycle_global_settings_literal_mode(
         &mut self,
         aglet: &Aglet<'_>,
@@ -255,6 +263,9 @@ impl App {
                     GlobalSettingsRow::AutoRefresh => {
                         self.cycle_global_settings_auto_refresh(aglet, true)?;
                     }
+                    GlobalSettingsRow::SearchMode => {
+                        self.cycle_global_settings_search_mode(aglet, true)?;
+                    }
                     GlobalSettingsRow::SectionBorders => {
                         self.cycle_global_settings_section_borders(aglet, true)?;
                     }
@@ -285,6 +296,9 @@ impl App {
                 GlobalSettingsRow::AutoRefresh => {
                     self.cycle_global_settings_auto_refresh(aglet, false)?;
                 }
+                GlobalSettingsRow::SearchMode => {
+                    self.cycle_global_settings_search_mode(aglet, false)?;
+                }
                 GlobalSettingsRow::SectionBorders => {
                     self.cycle_global_settings_section_borders(aglet, false)?;
                 }
@@ -313,6 +327,9 @@ impl App {
             KeyCode::Enter => match self.global_settings_selected_kind() {
                 GlobalSettingsRow::AutoRefresh => {
                     self.cycle_global_settings_auto_refresh(aglet, true)?;
+                }
+                GlobalSettingsRow::SearchMode => {
+                    self.cycle_global_settings_search_mode(aglet, true)?;
                 }
                 GlobalSettingsRow::SectionBorders => {
                     self.cycle_global_settings_section_borders(aglet, true)?;
