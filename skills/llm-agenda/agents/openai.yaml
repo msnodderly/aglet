@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Agenda"
+  short_description: "Maintain repo-local PARA-based Aglet knowledge bases"
+  default_prompt: "Use the repo-local $llm-agenda skill to ingest this source into my Agenda database."

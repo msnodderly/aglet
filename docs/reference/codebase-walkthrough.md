@@ -1,6 +1,6 @@
 ---
 title: Codebase Walkthrough
-updated: 2026-04-01
+updated: 2026-05-10
 ---
 
 # Aglet Codebase Walkthrough
@@ -955,7 +955,7 @@ A key detail: running `aglet` with no subcommand opens the TUI. Use `aglet list`
 Let us see the CLI in action against the project's own dogfooding database (`aglet-features.ag`):
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag category list 2>/dev/null
+cargo run --bin aglet -- --db ../aglet-features.ag category list 2>/dev/null
 ```
 
 ```output
@@ -986,7 +986,7 @@ cargo run --bin aglet -- --db aglet-features.ag category list 2>/dev/null
 ```
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag view list 2>/dev/null
+cargo run --bin aglet -- --db ../aglet-features.ag view list 2>/dev/null
 ```
 
 ```output

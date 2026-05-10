@@ -1,0 +1,88 @@
+name: Build and release aglet
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aglet-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build standalone package
+        shell: bash
+        run: scripts/build-standalone-aglet.sh --out-dir dist
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aglet-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish continuous release
+    needs: package
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Move continuous release tag
+        run: |
+          git tag --force aglet-latest "$GITHUB_SHA"
+          git push --force origin aglet-latest
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: aglet-latest
+          name: Latest aglet binary
+          body: |
+            Standalone aglet binaries built from the latest merged pull request.
+
+            Commit: ${{ github.sha }}
+          prerelease: true
+          make_latest: true
+          files: release-assets/*
+          overwrite_files: true
