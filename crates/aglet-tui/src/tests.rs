@@ -7194,16 +7194,16 @@ fn edit_item_panel_footer_shows_esc_cancel() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("Type note  Enter:new line  Tab:actions  Esc:cancel"),
-        "edit-item note help should not advertise save while the note owns text input: {rendered}"
+        rendered.contains("Type note  Enter:new line  Ctrl-S:save  Tab:actions  Esc:cancel"),
+        "edit-item note help should advertise Ctrl-S while preserving Enter newline: {rendered}"
     );
     assert!(
         rendered.contains("Esc:cancel"),
         "edit-item help should show Esc cancel semantics: {rendered}"
     );
     assert!(
-        !rendered.contains("S:save"),
-        "edit-item note focus should require tabbing out before capital-S save is shown: {rendered}"
+        !rendered.contains("  S:save"),
+        "edit-item note focus should not show capital-S save until focus leaves text input: {rendered}"
     );
     assert!(
         !rendered.contains("Esc:save"),
@@ -7229,11 +7229,11 @@ fn add_item_panel_note_focus_hides_capital_s_save_hint() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("Type note  Enter:new line  Tab:categories  Esc:cancel"),
-        "add-item note help should describe note editing without direct save: {rendered}"
+        rendered.contains("Type note  Enter:new line  Ctrl-S:save  Tab:categories  Esc:cancel"),
+        "add-item note help should describe note editing and Ctrl-S save: {rendered}"
     );
     assert!(
-        !rendered.contains("S:save"),
+        !rendered.contains("  S:save"),
         "add-item note focus should not show capital-S save until focus leaves text input: {rendered}"
     );
 }
@@ -11616,8 +11616,8 @@ fn category_create_panel_render_uses_category_manager_backdrop() {
         "category manager should remain visible behind the create panel"
     );
     assert!(
-        text.contains("Enter:save"),
-        "category-create help should show Enter save: {text}"
+        text.contains("Enter/Ctrl-S:save"),
+        "category-create help should show Enter and Ctrl-S save: {text}"
     );
     assert!(
         text.contains("Esc:cancel"),

@@ -4030,6 +4030,10 @@ impl App {
         }
 
         match code {
+            _ if self.is_ctrl_s_code(code) => {
+                self.apply_category_direct_edit_draft(aglet)?;
+                return Ok(false);
+            }
             KeyCode::Char('S')
                 if !matches!(
                     self.active_category_direct_edit_focus(),

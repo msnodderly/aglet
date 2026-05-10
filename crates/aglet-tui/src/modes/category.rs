@@ -625,7 +625,8 @@ impl App {
     }
 
     fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
-        matches!(code, KeyCode::Char('S'))
+        self.is_ctrl_s_code(code)
+            || matches!(code, KeyCode::Char('S'))
             || (matches!(code, KeyCode::Char('s'))
                 && self.transient.key_modifiers.contains(KeyModifiers::SHIFT))
     }
@@ -1135,6 +1136,10 @@ impl App {
 
         if self.category_manager_details_inline_input().is_some() {
             match code {
+                _ if self.is_ctrl_s_code(code) => {
+                    self.save_category_manager_numeric_inline_edit(aglet)?;
+                    return Ok(true);
+                }
                 KeyCode::Esc => {
                     self.set_category_manager_details_inline_input(None);
                     self.status = "Numeric format edit canceled".to_string();
@@ -1171,6 +1176,13 @@ impl App {
             && self.category_manager_details_note_editing()
         {
             match code {
+                _ if self.is_ctrl_s_code(code) => {
+                    self.set_category_manager_details_note_editing(false);
+                    if self.category_manager_details_note_dirty() {
+                        self.save_category_manager_details_note(aglet)?;
+                    }
+                    return Ok(true);
+                }
                 KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
                     self.set_category_manager_details_note_editing(false);
                     if self.category_manager_details_note_dirty() {
@@ -1196,6 +1208,13 @@ impl App {
             && self.category_manager_details_also_match_editing()
         {
             match code {
+                _ if self.is_ctrl_s_code(code) => {
+                    self.set_category_manager_details_also_match_editing(false);
+                    if self.category_manager_details_also_match_dirty() {
+                        self.save_category_manager_details_also_match(aglet)?;
+                    }
+                    return Ok(true);
+                }
                 KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
                     self.set_category_manager_details_also_match_editing(false);
                     if self.category_manager_details_also_match_dirty() {
