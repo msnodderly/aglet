@@ -1,6 +1,6 @@
 ---
 title: Open Project Items by Priority
-updated: 2026-03-21
+updated: 2026-05-10
 ---
 
 # Find Open Project Items (Generic Parameter)
@@ -18,13 +18,13 @@ Goal:
 Single project category:
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag list --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Priority
+cargo run --bin aglet -- --db ../aglet-features.ag list --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Priority
 ```
 
 OR across multiple project categories:
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag list --any-category aglet --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Priority
+cargo run --bin aglet -- --db ../aglet-features.ag list --any-category aglet --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Priority
 ```
 
 You can combine both styles:
@@ -43,9 +43,9 @@ scripts/list-open-project-items.sh [--db <db-path>] <project-category> [<project
 Examples:
 
 ```bash
-scripts/list-open-project-items.sh --db aglet-features.ag neonv
-scripts/list-open-project-items.sh --db aglet-features.ag aglet neonv
-scripts/list-open-project-items.sh --db aglet-features.ag project3
+scripts/list-open-project-items.sh --db ../aglet-features.ag neonv
+scripts/list-open-project-items.sh --db ../aglet-features.ag aglet neonv
+scripts/list-open-project-items.sh --db ../aglet-features.ag project3
 ```
 
 The script uses native `list` filters (`--any-category`, `--exclude-category`) and sorts by `Priority`.
@@ -55,7 +55,7 @@ The script uses native `list` filters (`--any-category`, `--exclude-category`) a
 After selecting an `ITEM_ID` from the open-item list, claim it atomically:
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db ../aglet-features.ag claim <ITEM_ID>
 ```
 
 Default claim preconditions fail when the item already has `In Progress` or `Complete`, which reduces multi-agent pickup races.
@@ -67,5 +67,5 @@ Default claim preconditions fail when the item already has `In Progress` or `Com
 - `--sort Priority` sorts by category label text. For explicit severity order, use:
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag list --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Critical:asc --sort High:asc --sort Normal:asc --sort Low:asc
+cargo run --bin aglet -- --db ../aglet-features.ag list --any-category neonv --exclude-category Done --exclude-category Complete --exclude-category "In Progress" --exclude-category "Waiting/Blocked" --sort Critical:asc --sort High:asc --sort Normal:asc --sort Low:asc
 ```

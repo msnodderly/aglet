@@ -3,11 +3,11 @@ set -euo pipefail
 
 usage() {
   echo "usage: $0 [--db <db-path>] <project-category> [<project-category> ...]" >&2
-  echo "example: $0 --db aglet-features.ag neonv" >&2
-  echo "example: $0 --db aglet-features.ag aglet neonv" >&2
+  echo "example: $0 --db ../aglet-features.ag neonv" >&2
+  echo "example: $0 --db ../aglet-features.ag aglet neonv" >&2
 }
 
-db_path="aglet-features.ag"
+db_path="../aglet-features.ag"
 project_categories=()
 
 while [ "$#" -gt 0 ]; do

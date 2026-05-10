@@ -3,11 +3,11 @@ set -euo pipefail
 
 if [ "$#" -gt 1 ]; then
   echo "usage: $0 [db-path]" >&2
-  echo "example: $0 aglet-features.ag" >&2
+  echo "example: $0 ../aglet-features.ag" >&2
   exit 1
 fi
 
-db_path="${1:-aglet-features.ag}"
+db_path="${1:-../aglet-features.ag}"
 
 if [ -e "$db_path" ]; then
   echo "error: database already exists at $db_path" >&2

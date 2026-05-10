@@ -306,9 +306,10 @@ Every agent session must, before writing the handoff doc:
 
 ## Aglet Features Database
 
-`aglet-features.ag` in the project root is the canonical issue-tracking database
-for aglet. The DB file is local-only and is not committed to git; create it
-locally as needed (see `scripts/init-aglet-features-db.sh`). Categories:
+`../aglet-features.ag` (that is, `/Users/mds/src/aglet-features.ag`) is the
+canonical issue-tracking database for aglet. The DB file is local-only and is
+not committed to git; create it locally as needed (see
+`scripts/init-aglet-features-db.sh`). Categories:
 
 - **Issue type** (non-exclusive): Bug, Idea, Feature request
 - **Priority** (exclusive): Critical, High, Normal, Low
@@ -367,13 +368,13 @@ categories individually with the full UUID:
 
 ```bash
 # 1. Create the item and extract the UUID from the "created ..." line
-item_id=$(cargo run --bin aglet -- --db aglet-features.ag add "Title here" --note "Description..." 2>&1 | awk '/^created /{print $2; exit}')
+item_id=$(cargo run --bin aglet -- --db ../aglet-features.ag add "Title here" --note "Description..." 2>&1 | awk '/^created /{print $2; exit}')
 
 # 2. Assign categories (use full UUID)
-cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" "Feature request" 2>&1 | tail -1
-cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Aglet 2>&1 | tail -1
-cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
-cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
+cargo run --bin aglet -- --db ../aglet-features.ag category assign "$item_id" "Feature request" 2>&1 | tail -1
+cargo run --bin aglet -- --db ../aglet-features.ag category assign "$item_id" Aglet 2>&1 | tail -1
+cargo run --bin aglet -- --db ../aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
+cargo run --bin aglet -- --db ../aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
 ```
 
 Quote category names that contain spaces (e.g., `"Feature request"`,
@@ -384,14 +385,14 @@ Quote category names that contain spaces (e.g., `"Feature request"`,
 **Do not use shell variable shorthand for commands.** This does NOT work:
 
 ```bash
-CLI="cargo run --bin aglet -- --db aglet-features.ag"
+CLI="cargo run --bin aglet -- --db ../aglet-features.ag"
 $CLI list   # ERROR: command not found
 ```
 
 Write the full command each time, or use `&&` to chain them:
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag add "Title" --note "..." 2>&1 | tail -2
+cargo run --bin aglet -- --db ../aglet-features.ag add "Title" --note "..." 2>&1 | tail -2
 ```
 
 **`add` output parsing gotcha.** `aglet add` can print additional lines
@@ -406,11 +407,11 @@ happens, re-run selection and claim the next eligible item; do not force-assign.
 **Current claim CLI syntax is workflow-based.** The public commands are:
 
 ```bash
-cargo run --bin aglet -- --db aglet-features.ag ready
-cargo run --bin aglet -- --db aglet-features.ag claim <ITEM_ID>
-cargo run --bin aglet -- --db aglet-features.ag release <ITEM_ID>
+cargo run --bin aglet -- --db ../aglet-features.ag ready
+cargo run --bin aglet -- --db ../aglet-features.ag claim <ITEM_ID>
+cargo run --bin aglet -- --db ../aglet-features.ag release <ITEM_ID>
 # alias:
-cargo run --bin aglet -- --db aglet-features.ag unclaim <ITEM_ID>
+cargo run --bin aglet -- --db ../aglet-features.ag unclaim <ITEM_ID>
 ```
 
 Practical implications:
@@ -429,8 +430,8 @@ UUID instead of the full ID:
 
 ```bash
 # These are equivalent:
-cargo run --bin aglet -- --db aglet-features.ag category assign be6f0754 High
-cargo run --bin aglet -- --db aglet-features.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
+cargo run --bin aglet -- --db ../aglet-features.ag category assign be6f0754 High
+cargo run --bin aglet -- --db ../aglet-features.ag category assign be6f0754-a764-40ee-bb48-0bfc225b174b High
 ```
 
 ## Item ID Prefix Matching
@@ -448,10 +449,10 @@ hex prefix works (e.g., `d157` resolves to `d15772e9-b608-...`).
 assign categories with `&&`-chained commands:
 
 ```bash
-item_id=$(cargo run --bin aglet -- --db aglet-features.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
+item_id=$(cargo run --bin aglet -- --db ../aglet-features.ag add "My item" --note "..." 2>&1 | awk '/^created /{print $2; exit}')
 # Then assign:
-cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
-cargo run --bin aglet -- --db aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
+cargo run --bin aglet -- --db ../aglet-features.ag category assign "$item_id" Normal 2>&1 | tail -1
+cargo run --bin aglet -- --db ../aglet-features.ag category assign "$item_id" Ready 2>&1 | tail -1
 ```
 
 **Items appearing twice in `list` or `view show` is expected.** The "All Items"
