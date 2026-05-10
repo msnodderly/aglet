@@ -10,7 +10,7 @@ experimental support for LLM-based categorization).
 
 Currently I use this software to manage my GTD-style todo list, track basic
 financial budgets and recurring bills, and track motorcycle maintenance. It
-also acts as a backing store for my own personal knowledge base db, inspired by
+also acts as a backing store for my own personal knowledgebase db, inspired by
 Andrej Karpathy's [LLM
 wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 concept, and Garry Tan's [gbrain](https://github.com/garrytan/gbrain).
@@ -19,13 +19,13 @@ concept, and Garry Tan's [gbrain](https://github.com/garrytan/gbrain).
 ## What was Lotus Agenda?
 
 1. Kapor/Belove/Kaplan ACM paper (1990):
-  - PDF: https://dl.acm.org/doi/pdf/10.1145/79204.79212
-  - DOI page: https://dl.acm.org/doi/10.1145/79204.79212
+   - PDF: https://dl.acm.org/doi/pdf/10.1145/79204.79212
+   - DOI page: https://dl.acm.org/doi/10.1145/79204.79212
 
 2. Fallows Atlantic article (May 1992):
-  - Title: "Hidden Powers: Agenda Can Organize Your Life Better Than Ordinary Programs"
-  - URL: https://cdn.theatlantic.com/media/archives/1992/05/269-5/132676110.pdf
-  - Bonus — the draft text (95% similar per Bob Newell's site): https://www.bobnewell.net/agenda/atlantic.txt.html
+   - Title: "Hidden Powers: Agenda Can Organize Your Life Better Than Ordinary Programs"
+   - URL: https://cdn.theatlantic.com/media/archives/1992/05/269-5/132676110.pdf
+   - Bonus — the draft text: https://www.bobnewell.net/agenda/atlantic.txt.html
 
 ## What is aglet?
 
