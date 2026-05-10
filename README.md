@@ -37,9 +37,10 @@ keybindings are different, but otherwise pretty much all of the historical
 Agenda articles and tutorials you can find online can be accomplished within
 aglet.
 
-Of the original Lotus Agenda, Wikipedia notes "Its flexibility proved to be its
-weakness. New users confronted with so much flexibility were often overpowered
-by the steep learning curve required to use the program."
+Of the original Lotus Agenda, Wikipedia notes 
+> Its flexibility proved to be its weakness. New users confronted with so
+> much flexibility were often overpowered by the steep learning curve required
+> to use the program."
 
 But aglet is experimental software built by and for a single person (me). Part
 of the motivation is to revisit some of these concepts and see if there is
