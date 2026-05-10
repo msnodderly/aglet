@@ -5588,39 +5588,39 @@ impl App {
         // Help row
         let base_help = match panel.focus {
             InputPanelFocus::Text => match panel.kind {
-                InputPanelKind::NumericValue => "Type value  Enter:save  Esc:cancel",
-                InputPanelKind::NameInput => "Type name  Enter:save  Esc:cancel",
+                InputPanelKind::NumericValue => "Type value  Enter/Ctrl-S:save  Esc:cancel",
+                InputPanelKind::NameInput => "Type name  Enter/Ctrl-S:save  Esc:cancel",
                 InputPanelKind::WhenDate => {
-                    "Enter natural language or ISO datetime  Enter:save  Esc:cancel"
+                    "Enter natural language or ISO datetime  Enter/Ctrl-S:save  Esc:cancel"
                 }
-                InputPanelKind::CategoryCreate => "Type name  Enter:save  Esc:cancel  Tab:next",
-                InputPanelKind::EditItem => "Type title  Enter:save  Esc:cancel  Tab:when",
-                InputPanelKind::AddItem => "Type title  Enter:save  Esc:cancel  Tab:when",
+                InputPanelKind::CategoryCreate => "Type name  Enter/Ctrl-S:save  Esc:cancel  Tab:next",
+                InputPanelKind::EditItem => "Type title  Enter/Ctrl-S:save  Esc:cancel  Tab:when",
+                InputPanelKind::AddItem => "Type title  Enter/Ctrl-S:save  Esc:cancel  Tab:when",
             },
             InputPanelFocus::Note => {
                 if panel.kind == InputPanelKind::EditItem {
-                    "Type note  Enter:new line  Tab:actions  Esc:cancel"
+                    "Type note  Enter:new line  Ctrl-S:save  Tab:actions  Esc:cancel"
                 } else {
-                    "Type note  Enter:new line  Tab:categories  Esc:cancel"
+                    "Type note  Enter:new line  Ctrl-S:save  Tab:categories  Esc:cancel"
                 }
             }
             InputPanelFocus::Categories if panel.category_filter_editing => {
                 "Type filter  Enter:keep  Esc:done  Tab:next"
             }
-            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  Tab:text  Esc:close",
+            InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  S/Ctrl-S:save  Tab:text  Esc:close",
             InputPanelFocus::Actions => {
                 if panel.pending_suggestions.is_empty() {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S:save  Esc:cancel"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S/Ctrl-S:save  Esc:cancel"
                 } else {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S:save  Esc:cancel"
+                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S/Ctrl-S:save  Esc:cancel"
                 }
             }
             InputPanelFocus::Suggestions => {
-                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S:save  Esc:cancel"
+                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S/Ctrl-S:save  Esc:cancel"
             }
-            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Tab:text  Esc:cancel",
+            InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Ctrl-S:save  Tab:text  Esc:cancel",
             InputPanelFocus::When => {
-                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Tab:next  Esc:cancel"
+                "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Ctrl-S:save  Tab:next  Esc:cancel"
             }
         };
         let mut help_style = Style::default();

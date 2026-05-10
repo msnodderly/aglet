@@ -80,6 +80,11 @@ impl App {
         KeyEvent::new(code, self.transient.key_modifiers)
     }
 
+    pub(crate) fn is_ctrl_s_code(&self, code: KeyCode) -> bool {
+        matches!(code, KeyCode::Char('s') | KeyCode::Char('S'))
+            && self.transient.key_modifiers.contains(KeyModifiers::CONTROL)
+    }
+
     pub(crate) fn selected_category_is_reserved(&self) -> bool {
         self.selected_category_row()
             .map(|row| row.is_reserved)

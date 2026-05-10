@@ -2,13 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use aglet_core::classification::ClassificationSuggestion;
 use aglet_core::model::{CategoryId, CategoryValueKind, ItemId, RecurrenceRule};
-#[cfg(test)]
-use crossterm::event::KeyModifiers;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rust_decimal::Decimal;
 
 use crate::text_buffer::TextBuffer;
 use crate::SuggestionDecision;
+
+fn is_ctrl_s_event(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum InputPanelKind {
@@ -355,6 +358,9 @@ impl InputPanel {
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
         let code = key.code;
+        if is_ctrl_s_event(key) {
+            return InputPanelAction::Save;
+        }
         if let Some(action) = self.handle_focus_navigation(code, current_row_is_assigned_numeric) {
             return action;
         }
@@ -729,6 +735,30 @@ mod tests {
             p.handle_key(KeyCode::Char('S'), true),
             InputPanelAction::Handled
         );
+    }
+
+    #[test]
+    fn ctrl_s_saves_from_text_when_note_and_numeric_category() {
+        for focus in [
+            InputPanelFocus::Text,
+            InputPanelFocus::When,
+            InputPanelFocus::Note,
+            InputPanelFocus::Categories,
+        ] {
+            let mut p = add_panel();
+            p.focus = focus;
+            assert_eq!(
+                p.handle_key_event(
+                    KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                    true,
+                ),
+                InputPanelAction::Save,
+                "Ctrl-S should save from {focus:?}"
+            );
+            assert_eq!(p.text.text(), "");
+            assert_eq!(p.when_buffer.text(), "");
+            assert_eq!(p.note.text(), "");
+        }
     }
 
     // --- Text input routing ---

@@ -348,7 +348,10 @@ impl App {
                 self.cycle_view_edit_pane_focus(false);
                 return Ok(true);
             }
-            KeyCode::Char('S') => {
+            KeyCode::Char('S') if !self.is_ctrl_s_code(code) => {
+                return self.handle_view_edit_save(aglet);
+            }
+            _ if self.is_ctrl_s_code(code) => {
                 return self.handle_view_edit_save(aglet);
             }
             KeyCode::Char('p') => {
