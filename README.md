@@ -8,7 +8,7 @@ It allows you to input unstructured notes and to-dos, then categorize them
 either manually or with automatic rules based on the text (in aglet there is
 experimental support for LLM-based categorization).
 
-This is a project I've had in my mind for literally 20 years, ever since watching the slow motion [Chandler](https://www.dreamingincode.com/) disaster unfold in realtime back in the 2000's and learning about the original Lotus Agenda that was its inspiration.
+This is a project I've had in my mind for literally 20 years, ever since watching the slow motion [Chandler](https://www.dreamingincode.com/) disaster unfold in realtime back in the 2000's and learning about the original (ancient, even then) Lotus Agenda that was its inspiration.
 
 
 Currently I use this software to manage my GTD-style todo list, track basic
