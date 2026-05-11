@@ -28,7 +28,7 @@ Screenshot:
 
 ## What was Lotus Agenda?
 
-1. Kapor/Belove/Kaplan ACM paper (1990):
+1. Kapor et al ACM paper (1990):
    - PDF: https://dl.acm.org/doi/pdf/10.1145/79204.79212
 
 2. James Fallows Atlantic article (May 1992):
