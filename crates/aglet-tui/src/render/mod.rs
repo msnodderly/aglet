@@ -2159,7 +2159,7 @@ impl App {
                 .map(|s| s.title.as_str())
                 .unwrap_or("section")
         };
-        let label = format!("[{section_name} | {}] ", self.search_mode_label());
+        let label = format!("[{section_name}] ");
         let is_focused = self.mode == Mode::SearchBarFocused;
 
         let label_style = Style::default().fg(Color::Cyan);
