@@ -94,6 +94,8 @@ any time to open the full in-app help panel.
 aglet parses dates from item text when it can, and matching category names in
 the item text or note can be assigned automatically.
 
+![Aglet Add Item panel with description, note, and category checklist fields](docs/images/aglet-add-new-item.png)
+
 ### Add categories
 
 Categories are the basic filing system. A category can be assigned manually,
