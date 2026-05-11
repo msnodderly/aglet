@@ -18,6 +18,7 @@ proposals).
 | `demos/` | Executable demos |
 | `agents/handoff/` | Session handoff logs (`YYYY-MM-DD-NNN-feature.md`) |
 | `backlog/` | Feature requests |
+| `images/` | Screenshot assets referenced by the root README and docs |
 
 ## Frontmatter Conventions
 

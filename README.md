@@ -15,6 +15,12 @@ Andrej Karpathy's [LLM
 wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 concept, and Garry Tan's [gbrain](https://github.com/garrytan/gbrain).
 
+![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
+
+Aglet views can act as focused dashboards over the same database: area planning,
+research notes, finance reviews, maintenance lists, and project queues are all
+just saved category lenses.
+
 
 ## What was Lotus Agenda?
 
@@ -103,6 +109,8 @@ To assign a category manually, return to the main view, select an item, press
 `a`, choose a category, and press `Space` to toggle the assignment. Press
 `Enter` to close the picker.
 
+![Aglet Category Manager with a category tree, category flags, matching rules, actions, and notes](docs/images/aglet-category-manager.png)
+
 ### Add views
 
 Views are saved lenses over the same item database. A view can focus on a
@@ -119,6 +127,25 @@ category, hide completed items, and group matching items into sections.
 Include criteria are AND-based, so a view with both `Work` and `Urgent`
 includes only items that have both categories. Use OR criteria when any one of
 several categories should match.
+
+![Aglet View Palette listing saved views over a finance review board](docs/images/aglet-view-palette.png)
+
+The view editor configures filters, sections, columns, layout, aliases, and
+preview behavior without leaving the TUI.
+
+![Aglet View Editor for a Finance and Cost Review view with section details and live preview](docs/images/aglet-view-editor.png)
+
+### Example saved views
+
+A research view can group reference notes and follow-up work while sharing the
+same status model as task views.
+
+![Aglet Agenda Research view with reference and LLM Wiki sections](docs/images/aglet-agenda-research-view.png)
+
+A finance view can use numeric columns and section totals for budgets, renewal
+costs, or maintenance planning.
+
+![Aglet Finance and Cost Review view showing custom columns and per-section sums](docs/images/aglet-finance-cost-review.png)
 
 ### Keybinding Cheat Sheet
 
