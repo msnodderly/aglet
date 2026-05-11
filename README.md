@@ -149,6 +149,16 @@ costs, or maintenance planning.
 
 ![Aglet Finance and Cost Review view showing custom columns and per-section sums](docs/images/aglet-finance-cost-review.png)
 
+Project dashboards show the same items grouped by project with task metadata
+such as status, priority, dates, and effort.
+
+![Aglet Projects Dashboard showing Project Orion, LLM Wiki, Aglet, and Project Lyra sections with status and effort columns](docs/images/aglet-projects-dashboard.png)
+
+The same project work can also be viewed Kanban-style by status, with horizontal
+lanes for Not Started, In Progress, Waiting/Blocked, and Completed.
+
+![Aglet Status by Project Kanban view with project tasks arranged in status lanes](docs/images/aglet-status-by-project-kanban.png)
+
 ### Keybinding Cheat Sheet
 
 | Area | Keys | Action |
