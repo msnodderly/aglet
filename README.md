@@ -63,8 +63,7 @@ cargo run --bin aglet -- --db aglet-features.ag
 cargo run --bin aglet -- --db aglet-features.ag list --view "All Items"
 ```
 
-Running `aglet` without a subcommand opens the TUI. Use `aglet list` for
-non-interactive list output.
+Running `aglet` without a subcommand opens the TUI.  
 
 ## Getting Started
 
@@ -133,7 +132,7 @@ several categories should match.
 ![Aglet View Palette listing saved views over a finance review board](docs/images/aglet-view-palette.png)
 
 The view editor configures filters, sections, columns, layout, aliases, and
-preview behavior without leaving the TUI.
+preview behavior.
 
 ![Aglet View Editor for a Finance and Cost Review view with section details and live preview](docs/images/aglet-view-editor.png)
 
@@ -149,7 +148,7 @@ costs, or maintenance planning.
 
 ![Aglet Finance and Cost Review view showing custom columns and per-section sums](docs/images/aglet-finance-cost-review.png)
 
-Project dashboards show the same items grouped by project with task metadata
+A Project dashboard can show the same items grouped by project with task metadata
 such as status, priority, dates, and effort.
 
 ![Aglet Projects Dashboard showing Project Orion, LLM Wiki, Aglet, and Project Lyra sections with status and effort columns](docs/images/aglet-projects-dashboard.png)
