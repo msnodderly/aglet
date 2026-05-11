@@ -2,7 +2,7 @@
 
 Date: 2026-02-18
 Scope: Standard views only (Datebook and Show views are explicitly out of scope)
-Primary input: `archive/source-material/lotus-agenda-views-summary.md`
+Primary input: external Lotus Agenda documentation (not included in repo)
 
 ## 1. Objective
 

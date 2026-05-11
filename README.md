@@ -208,6 +208,10 @@ matching SHA-256 checksum file. GitHub Actions runs the same procedure on every
 pull request, and publishes the packaged binaries to the `aglet-latest`
 prerelease when changes land on `main` or `master`.
 
+## License
+
+aglet is licensed under the [GNU General Public License v3.0 or later](LICENSE).
+
 ## References
 
 - Bob Newell's Agenda Page. — Archive of original documentation, FAQs, macros,

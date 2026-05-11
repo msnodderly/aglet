@@ -3,6 +3,7 @@ name = "aglet-tui"
 version = "0.1.0"
 edition = "2021"
 autobins = false
+license = "GPL-3.0-or-later"
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
