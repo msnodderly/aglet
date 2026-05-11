@@ -160,6 +160,11 @@ lanes for Not Started, In Progress, Waiting/Blocked, and Completed.
 
 ![Aglet Status by Project Kanban view with project tasks arranged in status lanes](docs/images/aglet-status-by-project-kanban.png)
 
+Datebook views bucket dated items into calendar ranges, making upcoming work,
+appointments, renewals, and deadlines visible together.
+
+![Aglet Scheduling datebook view with weekly date buckets and dated items](docs/images/aglet-datebook-scheduling-view.png)
+
 ### Keybinding Cheat Sheet
 
 | Area | Keys | Action |
