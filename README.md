@@ -8,7 +8,7 @@ It allows you to input unstructured notes and to-dos, then categorize them
 either manually or with automatic rules based on the text (in aglet there is
 experimental support for LLM-based categorization).
 
-This is a project I've had in my mind for literally 20 years, ever since watching the slow motion [Chandler](https://www.dreamingincode.com/) disaster unfold in realtime back in the 2000's and learning about the original (ancient, even then) Lotus Agenda that was its inspiration.
+This is a project I've had in my mind for literally 20 years, ever since watching the slow motion [Chandler](https://www.dreamingincode.com/) disaster unfold in realtime back in the mid-2000's and learning about the original (ancient, even then) Lotus Agenda that was its inspiration.
 
 
 Currently I use this software to manage my GTD-style todo list, track basic
@@ -19,7 +19,7 @@ wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 concept, and Garry Tan's [gbrain](https://github.com/garrytan/gbrain).
 
 
-Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda lists are all saved perspectives of the same items, organized by categories.
+Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda items are all saved perspectives of the same items, organized by categories.
 
 Screenshot:
 
