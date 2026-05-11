@@ -17,7 +17,9 @@ concept, and Garry Tan's [gbrain](https://github.com/garrytan/gbrain).
 
 
 
-Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda lists are all saved perspectives of the same items, organized by categories
+Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda lists are all saved perspectives of the same items, organized by categories.
+
+Screenshot:
 
 ![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
 
