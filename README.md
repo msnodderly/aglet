@@ -30,12 +30,9 @@ Screenshot:
 
 1. Kapor/Belove/Kaplan ACM paper (1990):
    - PDF: https://dl.acm.org/doi/pdf/10.1145/79204.79212
-   - DOI page: https://dl.acm.org/doi/10.1145/79204.79212
 
-2. Fallows Atlantic article (May 1992):
-   - Title: "Hidden Powers: Agenda Can Organize Your Life Better Than Ordinary Programs"
-   - URL: https://cdn.theatlantic.com/media/archives/1992/05/269-5/132676110.pdf
-   - Bonus — the draft text: https://www.bobnewell.net/agenda/atlantic.txt.html
+2. James Fallows Atlantic article (May 1992):
+   - PDF: [Hidden Powers: Agenda Can Organize Your Life Better Than Ordinary Programs](https://cdn.theatlantic.com/media/archives/1992/05/269-5/132676110.pdf) 
 
 ## What is aglet?
 
