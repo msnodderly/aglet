@@ -52,8 +52,8 @@ Of the original Lotus Agenda, Wikipedia notes
 But aglet is experimental software built by and for a single person (me). Part
 of the motivation is to revisit some of these concepts and see if there is
 anything to be learned, are there concepts or ideas ready to be revived 35+
-years later.
-
+years later. If anyone else acutally decides to use it or finds it  useful, that 
+will be a fun bonus.
 
 ## Quick Start
 
