@@ -15,11 +15,11 @@ Andrej Karpathy's [LLM
 wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 concept, and Garry Tan's [gbrain](https://github.com/garrytan/gbrain).
 
-![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
 
-Aglet views can act as focused dashboards over the same database: area planning,
-research notes, finance reviews, maintenance lists, and project queues are all
-just saved category lenses.
+
+Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda lists are all saved perspectives of the same items, organized by categories
+
+![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
 
 
 ## What was Lotus Agenda?
@@ -84,7 +84,7 @@ any time to open the full in-app help panel.
 2. Type an item, such as `Review Work budget Friday`.
 3. Use `Tab` to move through the editor fields. Add a note if you want longer
    context.
-4. Press `S` to save, or `Esc` to cancel.
+4. Press `ctrl-s` to save, or `Esc` to cancel.
 5. Repeat for a few more items, such as `Buy groceries` or `Schedule motorcycle
    maintenance next week`.
 
