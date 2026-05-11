@@ -112,6 +112,7 @@ To assign a category manually, return to the main view, select an item, press
 `a`, choose a category, and press `Space` to toggle the assignment. Press
 `Enter` to close the picker.
 
+Category manager:
 ![Aglet Category Manager with a category tree, category flags, matching rules, actions, and notes](docs/images/aglet-category-manager.png)
 
 ### Add views
@@ -131,11 +132,13 @@ Include criteria are AND-based, so a view with both `Work` and `Urgent`
 includes only items that have both categories. Use OR criteria when any one of
 several categories should match.
 
+Views list:
 ![Aglet View Palette listing saved views over a finance review board](docs/images/aglet-view-palette.png)
 
 The view editor configures filters, sections, columns, layout, aliases, and
 preview behavior.
 
+View manager:
 ![Aglet View Editor for a Finance and Cost Review view with section details and live preview](docs/images/aglet-view-editor.png)
 
 ### Example saved views
