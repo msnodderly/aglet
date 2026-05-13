@@ -1,0 +1,17 @@
+---
+source: crates/aglet-cli/tests/add_show_edit.rs
+assertion_line: 108
+expression: show_run.stdout
+---
+id:         [uuid]
+text:       Work session
+status:     open
+when:       -
+created_at: [timestamp]
+modified_at: [timestamp]
+assignments:
+  Hours | Manual | manual:cli.set-value
+    Assigned manually
+prereqs: (none)
+dependents (blocks): (none)
+related: (none)

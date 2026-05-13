@@ -1,0 +1,7 @@
+---
+source: crates/aglet-cli/tests/add_show_edit.rs
+assertion_line: 70
+expression: add_run.stdout
+---
+created [uuid]
+parsed_when=2026-06-01T00:00:00

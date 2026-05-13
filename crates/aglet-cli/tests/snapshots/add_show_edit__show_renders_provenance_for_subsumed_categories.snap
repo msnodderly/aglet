@@ -1,0 +1,19 @@
+---
+source: crates/aglet-cli/tests/add_show_edit.rs
+assertion_line: 145
+expression: show_run.stdout
+---
+id:         [uuid]
+text:       Important task
+status:     open
+when:       -
+created_at: [timestamp]
+modified_at: [timestamp]
+assignments:
+  High | Manual | manual:cli.assign
+    Assigned manually
+  Priority | Subsumption | subsumption:Priority
+    Inherited from child High
+prereqs: (none)
+dependents (blocks): (none)
+related: (none)
