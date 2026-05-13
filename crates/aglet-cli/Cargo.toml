@@ -9,6 +9,9 @@ license = "GPL-3.0-or-later"
 name = "aglet"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 aglet-core = { path = "../aglet-core" }
 aglet-tui = { path = "../aglet-tui" }

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1.11", features = ["v4", "v5", "serde"] }
