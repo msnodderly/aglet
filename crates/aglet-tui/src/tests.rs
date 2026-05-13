@@ -19448,6 +19448,24 @@ fn view_edit_save_persists_view() {
 
 // ── Per-section filter tests (Phase 3) ─────────────────────────────────
 
+/// Return the shortest prefix of `target` (4 chars minimum) that does not
+/// collide with any UUID in `others`. Used by tests that assert
+/// "search by short UUID prefix matches exactly this item" so they don't
+/// flake when random UUIDs happen to share leading hex characters.
+fn unique_uuid_prefix(target: uuid::Uuid, others: &[uuid::Uuid]) -> String {
+    let target_str = target.to_string();
+    for len in 4..=target_str.len() {
+        let candidate = &target_str[..len];
+        if others
+            .iter()
+            .all(|other| !other.to_string().starts_with(candidate))
+        {
+            return candidate.to_string();
+        }
+    }
+    target_str
+}
+
 fn make_two_section_store(suffix: &str) -> (Store, std::path::PathBuf) {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -20451,7 +20469,13 @@ fn search_bar_filters_match_item_uuid_prefix() {
         .filter(|item| item.text == "Fix timeout bug")
         .collect::<Vec<_>>();
     assert_eq!(work_items.len(), 1, "expected fixture item");
-    let uuid_prefix = work_items[0].id.to_string()[..3].to_string();
+    let all_items = store.list_items().expect("list items for prefix dedup");
+    let other_ids: Vec<uuid::Uuid> = all_items
+        .iter()
+        .filter(|item| item.id != work_items[0].id)
+        .map(|item| item.id)
+        .collect();
+    let uuid_prefix = unique_uuid_prefix(work_items[0].id, &other_ids);
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
@@ -20609,7 +20633,7 @@ fn fuzzy_search_preserves_note_category_and_uuid_substring_fallbacks() {
     assert_eq!(app.slots[0].items.len(), 1);
     assert_eq!(app.slots[0].items[0].id, category_item.id);
 
-    let uuid_prefix = uuid_item.id.to_string()[..8].to_string();
+    let uuid_prefix = unique_uuid_prefix(uuid_item.id, &[note_item.id, category_item.id]);
     app.section_filters[0] = Some(uuid_prefix);
     app.refresh(&store).expect("refresh uuid fallback");
     assert_eq!(app.slots[0].items.len(), 1);
