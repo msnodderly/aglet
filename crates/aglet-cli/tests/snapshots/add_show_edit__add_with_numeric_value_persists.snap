@@ -1,6 +1,6 @@
 ---
 source: crates/aglet-cli/tests/add_show_edit.rs
-assertion_line: 108
+assertion_line: 107
 expression: show_run.stdout
 ---
 id:         [uuid]
@@ -10,7 +10,7 @@ when:       -
 created_at: [timestamp]
 modified_at: [timestamp]
 assignments:
-  Hours | Manual | manual:cli.set-value
+  Hours = 2.50 | Manual | manual:cli.set-value
     Assigned manually
 prereqs: (none)
 dependents (blocks): (none)
