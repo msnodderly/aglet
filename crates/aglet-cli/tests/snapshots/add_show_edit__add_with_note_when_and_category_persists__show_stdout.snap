@@ -1,0 +1,20 @@
+---
+source: crates/aglet-cli/tests/add_show_edit.rs
+assertion_line: 78
+expression: show_run.stdout
+---
+id:         [uuid]
+text:       Buy milk
+status:     open
+when:       2026-06-01T00:00:00
+created_at: [timestamp]
+modified_at: [timestamp]
+note:       Two percent, organic
+assignments:
+  Urgent | Manual | manual:cli.assign
+    Assigned manually
+  When | Manual | manual:cli.when
+    Assigned manually
+prereqs: (none)
+dependents (blocks): (none)
+related: (none)

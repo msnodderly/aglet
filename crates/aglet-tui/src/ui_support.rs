@@ -503,61 +503,7 @@ pub(super) fn standard_column_value(
     matches.join(", ")
 }
 
-/// Format a numeric value for display in a board cell.
-///
-/// Returns the en-dash placeholder when value is None.
-pub(super) fn format_numeric_cell(
-    value: Option<rust_decimal::Decimal>,
-    format: Option<&NumericFormat>,
-) -> String {
-    let Some(v) = value else {
-        return "\u{2013}".to_string();
-    };
-    let fmt = format.cloned().unwrap_or_default();
-    let rounded = v.round_dp(fmt.decimal_places as u32);
-    let raw = format!("{:.prec$}", rounded, prec = fmt.decimal_places as usize);
-
-    let formatted = if fmt.use_thousands_separator {
-        add_thousands_separator(&raw)
-    } else {
-        raw
-    };
-
-    match &fmt.currency_symbol {
-        Some(sym) => format!("{sym}{formatted}"),
-        None => formatted,
-    }
-}
-
-fn add_thousands_separator(s: &str) -> String {
-    let (integer_part, decimal_part) = match s.find('.') {
-        Some(pos) => (&s[..pos], Some(&s[pos..])),
-        None => (s, None),
-    };
-    let negative = integer_part.starts_with('-');
-    let digits = if negative {
-        &integer_part[1..]
-    } else {
-        integer_part
-    };
-    let mut result = String::new();
-    for (i, ch) in digits.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(ch);
-    }
-    let reversed: String = result.chars().rev().collect();
-    let mut out = String::new();
-    if negative {
-        out.push('-');
-    }
-    out.push_str(&reversed);
-    if let Some(dec) = decimal_part {
-        out.push_str(dec);
-    }
-    out
-}
+pub(super) use aglet_core::numeric_format::format_numeric_cell;
 
 /// Aggregate numeric values across items for a given column.
 #[derive(Default, Clone, Debug)]
@@ -1454,51 +1400,6 @@ mod tests {
         let mut cat = make_category("When");
         cat.parent = Some(CategoryId::new_v4());
         assert!(!is_valid_column_heading(&cat));
-    }
-
-    // --- format_numeric_cell tests ---
-
-    #[test]
-    fn format_numeric_cell_none_returns_dash() {
-        assert_eq!(format_numeric_cell(None, None), "\u{2013}");
-    }
-
-    #[test]
-    fn format_numeric_cell_default_format() {
-        use rust_decimal::Decimal;
-        let result = format_numeric_cell(Some(Decimal::new(24596, 2)), None);
-        assert_eq!(result, "245.96");
-    }
-
-    #[test]
-    fn format_numeric_cell_with_currency_and_thousands() {
-        use rust_decimal::Decimal;
-        let fmt = NumericFormat {
-            decimal_places: 2,
-            currency_symbol: Some("$".to_string()),
-            use_thousands_separator: true,
-        };
-        let result = format_numeric_cell(Some(Decimal::new(123456789, 2)), Some(&fmt));
-        assert_eq!(result, "$1,234,567.89");
-    }
-
-    #[test]
-    fn format_numeric_cell_rounds_to_decimal_places() {
-        use rust_decimal::Decimal;
-        let fmt = NumericFormat {
-            decimal_places: 0,
-            currency_symbol: None,
-            use_thousands_separator: false,
-        };
-        let result = format_numeric_cell(Some(Decimal::new(2567, 2)), Some(&fmt));
-        assert_eq!(result, "26");
-    }
-
-    #[test]
-    fn format_numeric_cell_integer_shows_decimals() {
-        use rust_decimal::Decimal;
-        let result = format_numeric_cell(Some(Decimal::new(42, 0)), None);
-        assert_eq!(result, "42.00");
     }
 
     // --- right_pad_cell tests ---

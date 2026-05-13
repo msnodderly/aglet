@@ -1682,6 +1682,8 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
     let item = store.get_item(item_id).map_err(|e| e.to_string())?;
     let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
     let category_names = category_name_map(&categories);
+    let categories_by_id: HashMap<CategoryId, &Category> =
+        categories.iter().map(|c| (c.id, c)).collect();
 
     let done = if item.is_done { "done" } else { "open" };
     let when = item
@@ -1723,13 +1725,28 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
                     .get(cat_id)
                     .cloned()
                     .unwrap_or_else(|| cat_id.to_string());
-                (name, assignment)
+                (*cat_id, name, assignment)
             })
             .collect();
-        rows.sort_by_key(|(name, _)| name.to_ascii_lowercase());
-        for (name, assignment) in rows {
+        rows.sort_by_key(|(_, name, _)| name.to_ascii_lowercase());
+        for (cat_id, name, assignment) in rows {
             let origin = assignment.origin.as_deref().unwrap_or("-");
-            println!("  {} | {:?} | {}", name, assignment.source, origin);
+            let value_suffix = match assignment.numeric_value {
+                Some(v) => {
+                    let fmt = categories_by_id
+                        .get(&cat_id)
+                        .and_then(|c| c.numeric_format.as_ref());
+                    format!(
+                        " = {}",
+                        aglet_core::numeric_format::format_numeric_cell(Some(v), fmt)
+                    )
+                }
+                None => String::new(),
+            };
+            println!(
+                "  {}{} | {:?} | {}",
+                name, value_suffix, assignment.source, origin
+            );
             if let Some(explanation) = &assignment.explanation {
                 println!("    {}", explanation.summary());
             }
