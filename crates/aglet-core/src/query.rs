@@ -3,9 +3,80 @@ use jiff::Span;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    month_name, weekday_name, Category, CategoryId, DateSource, DatebookAnchor, DatebookConfig,
-    DatebookInterval, DatebookPeriod, Item, Query, Section, View, WhenBucket,
+    month_name, weekday_name, AssignmentSource, Category, CategoryId, DateSource, DatebookAnchor,
+    DatebookConfig, DatebookInterval, DatebookPeriod, Item, Query, Section, View, WhenBucket,
+    RESERVED_CATEGORY_NAMES,
 };
+
+/// Category IDs an item should display by default: direct assignments only
+/// (any provenance other than `Subsumption`), excluding the reserved
+/// plumbing categories (`When`/`Entry`/`Done` and their descendants),
+/// sorted leaf-first (deepest first, then by name).
+///
+/// "Direct" is computed from assignment provenance, not tree position: a
+/// parent category assigned manually is a direct assignment and is kept.
+pub fn display_category_ids(item: &Item, categories: &[Category]) -> Vec<CategoryId> {
+    let mut reserved: HashSet<CategoryId> = categories
+        .iter()
+        .filter(|category| {
+            category.parent.is_none()
+                && RESERVED_CATEGORY_NAMES
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&category.name))
+        })
+        .map(|category| category.id)
+        .collect();
+    // Expand to descendants of reserved roots (e.g. When date buckets).
+    loop {
+        let before = reserved.len();
+        for category in categories {
+            if let Some(parent) = category.parent {
+                if reserved.contains(&parent) {
+                    reserved.insert(category.id);
+                }
+            }
+        }
+        if reserved.len() == before {
+            break;
+        }
+    }
+
+    let parent_by_id: HashMap<CategoryId, Option<CategoryId>> =
+        categories.iter().map(|c| (c.id, c.parent)).collect();
+    let name_by_id: HashMap<CategoryId, &str> =
+        categories.iter().map(|c| (c.id, c.name.as_str())).collect();
+    let depth_of = |mut id: CategoryId| -> usize {
+        let mut depth = 0usize;
+        // Hop guard against malformed parent cycles.
+        for _ in 0..64 {
+            match parent_by_id.get(&id).copied().flatten() {
+                Some(parent) => {
+                    depth += 1;
+                    id = parent;
+                }
+                None => break,
+            }
+        }
+        depth
+    };
+
+    let mut ids: Vec<CategoryId> = item
+        .assignments
+        .iter()
+        .filter(|(category_id, assignment)| {
+            assignment.source != AssignmentSource::Subsumption && !reserved.contains(category_id)
+        })
+        .map(|(category_id, _)| *category_id)
+        .collect();
+    ids.sort_by(|a, b| {
+        depth_of(*b).cmp(&depth_of(*a)).then_with(|| {
+            let a_name = name_by_id.get(a).copied().unwrap_or("");
+            let b_name = name_by_id.get(b).copied().unwrap_or("");
+            a_name.to_ascii_lowercase().cmp(&b_name.to_ascii_lowercase())
+        })
+    });
+    ids
+}
 
 /// Resolve a `when_date` into its most-specific virtual `WhenBucket` for a given reference date.
 ///
@@ -663,7 +734,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        bucket_contains, evaluate_query, matches_text_search, resolve_view, resolve_when_bucket,
+        bucket_contains, display_category_ids, evaluate_query, matches_text_search, resolve_view,
+        resolve_when_bucket,
     };
     use crate::model::{
         Assignment, AssignmentSource, Category, CategoryId, CriterionMode, Item, Query, Section,
@@ -687,6 +759,61 @@ mod tests {
             explanation: None,
             numeric_value: None,
         }
+    }
+
+    fn assignment_with_source(source: AssignmentSource) -> Assignment {
+        Assignment {
+            source,
+            ..assignment()
+        }
+    }
+
+    #[test]
+    fn display_category_ids_keeps_direct_drops_subsumed_and_reserved() {
+        let finance = Category::new("Finance".to_string());
+        let mut expenses = Category::new("Expenses".to_string());
+        expenses.parent = Some(finance.id);
+        let mut moto = Category::new("Moto".to_string());
+        moto.parent = Some(expenses.id);
+        let when = Category::new("When".to_string());
+        let mut when_bucket = Category::new("2026-06".to_string());
+        when_bucket.parent = Some(when.id);
+        // A parent assigned manually (no child assigned) must be retained.
+        let area = Category::new("Area".to_string());
+        let cats = vec![
+            finance.clone(),
+            expenses.clone(),
+            moto.clone(),
+            when.clone(),
+            when_bucket.clone(),
+            area.clone(),
+        ];
+
+        let mut item = Item::new("bill".to_string());
+        item.assignments
+            .insert(moto.id, assignment_with_source(AssignmentSource::Manual));
+        item.assignments.insert(
+            expenses.id,
+            assignment_with_source(AssignmentSource::Subsumption),
+        );
+        item.assignments.insert(
+            finance.id,
+            assignment_with_source(AssignmentSource::Subsumption),
+        );
+        item.assignments.insert(
+            when_bucket.id,
+            assignment_with_source(AssignmentSource::AutoMatch),
+        );
+        item.assignments
+            .insert(area.id, assignment_with_source(AssignmentSource::Manual));
+
+        let ids = display_category_ids(&item, &cats);
+        assert_eq!(
+            ids,
+            vec![moto.id, area.id],
+            "leaf-first direct assignments only: deepest first, manual parent retained, \
+             subsumed parents and reserved When bucket excluded"
+        );
     }
 
     fn item_with_assignments(

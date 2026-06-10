@@ -3031,8 +3031,11 @@ impl App {
                             cells.push(item_cell);
                             cells.extend(right_cells);
                             if synthetic_categories_width > 0 {
-                                let categories =
-                                    item_assignment_labels(item, &category_display_names);
+                                let (categories, _) = item_display_category_labels(
+                                    item,
+                                    &self.categories,
+                                    &category_display_names,
+                                );
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
                                 } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -3311,7 +3314,11 @@ impl App {
                                 self.show_note_glyphs && has_note_text(item.note.as_deref()),
                             );
                             let item_text = board_item_label(item);
-                            let categories = item_assignment_labels(item, &category_display_names);
+                            let (categories, _) = item_display_category_labels(
+                                item,
+                                &self.categories,
+                                &category_display_names,
+                            );
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
                             } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -3542,7 +3549,10 @@ impl App {
                     ""
                 };
                 let item_text = board_item_label(item);
-                let category_count = item_assignment_labels(item, category_display_names).len();
+                let category_count =
+                    item_display_category_labels(item, &self.categories, category_display_names)
+                        .0
+                        .len();
                 let mut meta_parts = vec![format!(
                     "due:{}",
                     item.when_date
@@ -3756,7 +3766,8 @@ impl App {
         content_width: Option<usize>,
     ) -> Vec<Line<'_>> {
         let category_names = category_name_map(&self.categories);
-        let categories = item_assignment_labels(item, &category_names);
+        let (categories, hidden_category_count) =
+            item_display_category_labels(item, &self.categories, &category_names);
         let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
         let mut lines = vec![
             Line::from("Summary"),
@@ -3789,6 +3800,14 @@ impl App {
             lines.push(Line::from("  (none)"));
         } else {
             lines.push(Line::from(format!("  {}", categories.join(", "))));
+        }
+        if hidden_category_count > 0 {
+            // Full closure (subsumed parents, reserved plumbing) stays one
+            // keystroke away in the Info pane (UX audit P3-2).
+            lines.push(Line::from(Span::styled(
+                format!("  (+{hidden_category_count} more via rules \u{2014} i:info)"),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            )));
         }
         lines
     }

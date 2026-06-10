@@ -163,6 +163,28 @@ pub(super) fn item_assignment_labels(
     labels
 }
 
+/// Leaf-first display labels for an item's categories (direct assignments
+/// only — see `aglet_core::query::display_category_ids`), plus the count of
+/// hidden closure entries (subsumed parents / reserved plumbing).
+pub(super) fn item_display_category_labels(
+    item: &Item,
+    categories: &[Category],
+    category_names: &HashMap<CategoryId, String>,
+) -> (Vec<String>, usize) {
+    let ids = aglet_core::query::display_category_ids(item, categories);
+    let hidden = item.assignments.len().saturating_sub(ids.len());
+    let labels = ids
+        .iter()
+        .map(|category_id| {
+            category_names
+                .get(category_id)
+                .cloned()
+                .unwrap_or_else(|| category_id.to_string())
+        })
+        .collect();
+    (labels, hidden)
+}
+
 pub(super) const BOARD_MULTI_CATEGORY_LINE_CAP: usize = 8;
 
 // TODO(feature): single-line compact rendering not yet used; kept alongside

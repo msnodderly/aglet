@@ -11402,6 +11402,59 @@ fn item_info_contains_link_sections_while_summary_stays_primary() {
 }
 
 #[test]
+fn preview_summary_lists_direct_categories_leaf_first_with_hidden_note() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let finance = Category::new("Finance".to_string());
+    store.create_category(&finance).expect("finance");
+    let mut expenses = Category::new("Expenses".to_string());
+    expenses.parent = Some(finance.id);
+    store.create_category(&expenses).expect("expenses");
+    let mut moto = Category::new("Moto".to_string());
+    moto.parent = Some(expenses.id);
+    store.create_category(&moto).expect("moto");
+
+    let item = Item::new("Sheffield bill".to_string());
+    store.create_item(&item).expect("create item");
+    aglet
+        .assign_item_manual(item.id, moto.id, Some("manual:test".to_string()))
+        .expect("assign leaf");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let loaded = store.get_item(item.id).expect("reload");
+    assert!(
+        loaded.assignments.len() > 1,
+        "cascade should have produced subsumed parent assignments"
+    );
+
+    let plain: Vec<String> = app
+        .item_details_lines_for_item(&loaded)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let categories_line = plain
+        .iter()
+        .find(|line| line.trim_start().starts_with("Moto"))
+        .expect("summary should list the direct leaf category");
+    assert!(
+        !categories_line.contains("Finance") && !categories_line.contains("Expenses"),
+        "subsumed parents should be hidden from the default list: {categories_line}"
+    );
+    assert!(
+        plain.iter().any(|line| line.contains("more via rules")),
+        "summary should note the hidden closure entries: {plain:?}"
+    );
+}
+
+#[test]
 fn preview_summary_and_info_include_item_uuid() {
     let item = Item::new("uuid test".to_string());
     let expected_id = item.id.to_string();
