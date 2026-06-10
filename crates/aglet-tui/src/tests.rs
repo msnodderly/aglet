@@ -15416,22 +15416,26 @@ fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
     );
 
     app.handle_search_bar_key(KeyCode::Enter, &aglet)
-        .expect("enter should open top visible result");
-    assert_eq!(app.mode, Mode::InputPanel);
+        .expect("enter should reveal top visible result");
     assert_eq!(
-        app.input_panel
-            .as_ref()
-            .and_then(|panel| panel.item_id)
-            .and_then(|item_id| store.get_item(item_id).ok())
-            .map(|item| item.text),
+        app.mode,
+        Mode::Normal,
+        "enter reveals the match instead of opening the edit panel"
+    );
+    assert!(app.input_panel.is_none(), "no edit panel should open");
+    assert_eq!(
+        app.selected_item().map(|item| item.text.clone()),
         Some("Buy groceries".to_string()),
-        "top visible match should open even without an exact title match"
+        "top visible match should be selected even without an exact title match"
     );
     assert!(
         app.global_search_active(),
         "session remains active until Esc"
     );
 
+    app.handle_normal_key(KeyCode::Char('e'), &aglet)
+        .expect("e should edit the revealed item");
+    assert_eq!(app.mode, Mode::InputPanel, "e edits as everywhere else");
     app.handle_input_panel_key(KeyCode::Esc, &aglet)
         .expect("Esc should close edit panel");
     assert_eq!(app.mode, Mode::Normal);
@@ -21361,7 +21365,7 @@ fn fuzzy_search_preserves_note_category_and_uuid_substring_fallbacks() {
 }
 
 #[test]
-fn search_bar_enter_opens_top_visible_item() {
+fn search_bar_enter_reveals_top_visible_item() {
     let (store, db_path) = make_two_section_store("exact-match");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
@@ -21382,15 +21386,16 @@ fn search_bar_enter_opens_top_visible_item() {
     app.handle_search_bar_key(KeyCode::Enter, &aglet)
         .expect("enter");
 
-    assert_eq!(app.mode, Mode::InputPanel);
-    let panel = app.input_panel.as_ref().expect("edit panel should open");
     assert_eq!(
-        panel
-            .item_id
-            .and_then(|item_id| store.get_item(item_id).ok())
-            .map(|item| item.text),
+        app.mode,
+        Mode::Normal,
+        "enter reveals the match instead of opening the edit panel"
+    );
+    assert!(app.input_panel.is_none(), "no edit panel should open");
+    assert_eq!(
+        app.selected_item().map(|item| item.text.clone()),
         Some("Fix timeout bug".to_string()),
-        "top visible local result should open on Enter"
+        "top visible local result should be selected on Enter"
     );
 
     let _ = std::fs::remove_file(&db_path);

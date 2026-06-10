@@ -6299,9 +6299,14 @@ impl App {
                 if query.is_empty() {
                     self.mode = Mode::Normal;
                 } else if let Some((slot_idx, item_idx)) = self.find_first_visible_search_result() {
+                    // Reveal the match instead of opening the edit panel:
+                    // Enter navigates, `e` edits — same as everywhere else
+                    // (UX audit P2-6). The filter and any global-search
+                    // session stay active so Esc still returns to origin.
                     self.slot_index = slot_idx;
                     self.item_index = item_idx;
-                    self.open_input_panel_edit_item();
+                    self.mode = Mode::Normal;
+                    self.status = "Selected first match \u{2014} e:edit  Esc:back".to_string();
                 } else {
                     self.status = format!("No items match '{}'", query);
                 }
