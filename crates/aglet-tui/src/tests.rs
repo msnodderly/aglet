@@ -3553,22 +3553,60 @@ fn add_capture_status_message_includes_parsed_datetime_when_present() {
     let when = Date::new(2026, 2, 24).expect("valid date").at(15, 0, 0, 0);
 
     assert_eq!(
-        add_capture_status_message(Some(when), &[]),
-        "Item added (parsed when: 2026-02-24 15:00:00)"
+        add_capture_status_message(Some(when), "2026-02-24 15:00", &[]),
+        "Item added | When saved as 2026-02-24 15:00"
     );
 }
 
 #[test]
 fn add_capture_status_message_defaults_when_no_datetime() {
-    assert_eq!(add_capture_status_message(None, &[]), "Item added");
+    assert_eq!(add_capture_status_message(None, "", &[]), "Item added");
 }
 
 #[test]
 fn add_capture_status_message_includes_unknown_hashtag_warning() {
     assert_eq!(
-        add_capture_status_message(None, &["office".to_string(), "someday".to_string()]),
+        add_capture_status_message(None, "", &["office".to_string(), "someday".to_string()]),
         "Item added | warning unknown_hashtags=office,someday"
     );
+}
+
+#[test]
+fn when_saved_status_echoes_canonical_input_without_interpretation_note() {
+    let dt = Date::new(2026, 6, 12).expect("valid date").at(0, 0, 0, 0);
+    assert_eq!(
+        super::when_saved_status("2026-06-12", dt),
+        "When saved as 2026-06-12"
+    );
+    // The normalized buffer form (with explicit midnight) is also canonical.
+    assert_eq!(
+        super::when_saved_status("2026-06-12 00:00", dt),
+        "When saved as 2026-06-12"
+    );
+}
+
+#[test]
+fn when_saved_status_reports_interpretation_for_garbage_suffix_input() {
+    let dt = Date::new(2026, 6, 12).expect("valid date").at(0, 0, 0, 0);
+    assert_eq!(
+        super::when_saved_status("2026-06-12 00:00X", dt),
+        "When saved as 2026-06-12 (interpreted from \"2026-06-12 00:00X\")"
+    );
+}
+
+#[test]
+fn when_saved_status_reports_interpretation_for_relative_phrases() {
+    let dt = Date::new(2026, 6, 13).expect("valid date").at(0, 0, 0, 0);
+    assert_eq!(
+        super::when_saved_status("tomorrow", dt),
+        "When saved as 2026-06-13 (interpreted from \"tomorrow\")"
+    );
+}
+
+#[test]
+fn format_when_echo_keeps_time_when_not_midnight() {
+    let dt = Date::new(2026, 6, 12).expect("valid date").at(15, 30, 0, 0);
+    assert_eq!(super::format_when_echo(dt), "2026-06-12 15:30");
 }
 
 #[test]
@@ -4370,6 +4408,140 @@ fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
     assert_eq!(
         context_row_count, 1,
         "add-item context should stay in one fixed row even in narrow layouts"
+    );
+}
+
+#[test]
+fn add_item_panel_shows_live_when_parse_preview() {
+    let mut app = App {
+        mode: Mode::InputPanel,
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+        )),
+        ..App::default()
+    };
+    if let Some(panel) = &mut app.input_panel {
+        panel.focus = input_panel::InputPanelFocus::When;
+        panel.when_buffer.set("2026-06-12 00:00X".to_string());
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let lines = terminal_buffer_lines(&terminal);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("When: 2026-06-12") && line.contains("interpreted from")),
+        "panel should show a live parse preview noting the interpretation: {lines:?}"
+    );
+}
+
+#[test]
+fn add_item_panel_shows_when_parse_error_preview() {
+    let mut app = App {
+        mode: Mode::InputPanel,
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+        )),
+        ..App::default()
+    };
+    if let Some(panel) = &mut app.input_panel {
+        panel.focus = input_panel::InputPanelFocus::When;
+        panel.when_buffer.set("next weem".to_string());
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let lines = terminal_buffer_lines(&terminal);
+
+    assert!(
+        lines.iter().any(|line| line.contains("Could not parse")),
+        "panel should show a parse error preview for unparseable input: {lines:?}"
+    );
+}
+
+#[test]
+fn save_input_panel_edit_status_reports_when_interpretation() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let item = Item::new("Demo".to_string());
+    let reference = jiff::Zoned::now().date();
+    aglet.create_item_cheap(&item, reference).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut panel = input_panel::InputPanel::new_edit_item(
+        item.id,
+        "Demo".to_string(),
+        String::new(),
+        String::new(),
+        HashSet::new(),
+        HashMap::new(),
+        HashMap::new(),
+    );
+    panel.when_buffer.set("2026-06-12 00:00X".to_string());
+    app.input_panel = Some(panel);
+    app.mode = Mode::InputPanel;
+
+    app.save_input_panel_edit(&aglet).expect("save edit");
+    assert!(
+        app.status.contains("When saved as 2026-06-12"),
+        "status should echo the normalized When value: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("interpreted from"),
+        "status should note the interpretation of the raw input: {}",
+        app.status
+    );
+}
+
+#[test]
+fn save_input_panel_edit_status_reports_when_cleared() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let item = Item::new("Demo".to_string());
+    let reference = jiff::Zoned::now().date();
+    aglet.create_item_cheap(&item, reference).expect("create");
+    aglet
+        .set_item_when_date(
+            item.id,
+            Some(Date::new(2026, 6, 12).expect("date").at(0, 0, 0, 0)),
+            None,
+        )
+        .expect("set when");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut panel = input_panel::InputPanel::new_edit_item(
+        item.id,
+        "Demo".to_string(),
+        String::new(),
+        "2026-06-12 00:00".to_string(),
+        HashSet::new(),
+        HashMap::new(),
+        HashMap::new(),
+    );
+    panel.when_buffer.set(String::new());
+    app.input_panel = Some(panel);
+    app.mode = Mode::InputPanel;
+
+    app.save_input_panel_edit(&aglet).expect("save edit");
+    assert!(
+        app.status.contains("When cleared"),
+        "status should report the cleared When date: {}",
+        app.status
     );
 }
 

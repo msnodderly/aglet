@@ -4879,6 +4879,7 @@ impl App {
         let mut process_result = aglet.create_item_cheap(&item, reference_date)?;
 
         // Parse and apply when-date + recurrence from panel buffer.
+        let mut when_parse_error: Option<String> = None;
         if !when_text.is_empty() {
             match Self::parse_when_datetime_input(&when_text) {
                 Ok(Some((dt, parsed_rule))) => {
@@ -4895,9 +4896,10 @@ impl App {
                     }
                 }
                 Ok(None) => {}
-                Err(_) => {
+                Err(e) => {
                     // Buffer wasn't normalized (user never Tab'd out of When).
-                    // Item was already created; skip when-date silently.
+                    // Item was already created; skip the when-date but report it.
+                    when_parse_error = Some(format!("When not saved: {e}"));
                 }
             }
         }
@@ -4976,7 +4978,10 @@ impl App {
         self.set_item_selection_by_id(item.id);
         self.input_panel = None;
         self.mode = Mode::Normal;
-        self.status = add_capture_status_message(created.when_date, &unknown_hashtags);
+        self.status = add_capture_status_message(created.when_date, &when_text, &unknown_hashtags);
+        if let Some(when_error) = when_parse_error {
+            self.status = format!("{} | {when_error}", self.status);
+        }
         if let Some((suffix, show_review_hint)) =
             self.classification_feedback_for_saved_item(item.id, &process_result)
         {
@@ -5114,6 +5119,13 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         let mut status = "Item updated".to_string();
+        if !no_when_change {
+            if when_text.is_empty() {
+                status.push_str(" | When cleared");
+            } else if let Some(Some(dt)) = parsed_when {
+                status = format!("{status} | {}", when_saved_status(&when_text, dt));
+            }
+        }
         if suggestion_accepted + suggestion_rejected > 0 {
             status = format!(
                 "{status} ({suggestion_accepted} accepted, {suggestion_rejected} rejected)"
@@ -5188,7 +5200,7 @@ impl App {
         ).into())
     }
 
-    fn parse_when_datetime_input(
+    pub(crate) fn parse_when_datetime_input(
         input: &str,
     ) -> TuiResult<Option<(DateTime, Option<RecurrenceRule>)>> {
         Self::parse_when_datetime_input_with_reference_date(input, jiff::Zoned::now().date())

@@ -5070,6 +5070,46 @@ impl App {
             frame.render_widget(Paragraph::new(Line::from(when_spans)), when_rect);
         }
 
+        // Live When parse preview (AddItem/EditItem): the context row under the
+        // When field shows what the current buffer text will be stored as — or
+        // the parse error — before the panel is saved.
+        if matches!(
+            panel.kind,
+            InputPanelKind::AddItem | InputPanelKind::EditItem
+        ) {
+            if let Some(context_rect) = regions.context {
+                let raw = panel.when_buffer.trimmed().to_string();
+                if !raw.is_empty() {
+                    let (preview_text, preview_style) = match Self::parse_when_datetime_input(&raw)
+                    {
+                        Ok(Some((dt, rule))) => {
+                            let mut text = format!(
+                                "  \u{21B3} When: {}",
+                                when_echo_with_interpretation(&raw, dt)
+                            );
+                            if let Some(rule) =
+                                panel.parsed_recurrence_rule.as_ref().or(rule.as_ref())
+                            {
+                                text.push_str(&format!("  \u{21BB} {}", rule.display()));
+                            }
+                            (text, Style::default().fg(MUTED_TEXT_COLOR))
+                        }
+                        Ok(None) => (String::new(), Style::default()),
+                        Err(e) => (
+                            format!("  \u{21B3} When: {e}"),
+                            Style::default().fg(Color::LightRed),
+                        ),
+                    };
+                    if !preview_text.is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(preview_text).style(preview_style),
+                            context_rect,
+                        );
+                    }
+                }
+            }
+        }
+
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
             let note_focused = panel.focus == InputPanelFocus::Note;

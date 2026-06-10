@@ -1201,8 +1201,44 @@ pub(super) fn input_panel_popup_regions(
     }
 }
 
+/// Renders a When datetime for user-facing echoes: date-only when the time
+/// component is midnight, otherwise date + HH:MM.
+pub(super) fn format_when_echo(dt: DateTime) -> String {
+    if dt.hour() == 0 && dt.minute() == 0 && dt.second() == 0 && dt.subsec_nanosecond() == 0 {
+        dt.strftime("%Y-%m-%d").to_string()
+    } else {
+        dt.strftime("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+/// True when `input` already spells a canonical rendering of `dt`, so the
+/// echo needs no "(interpreted from ...)" note.
+fn when_input_is_canonical(input: &str, dt: DateTime) -> bool {
+    let input = input.trim();
+    input == format_when_echo(dt)
+        || input == dt.strftime("%Y-%m-%d %H:%M").to_string()
+        || input == dt.strftime("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// Echo of what a When input resolves to, e.g. `2026-06-12` or
+/// `2026-06-12 (interpreted from "2026-06-12 00:00X")`.
+pub(super) fn when_echo_with_interpretation(input: &str, dt: DateTime) -> String {
+    let canonical = format_when_echo(dt);
+    if when_input_is_canonical(input, dt) {
+        canonical
+    } else {
+        format!("{canonical} (interpreted from \"{}\")", input.trim())
+    }
+}
+
+/// Status fragment reporting what a When edit actually stored.
+pub(super) fn when_saved_status(input: &str, dt: DateTime) -> String {
+    format!("When saved as {}", when_echo_with_interpretation(input, dt))
+}
+
 pub(super) fn add_capture_status_message(
     parsed_when: Option<DateTime>,
+    when_input: &str,
     unknown_hashtags: &[String],
 ) -> String {
     let warning = if unknown_hashtags.is_empty() {
@@ -1212,8 +1248,8 @@ pub(super) fn add_capture_status_message(
     };
     match parsed_when {
         Some(when) => format!(
-            "Item added (parsed when: {}{warning})",
-            when.strftime("%Y-%m-%d %H:%M:%S")
+            "Item added | {}{warning}",
+            when_saved_status(when_input, when)
         ),
         None => format!("Item added{warning}"),
     }
