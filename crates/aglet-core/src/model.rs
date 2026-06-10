@@ -931,6 +931,10 @@ pub struct DatebookConfig {
     /// Signed offset: +1 = shift forward by one period, -1 backward.
     #[serde(default)]
     pub browse_offset: i32,
+    /// Signed offset in bucket intervals, applied on top of `browse_offset`
+    /// (TUI `{`/`}` step one bucket; `(`/`)` step the full window).
+    #[serde(default)]
+    pub browse_interval_offset: i32,
 }
 
 impl DatebookConfig {
@@ -967,6 +971,7 @@ impl Default for DatebookConfig {
             date_source: DateSource::When,
             empty_sections: EmptySections::default(),
             browse_offset: 0,
+            browse_interval_offset: 0,
         }
     }
 }

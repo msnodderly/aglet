@@ -198,7 +198,7 @@ appointments, renewals, and deadlines visible together.
 | Columns | `F` | Cycle numeric column summary (Sum/Avg/Min/Max) |
 | Columns | `s/S or </>` | Sort section by column (asc / desc) |
 | Views | `v/V/F8 ,/. ga` | Views, previous/next view, All Items |
-| Datebook | `{/}/0` | Browse previous / next period; return to today |
+| Datebook | `{/} (/) 0` | Step previous / next bucket; (/) step window; 0 today |
 | Global | `C` | Review pending classification suggestions |
 | Global | `g s / F10` | Open Global Settings |
 | Global | `c / F9` | Open the category manager |

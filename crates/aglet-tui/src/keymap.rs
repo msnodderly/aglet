@@ -294,17 +294,17 @@ pub(crate) static NORMAL_KEYMAP: &[KeyBinding] = &[
     // ── Datebook ──
     doc(
         HelpSection::Datebook,
-        "{/}/0",
-        "Browse previous / next period; return to today",
+        "{/} (/) 0",
+        "Step previous / next bucket; (/) step window; 0 today",
     ),
     hint_only(
         HelpSection::Datebook,
-        ("}", "fwd"),
+        ("{/}", "bucket"),
         KeyContext::DatebookView,
     ),
     hint_only(
         HelpSection::Datebook,
-        ("{", "back"),
+        ("(/)", "window"),
         KeyContext::DatebookView,
     ),
     hint_only(

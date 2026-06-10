@@ -7917,7 +7917,7 @@ fn keymap_stable_footer_hints_have_no_duplicate_keys() {
 fn normal_footer_hints_add_datebook_keys_only_in_datebook_views() {
     let mut app = App::default();
     assert!(
-        !app.normal_footer_hints().iter().any(|(k, _)| *k == "}"),
+        !app.normal_footer_hints().iter().any(|(k, _)| *k == "{/}"),
         "datebook hints should be absent outside datebook views"
     );
 
@@ -7926,7 +7926,7 @@ fn normal_footer_hints_add_datebook_keys_only_in_datebook_views() {
     app.views = vec![view];
     app.view_index = 0;
     let hints = app.normal_footer_hints();
-    for key in ["}", "{", "0"] {
+    for key in ["{/}", "(/)", "0"] {
         assert!(
             hints.iter().any(|(k, _)| *k == key),
             "datebook view should add the {key} hint: {hints:?}"
@@ -9910,7 +9910,7 @@ fn help_panel_render_contains_shortcut_cheat_sheet() {
         "help panel should include manual classification shortcut: {rendered}"
     );
     assert!(
-        rendered.contains("Browse previous / next period"),
+        rendered.contains("Step previous / next bucket"),
         "help panel should include datebook browsing shortcuts: {rendered}"
     );
     assert!(
@@ -17305,6 +17305,17 @@ fn board_inline_border_shows_item_label_when_item_column_is_reordered() {
         when_index < task_index && task_index < done_index,
         "item label should render in the reordered slot: {border_line}"
     );
+    // UX audit P2-8: the divider always leads with the section title; the
+    // item-column label never substitutes for it.
+    assert!(
+        border_line.contains("Ready (1)"),
+        "divider should lead with the section title and count: {border_line}"
+    );
+    let title_index = border_line.find("Ready (1)").expect("title");
+    assert!(
+        title_index < when_index,
+        "title should precede column headers: {border_line}"
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }
@@ -18557,6 +18568,78 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
     );
 
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn datebook_keys_step_bucket_and_window_independently() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut view = View::new("Dates".to_string());
+    view.datebook_config = Some(aglet_core::model::DatebookConfig {
+        period: aglet_core::model::DatebookPeriod::Year,
+        interval: aglet_core::model::DatebookInterval::Monthly,
+        anchor: aglet_core::model::DatebookAnchor::StartOfYear,
+        ..Default::default()
+    });
+    store.create_view(&view).expect("create datebook view");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Dates");
+    app.refresh(&store).expect("refresh datebook");
+    app.mode = Mode::Normal;
+
+    let offsets = |store: &Store| {
+        let view = store
+            .list_views()
+            .expect("views")
+            .into_iter()
+            .find(|v| v.name == "Dates")
+            .expect("Dates view");
+        let config = view.datebook_config.expect("datebook config");
+        (config.browse_offset, config.browse_interval_offset)
+    };
+
+    app.handle_normal_key(KeyCode::Char('}'), &aglet)
+        .expect("} steps one bucket");
+    assert_eq!(
+        offsets(&store),
+        (0, 1),
+        "}} should step one bucket interval"
+    );
+    assert!(
+        app.status.starts_with("Datebook: 2026-") || app.status.starts_with("Datebook: 20"),
+        "bucket step should report the visible range: {}",
+        app.status
+    );
+
+    app.handle_normal_key(KeyCode::Char(')'), &aglet)
+        .expect(") steps a full window");
+    assert_eq!(
+        offsets(&store),
+        (1, 1),
+        ") should step the window, composing with the bucket offset"
+    );
+
+    app.handle_normal_key(KeyCode::Char('{'), &aglet)
+        .expect("{ steps back one bucket");
+    assert_eq!(offsets(&store), (1, 0));
+    assert!(
+        app.status.contains("next year"),
+        "pure window offset should keep the relative phrasing: {}",
+        app.status
+    );
+
+    app.handle_normal_key(KeyCode::Char('0'), &aglet)
+        .expect("0 resets both offsets");
+    assert_eq!(offsets(&store), (0, 0));
+    assert!(
+        app.status.contains("this year"),
+        "reset should report the current period: {}",
+        app.status
+    );
 }
 
 #[test]
