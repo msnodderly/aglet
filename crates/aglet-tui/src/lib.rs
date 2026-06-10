@@ -440,6 +440,8 @@ struct App {
     view_index: usize,
     active_view_name: Option<String>,
     session_hide_dependent_items_override: Option<bool>,
+    /// Scroll offset (in lines) for the help panel popup.
+    help_panel_scroll: usize,
     picker_index: usize,
     view_pending_edit_name: Option<String>,
     view_pending_clone_id: Option<Uuid>,
@@ -522,6 +524,7 @@ impl Default for App {
             view_index: 0,
             active_view_name: None,
             session_hide_dependent_items_override: None,
+            help_panel_scroll: 0,
             picker_index: 0,
             view_pending_edit_name: None,
             view_pending_clone_id: None,

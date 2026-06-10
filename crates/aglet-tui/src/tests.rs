@@ -7599,6 +7599,93 @@ fn readme_keymap_cheatsheet_matches_keymap_table() {
 }
 
 #[test]
+fn help_panel_scrolls_to_last_section_on_small_terminals() {
+    let mut app = App {
+        mode: Mode::HelpPanel,
+        ..App::default()
+    };
+
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("CURRENT ITEM"),
+        "top of help should be visible before scrolling: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Quit"),
+        "GLOBAL section should be clipped at 100x30 before scrolling: {rendered}"
+    );
+    assert!(
+        rendered.contains("\u{2026} more \u{2193}"),
+        "clipped help should show a more-content indicator: {rendered}"
+    );
+
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    app.handle_key(KeyCode::End, &aglet).expect("End scrolls");
+    terminal.draw(|frame| app.draw(frame)).expect("render scrolled");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("Quit"),
+        "last help section must be reachable by scrolling: {rendered}"
+    );
+    assert!(
+        !rendered.contains("\u{2026} more \u{2193}"),
+        "more-indicator should clear at the bottom: {rendered}"
+    );
+}
+
+#[test]
+fn help_panel_renders_two_columns_on_wide_terminals() {
+    let mut app = App {
+        mode: Mode::HelpPanel,
+        ..App::default()
+    };
+
+    let backend = TestBackend::new(220, 50);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let lines = terminal_buffer_lines(&terminal);
+    let rendered = lines.join("\n");
+    assert!(
+        rendered.contains("CURRENT ITEM") && rendered.contains("Quit"),
+        "wide help panel should fit all sections without scrolling: {rendered}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("CURRENT ITEM") && line.contains("COLUMNS")),
+        "wide help panel should place sections side by side: {rendered}"
+    );
+}
+
+#[test]
+fn help_panel_key_labels_never_run_into_descriptions() {
+    let mut app = App {
+        mode: Mode::HelpPanel,
+        ..App::default()
+    };
+
+    let backend = TestBackend::new(220, 50);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    // Audit symptom: fixed 12-char gutter overflowed for wide key labels and
+    // rendered "v/V/F8 ,/. gaViews, previous/next view…".
+    assert!(
+        !rendered.contains("gaViews"),
+        "key label must not run into its description: {rendered}"
+    );
+    assert!(
+        rendered.contains("v/V/F8 ,/. ga "),
+        "wide key label should keep a gutter before its description: {rendered}"
+    );
+}
+
+#[test]
 fn keymap_rows_are_documented_or_footer_only() {
     for binding in super::NORMAL_KEYMAP {
         assert!(

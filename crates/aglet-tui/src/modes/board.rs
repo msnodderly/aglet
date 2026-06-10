@@ -3855,9 +3855,31 @@ impl App {
     }
 
     pub(crate) fn handle_help_panel_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+        // Upper bound on scrolling; the renderer clamps further to the
+        // active layout (two-column mode needs less).
+        let max_scroll = keymap::help_panel_content_line_count().saturating_sub(1);
         match code {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
+                self.help_panel_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_add(1).min(max_scroll);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_add(10).min(max_scroll);
+            }
+            KeyCode::PageUp => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_sub(10);
+            }
+            KeyCode::Home => {
+                self.help_panel_scroll = 0;
+            }
+            KeyCode::End => {
+                self.help_panel_scroll = max_scroll;
             }
             _ => {}
         }

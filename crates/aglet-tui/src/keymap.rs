@@ -355,8 +355,12 @@ pub(crate) static NORMAL_SELECTION_HINTS: &[(&str, &str)] = &[
 // their dispatch in `footer_hint_pairs` but select from these tables so the
 // copy lives here.
 
-pub(crate) static HELP_PANEL_HINTS: &[(&str, &str)] =
-    &[("Esc", "close"), ("Enter", "close"), ("?", "close")];
+pub(crate) static HELP_PANEL_HINTS: &[(&str, &str)] = &[
+    ("j/k", "scroll"),
+    ("PgUp/PgDn", "page"),
+    ("Esc", "close"),
+    ("?", "close"),
+];
 
 pub(crate) static SUGGESTION_REVIEW_HINTS: &[(&str, &str)] = &[
     ("Tab", "pane"),
@@ -432,6 +436,25 @@ pub(crate) static CATEGORY_MANAGER_TREE_HINTS: &[(&str, &str)] = &[
     ("Tab", "details"),
     ("Esc", "close"),
 ];
+
+/// Number of content lines the help panel renders in single-column layout
+/// (section headers + entries + blank separators) — the upper bound for
+/// scroll clamping in `handle_help_panel_key`.
+pub(crate) fn help_panel_content_line_count() -> usize {
+    let mut total = 0usize;
+    let mut sections = 0usize;
+    for section in HelpSection::ALL {
+        let entries = NORMAL_KEYMAP
+            .iter()
+            .filter(|b| b.section == section && !b.desc.is_empty())
+            .count();
+        if entries > 0 {
+            sections += 1;
+            total += entries + 1;
+        }
+    }
+    total + sections.saturating_sub(1)
+}
 
 /// Renders a hint table as `key:desc  key:desc …` for status-line copy, so
 /// status rows and the footer hint row can never disagree about keys.
