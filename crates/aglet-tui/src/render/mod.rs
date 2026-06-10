@@ -611,12 +611,123 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::ConfirmDelete {
+            self.render_confirm_delete_popup(frame, frame.area());
+        }
         if self.mode == Mode::HelpPanel {
             self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
         }
         if self.mode == Mode::SuggestionReview {
             self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
         }
+    }
+
+    /// Centered confirm popup for Mode::ConfirmDelete. The mode is multiplexed:
+    /// it hosts both the delete confirmation and the done-blocker-cleanup
+    /// prompt, so both branches render here (the footer keeps its dynamic
+    /// copy as a secondary cue).
+    fn render_confirm_delete_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let muted = Style::default().fg(MUTED_TEXT_COLOR);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        let popup_title;
+        let border_color;
+        let keys_hint;
+
+        if let Some(done_confirm) = &self.done_blocks_confirm {
+            popup_title = "Mark Done";
+            border_color = Color::Yellow;
+            keys_hint = "y:remove links + done   n:done only   Esc:cancel";
+            let message = match &done_confirm.scope {
+                DoneBlocksConfirmScope::Single {
+                    blocked_item_ids, ..
+                } => {
+                    let blocked_count = blocked_item_ids.len();
+                    let suffix = if blocked_count == 1 { "" } else { "s" };
+                    format!(
+                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                    )
+                }
+                DoneBlocksConfirmScope::Batch {
+                    blocking_item_count,
+                    blocked_link_count,
+                    ..
+                } => {
+                    let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
+                    let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
+                    format!(
+                        "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                    )
+                }
+            };
+            lines.push(Line::from(message));
+        } else {
+            popup_title = "Confirm Delete";
+            border_color = Color::Red;
+            keys_hint = "y:confirm   Esc:cancel";
+            const TITLE_WIDTH: usize = 52;
+            const SHOWN_TITLES: usize = 3;
+            if let Some(batch_ids) = &self.batch_delete_item_ids {
+                let count = batch_ids.len();
+                let suffix = if count == 1 { "" } else { "s" };
+                lines.push(Line::from(format!("Delete {count} item{suffix}?")));
+                for id in batch_ids.iter().take(SHOWN_TITLES) {
+                    let title = self
+                        .item_title_for_id(*id)
+                        .unwrap_or_else(|| "(unknown item)".to_string());
+                    lines.push(Line::from(format!(
+                        "  \u{2022} {}",
+                        truncate_board_cell(&title, TITLE_WIDTH)
+                    )));
+                }
+                if count > SHOWN_TITLES {
+                    lines.push(Line::from(Span::styled(
+                        format!("  \u{2026} and {} more", count - SHOWN_TITLES),
+                        muted,
+                    )));
+                }
+            } else {
+                let title = self
+                    .selected_item()
+                    .map(|item| item.text.clone())
+                    .unwrap_or_else(|| "item".to_string());
+                lines.push(Line::from(format!(
+                    "Delete \"{}\"?",
+                    truncate_board_cell(&title, TITLE_WIDTH)
+                )));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Logged \u{2014} restorable via 'aglet deleted' / 'aglet restore'",
+                muted,
+            )));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(keys_hint, muted)));
+
+        let width = area.width.saturating_sub(4).clamp(20, 66);
+        let height = (lines.len() as u16).saturating_add(2);
+        let popup = centered_fixed_rect(area, width, height);
+        frame.render_widget(Clear, popup);
+        let block = Block::default()
+            .title(popup_title)
+            .title_style(Style::default().fg(Color::White))
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            );
+        frame.render_widget(Paragraph::new(lines).block(block), popup);
+    }
+
+    /// Looks up an item's title in the currently loaded slots.
+    fn item_title_for_id(&self, item_id: ItemId) -> Option<String> {
+        self.slots
+            .iter()
+            .flat_map(|slot| slot.items.iter())
+            .find(|item| item.id == item_id)
+            .map(|item| item.text.clone())
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {

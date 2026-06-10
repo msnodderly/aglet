@@ -930,7 +930,7 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
     horizontal[1]
 }
 
-fn centered_fixed_rect(area: Rect, width: u16, height: u16) -> Rect {
+pub(super) fn centered_fixed_rect(area: Rect, width: u16, height: u16) -> Rect {
     if area.width == 0 || area.height == 0 {
         return area;
     }

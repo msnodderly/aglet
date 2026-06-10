@@ -3709,6 +3709,109 @@ fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
     );
 }
 
+fn confirm_delete_app(items: Vec<Item>) -> App {
+    let mut app = App {
+        mode: Mode::ConfirmDelete,
+        slots: vec![super::Slot {
+            title: "Main".to_string(),
+            items,
+            context: super::SlotContext::Unmatched,
+        }],
+        slot_index: 0,
+        item_index: 0,
+        ..App::default()
+    };
+    app.column_index = 0;
+    app
+}
+
+#[test]
+fn confirm_delete_popup_names_single_item() {
+    let item = Item::new("Wash DRZ".to_string());
+    let mut app = confirm_delete_app(vec![item]);
+    app.batch_delete_item_ids = None;
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        text.contains("Delete \"Wash DRZ\"?"),
+        "confirm popup should quote the item title: {text}"
+    );
+    assert!(
+        text.contains("restorable via 'aglet deleted'"),
+        "confirm popup should note recoverability: {text}"
+    );
+    assert!(
+        text.contains("y:confirm"),
+        "confirm popup should show keys: {text}"
+    );
+}
+
+#[test]
+fn confirm_delete_popup_lists_batch_titles_with_count() {
+    let items: Vec<Item> = ["First chore", "Second chore", "Third chore", "Fourth chore"]
+        .iter()
+        .map(|t| Item::new(t.to_string()))
+        .collect();
+    let ids: Vec<ItemId> = items.iter().map(|i| i.id).collect();
+    let mut app = confirm_delete_app(items);
+    app.batch_delete_item_ids = Some(ids);
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        text.contains("Delete 4 items?"),
+        "confirm popup should show batch count: {text}"
+    );
+    assert!(
+        text.contains("First chore"),
+        "confirm popup should list the first titles: {text}"
+    );
+    assert!(
+        text.contains("and 1 more"),
+        "confirm popup should summarize overflow titles: {text}"
+    );
+}
+
+#[test]
+fn confirm_delete_popup_renders_done_blocker_variant() {
+    let item = Item::new("Blocking item".to_string());
+    let blocked = ItemId::new_v4();
+    let item_id = item.id;
+    let mut app = confirm_delete_app(vec![item]);
+    app.done_blocks_confirm = Some(super::DoneBlocksConfirmState {
+        scope: super::DoneBlocksConfirmScope::Single {
+            item_id,
+            blocked_item_ids: vec![blocked],
+        },
+        origin: super::DoneToggleOrigin::NormalMode,
+    });
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        text.contains("This item blocks 1 other item"),
+        "done-blocker popup should describe the blocked link: {text}"
+    );
+    assert!(
+        text.contains("n:done only"),
+        "done-blocker popup should show its distinct keys: {text}"
+    );
+    assert!(
+        !text.contains("Confirm Delete"),
+        "done-blocker variant should not be titled as a delete: {text}"
+    );
+}
+
 #[test]
 fn view_edit_section_details_no_warning_when_auto_assign_in_criteria() {
     let mut app = view_edit_auto_assign_lint_app(true);
