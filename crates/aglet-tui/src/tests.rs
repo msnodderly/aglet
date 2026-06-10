@@ -3159,6 +3159,41 @@ fn link_wizard_target_navigation_does_not_wrap() {
 }
 
 #[test]
+fn link_wizard_header_names_source_item_without_empty_box() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let anchor = Item::new("Wash DRZ".to_string());
+    store.create_item(&anchor).expect("create anchor");
+    let other = Item::new("2wheels track day".to_string());
+    store.create_item(&other).expect("create other");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(anchor.id);
+    app.handle_key(KeyCode::Char('b'), &aglet)
+        .expect("open link wizard");
+
+    let backend = TestBackend::new(100, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let lines = terminal_buffer_lines(&terminal);
+    let text = lines.join("\n");
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Source:") && line.contains("Wash DRZ")),
+        "wizard header should name the source item: {text}"
+    );
+    assert!(
+        !text.contains("open |") && !text.contains("done |"),
+        "match rows should not use status-pipe prefixes: {text}"
+    );
+}
+
+#[test]
 fn link_wizard_render_keeps_selected_target_visible_when_scrolled() {
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
@@ -3204,12 +3239,16 @@ fn link_wizard_render_keeps_selected_target_visible_when_scrolled() {
     let text = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        text.contains(&format!("> open | {selected_text}")),
-        "selected target row should stay visible in matches list"
+        text.contains(&format!(">   {selected_text}")),
+        "selected target row should stay visible in matches list: {text}"
     );
     assert!(
-        !text.contains("open | ListTarget-00"),
+        !text.contains("ListTarget-00"),
         "top-of-list row should scroll off-screen after moving deep into matches"
+    );
+    assert!(
+        !text.contains("open |"),
+        "match rows should use glyphs, not status-pipe prefixes"
     );
 }
 

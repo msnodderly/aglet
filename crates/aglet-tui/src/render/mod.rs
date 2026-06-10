@@ -1071,7 +1071,7 @@ impl App {
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // anchor
+                Constraint::Length(1), // source line
                 Constraint::Length(7), // actions
                 Constraint::Length(3), // target query
                 Constraint::Min(5),    // target matches
@@ -1080,24 +1080,21 @@ impl App {
             ])
             .split(inner);
 
-        let anchor_lines = vec![
-            Line::from(if source_count > 1 {
-                format!("Source set ({source_count} items)")
-            } else {
-                "Anchor item".to_string()
-            }),
-            Line::from(if source_count > 1 {
-                format!("  {} (focused)", truncate_board_cell(&anchor_label, 72))
-            } else {
-                format!("  {}", truncate_board_cell(&anchor_label, 72))
-            }),
-        ];
+        // Plain source line — a 2-row bordered box clipped its own content
+        // and rendered as an empty rectangle (UX audit P3-3).
+        let source_value = if source_count > 1 {
+            format!(
+                "{source_count} items \u{2014} \"{}\", \u{2026}",
+                truncate_board_cell(&anchor_label, 56)
+            )
+        } else {
+            truncate_board_cell(&anchor_label, 64)
+        };
         frame.render_widget(
-            Paragraph::new(anchor_lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
-            ),
+            Paragraph::new(Line::from(vec![
+                Span::styled("Source: ", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::styled(source_value, Style::default().add_modifier(Modifier::BOLD)),
+            ])),
             rows[0],
         );
 
@@ -1155,10 +1152,11 @@ impl App {
                     .iter()
                     .find(|item| item.id == *item_id)
                     .map(|item| {
-                        let status = if item.is_done { "done" } else { "open" };
-                        format!("{status} | {}", item.text)
+                        // Board glyph vocabulary, not debug-style "open |".
+                        let glyph = if item.is_done { '\u{2713}' } else { ' ' };
+                        format!("{glyph} {}", item.text)
                     })
-                    .unwrap_or_else(|| format!("missing | {item_id}"));
+                    .unwrap_or_else(|| format!("? {item_id} (missing)"));
                 target_items.push(ListItem::new(truncate_board_cell(&label, 72)));
             }
             if target_items.is_empty() {
