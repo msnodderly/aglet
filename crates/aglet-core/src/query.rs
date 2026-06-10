@@ -72,7 +72,9 @@ pub fn display_category_ids(item: &Item, categories: &[Category]) -> Vec<Categor
         depth_of(*b).cmp(&depth_of(*a)).then_with(|| {
             let a_name = name_by_id.get(a).copied().unwrap_or("");
             let b_name = name_by_id.get(b).copied().unwrap_or("");
-            a_name.to_ascii_lowercase().cmp(&b_name.to_ascii_lowercase())
+            a_name
+                .to_ascii_lowercase()
+                .cmp(&b_name.to_ascii_lowercase())
         })
     });
     ids
