@@ -1,0 +1,225 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="980" viewBox="0 0 1400 980" role="img" aria-labelledby="title desc">
+  <title id="title">Aglet Testing Coverage Work Plan</title>
+  <desc id="desc">A visual summary of the Testing view in bugtracker.ag, showing 24 ready test coverage tasks grouped by feature area with high and normal priority counts.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7f5ef; }
+      .ink { fill: #202124; }
+      .muted { fill: #62645f; }
+      .panel { fill: #ffffff; stroke: #d8d2c4; stroke-width: 1.4; }
+      .lane { fill: #fbfaf6; stroke: #d8d2c4; stroke-width: 1.2; }
+      .high { fill: #c83f3f; }
+      .normal { fill: #2f7d73; }
+      .ready { fill: #d9ead7; stroke: #78a86f; }
+      .line { stroke: #c7c0b1; stroke-width: 2; fill: none; }
+      .thin { stroke: #ddd7c8; stroke-width: 1; fill: none; }
+      .title { font: 700 34px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { font: 400 16px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { font: 700 15px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .small { font: 500 12px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .tiny { font: 500 11px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .num { font: 800 26px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1400" height="980"/>
+
+  <g transform="translate(54 44)">
+    <text class="title ink" x="0" y="0" dominant-baseline="hanging">Aglet Test Coverage Plan</text>
+    <text class="subtitle muted" x="0" y="48">Ready work packets created in ../bugtracker.ag, grouped by Testing subarea for subagent implementation.</text>
+  </g>
+
+  <g transform="translate(54 120)">
+    <rect class="panel" x="0" y="0" width="1292" height="96" rx="8"/>
+    <g transform="translate(32 22)">
+      <text class="small muted" x="0" y="0">TOTAL READY TASKS</text>
+      <text class="num ink" x="0" y="42">24</text>
+    </g>
+    <g transform="translate(220 22)">
+      <text class="small muted" x="0" y="0">HIGH PRIORITY</text>
+      <text class="num high" x="0" y="42">16</text>
+    </g>
+    <g transform="translate(400 22)">
+      <text class="small muted" x="0" y="0">NORMAL PRIORITY</text>
+      <text class="num normal" x="0" y="42">8</text>
+    </g>
+    <g transform="translate(602 28)">
+      <rect class="ready" x="0" y="0" width="96" height="34" rx="17"/>
+      <text class="small ink" x="48" y="22" text-anchor="middle">Ready</text>
+      <text class="small muted" x="118" y="22">All packets are claimable implementation slices</text>
+    </g>
+    <g transform="translate(1015 24)">
+      <circle class="high" cx="0" cy="10" r="6"/>
+      <text class="tiny muted" x="16" y="14">High</text>
+      <circle class="normal" cx="72" cy="10" r="6"/>
+      <text class="tiny muted" x="88" y="14">Normal</text>
+    </g>
+  </g>
+
+  <g transform="translate(54 254)">
+    <text class="label ink" x="0" y="-22">Implementation flow</text>
+    <rect class="panel" x="0" y="0" width="1292" height="104" rx="8"/>
+    <g transform="translate(34 28)">
+      <rect class="lane" x="0" y="0" width="210" height="48" rx="6"/>
+      <text class="label ink" x="105" y="20" text-anchor="middle">1. Harness</text>
+      <text class="tiny muted" x="105" y="37" text-anchor="middle">binary, fixtures, snapshots</text>
+      <path class="line" d="M218 24 H270"/>
+
+      <rect class="lane" x="278" y="0" width="210" height="48" rx="6"/>
+      <text class="label ink" x="383" y="20" text-anchor="middle">2. CLI Contracts</text>
+      <text class="tiny muted" x="383" y="37" text-anchor="middle">golden user-visible behavior</text>
+      <path class="line" d="M496 24 H548"/>
+
+      <rect class="lane" x="556" y="0" width="210" height="48" rx="6"/>
+      <text class="label ink" x="661" y="20" text-anchor="middle">3. Core Semantics</text>
+      <text class="tiny muted" x="661" y="37" text-anchor="middle">items, categories, views, links</text>
+      <path class="line" d="M774 24 H826"/>
+
+      <rect class="lane" x="834" y="0" width="210" height="48" rx="6"/>
+      <text class="label ink" x="939" y="20" text-anchor="middle">4. TUI + Edge Cases</text>
+      <text class="tiny muted" x="939" y="37" text-anchor="middle">rendering, workflows, surprises</text>
+      <path class="line" d="M1052 24 H1104"/>
+
+      <rect class="lane" x="1112" y="0" width="112" height="48" rx="6"/>
+      <text class="label ink" x="1168" y="20" text-anchor="middle">Audit</text>
+      <text class="tiny muted" x="1168" y="37" text-anchor="middle">re-score</text>
+    </g>
+  </g>
+
+  <g transform="translate(54 414)">
+    <text class="label ink" x="0" y="-22">Ready packets by Testing area</text>
+
+    <!-- row 1 -->
+    <g transform="translate(0 0)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Test Infrastructure</text>
+      <text class="small muted" x="18" y="48">2 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">1</text>
+      <text class="tiny muted" x="18" y="78">Harness, fixtures, final audit</text>
+    </g>
+    <g transform="translate(330 0)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">CLI Behavior</text>
+      <text class="small muted" x="18" y="48">2 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">2</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">Golden add/show/edit/list/search</text>
+    </g>
+    <g transform="translate(660 0)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Item Lifecycle</text>
+      <text class="small muted" x="18" y="48">2 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">1</text>
+      <text class="tiny muted" x="18" y="78">Create, edit, delete, done, recurrence</text>
+    </g>
+    <g transform="translate(990 0)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Dates and Recurrence</text>
+      <text class="small muted" x="18" y="48">1 task</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">When storage, parsing, buckets</text>
+    </g>
+
+    <!-- row 2 -->
+    <g transform="translate(0 124)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Category Model</text>
+      <text class="small muted" x="18" y="48">2 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">0</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">2</text>
+      <text class="tiny muted" x="18" y="78">CRUD, hierarchy, numeric formats</text>
+    </g>
+    <g transform="translate(330 124)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Assignment Semantics</text>
+      <text class="small muted" x="18" y="48">2 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">2</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">Provenance, exclusivity, sticky/live</text>
+    </g>
+    <g transform="translate(660 124)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Conditions and Actions</text>
+      <text class="small muted" x="18" y="48">2 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">1</text>
+      <text class="tiny muted" x="18" y="78">Rules, date conditions, cascades</text>
+    </g>
+    <g transform="translate(990 124)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Views and Queries</text>
+      <text class="small muted" x="18" y="48">3 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">2</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">1</text>
+      <text class="tiny muted" x="18" y="78">Sections, columns, aliases, datebook</text>
+    </g>
+
+    <!-- row 3 -->
+    <g transform="translate(0 248)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Links and Dependencies</text>
+      <text class="small muted" x="18" y="48">1 task</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">Links, blocked filters, hide-dependent</text>
+    </g>
+    <g transform="translate(330 248)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Claim Workflow</text>
+      <text class="small muted" x="18" y="48">1 task</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">Ready queue, claim, release</text>
+    </g>
+    <g transform="translate(660 248)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Persistence and Migrations</text>
+      <text class="small muted" x="18" y="48">1 task</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">Schema init, drift repair, roundtrip</text>
+    </g>
+    <g transform="translate(990 248)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">TUI Behavior</text>
+      <text class="small muted" x="18" y="48">4 tasks</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">2</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">2</text>
+      <text class="tiny muted" x="18" y="78">Smoke, render, input, managers</text>
+    </g>
+
+    <!-- row 4 -->
+    <g transform="translate(0 372)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Search and Classification</text>
+      <text class="small muted" x="18" y="48">1 task</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">0</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">1</text>
+      <text class="tiny muted" x="18" y="78">Shared search and suggestion UX</text>
+    </g>
+    <g transform="translate(330 372)">
+      <rect class="lane" width="300" height="100" rx="8"/>
+      <text class="label ink" x="18" y="26">Surprising Semantics</text>
+      <text class="small muted" x="18" y="48">1 task</text>
+      <circle class="high" cx="218" cy="30" r="7"/><text class="tiny muted" x="232" y="34">1</text>
+      <circle class="normal" cx="258" cy="30" r="7"/><text class="tiny muted" x="272" y="34">0</text>
+      <text class="tiny muted" x="18" y="78">AGENTS.md regression suite</text>
+    </g>
+    <g transform="translate(680 384)">
+      <path class="thin" d="M0 0 H590"/>
+      <text class="small muted" x="0" y="32">Each packet is tagged:</text>
+      <text class="small ink" x="146" y="32">Test coverage task</text>
+      <text class="small muted" x="290" y="32">+</text>
+      <text class="small ink" x="310" y="32">Ready</text>
+      <text class="small muted" x="363" y="32">+</text>
+      <text class="small ink" x="383" y="32">Testing subarea</text>
+    </g>
+  </g>
+
+  <g transform="translate(54 930)">
+    <text class="tiny muted" x="0" y="0">Source: Aglet bugtracker Testing view. Generated as a visual planning artifact for subagent test implementation.</text>
+  </g>
+</svg>

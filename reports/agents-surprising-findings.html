@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AGENTS.md Surprising Findings Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2933;
+      --muted: #5f6b7a;
+      --line: #d9e1ea;
+      --bg: #f7f9fb;
+      --panel: #ffffff;
+      --bug: #b42318;
+      --design: #0f766e;
+      --hazard: #9a3412;
+      --doc: #5b21b6;
+      --tool: #334155;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 32px 0 12px;
+      font-size: 1.35rem;
+    }
+
+    p {
+      margin: 0 0 12px;
+      color: var(--muted);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 10px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.88rem;
+      white-space: nowrap;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      margin: 20px 0 28px;
+    }
+
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.7rem;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 0.94rem;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #edf2f7;
+      color: #334155;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      background: #eef2f6;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 700;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
+
+    .intentional { color: var(--design); background: #d8f3ee; }
+    .unintentional { color: var(--bug); background: #fee4e2; }
+    .mixed { color: var(--hazard); background: #ffedd5; }
+    .unknown { color: var(--tool); background: #e2e8f0; }
+
+    .kind-bug { color: var(--bug); }
+    .kind-design { color: var(--design); }
+    .kind-hazard { color: var(--hazard); }
+    .kind-doc { color: var(--doc); }
+    .kind-tool { color: var(--tool); }
+
+    .note {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      padding: 14px 16px;
+      color: #7c2d12;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AGENTS.md Surprising Findings</h1>
+    <p>Classification of the explicitly surprising or gotcha-like notes in <code>AGENTS.md</code>, grouped by whether they describe intentional product behavior, known implementation hazards, documentation drift, tooling quirks, or likely bugs.</p>
+    <div class="meta">
+      <span class="pill">Source: <code>/Users/mds/src/aglet/AGENTS.md</code></span>
+      <span class="pill">Generated: 2026-05-12</span>
+      <span class="pill">Branch/worktree: <code>main</code> at <code>/Users/mds/src/aglet</code></span>
+    </div>
+  </header>
+
+  <section class="summary" aria-label="Summary counts">
+    <div class="stat"><strong>34</strong><span>findings reviewed</span></div>
+    <div class="stat"><strong>16</strong><span>behavior as design</span></div>
+    <div class="stat"><strong>7</strong><span>bugs or likely defects</span></div>
+    <div class="stat"><strong>11</strong><span>hazards, drift, or tooling quirks</span></div>
+  </section>
+
+  <section class="note">
+    <strong>Reading rule:</strong> “Intentional” here means the prose says to preserve the behavior, calls it current/intentional, or frames it as the source of truth. “Unintentional” means the text describes a stale, missing, broken, or regression-prone state. “Mixed” means the current behavior is accepted, but the surprise comes from compatibility, tooling, storage layout, or implementation coupling.
+  </section>
+
+  <h2>Classification Table</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Finding</th>
+        <th>Intent</th>
+        <th>Classification</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Implicit string matching uses note text too</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>Current matching scope includes title and full note; surprises should be debugged through provenance.</td></tr>
+      <tr><td>Continuous implicit-string matches persist as <code>AutoClassified</code></td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>The modern path uses <code>AutoClassified</code>; UI/tests should normalize both old and new explanation forms.</td></tr>
+      <tr><td>Disabling implicit match only evicts live <code>AutoMatch</code> assignments</td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Compatibility behavior</td><td>The text explicitly says compatibility is intentionally mixed: new live assignments auto-break, legacy sticky assignments remain.</td></tr>
+      <tr><td>Older proposal docs describe pre-live rule semantics</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-doc">Documentation drift</td><td>Shipped engine/tests are source of truth; stale proposals should be updated before being used as guidance.</td></tr>
+      <tr><td>Adding a category action does not retroactively fire it</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>Actions are event-driven on assignment, not live destination rules, unless the project intentionally changes that later.</td></tr>
+      <tr><td><code>view_edit2.rs</code> was an incremental bridge</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Architecture guidance</td><td>The stable boundary is the unified <code>view_edit/</code> feature module, not the historical bridge file.</td></tr>
+      <tr><td>Schema version drift can hide missing tables/columns</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Data migration bug / repair gap</td><td>Current-version DBs can miss schema pieces; idempotent repairs cover some columns but not every missing table case.</td></tr>
+      <tr><td><code>aglet-features.ag</code> parent may be <code>Software Projects</code></td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Local data naming hazard</td><td>The issue DB may have singular/plural category drift; agents should inspect actual category names.</td></tr>
+      <tr><td><code>aglet show</code> top-level status differs from Status category</td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Model/UI ambiguity</td><td>Workflow category assignments are the source of truth, while the top-level item status can still say <code>open</code>.</td></tr>
+      <tr><td>Claimed items can show stale <code>Status</code> provenance text</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Display/provenance bug</td><td>The active assignment is correct, but stale subsumption text can misleadingly mention <code>Ready</code> after claiming.</td></tr>
+      <tr><td><code>add</code> output parsing gotcha</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">CLI output contract</td><td>Extra lines after <code>created</code> are allowed; robust scripts should parse the <code>^created </code> line.</td></tr>
+      <tr><td><code>claim</code> race gotcha</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Concurrency behavior</td><td>Claim preconditions can fail if another actor claims first; rerun selection rather than force-assigning.</td></tr>
+      <tr><td><code>cargo fmt</code> / <code>rustfmt</code> file-scoped runs touch siblings</td><td><span class="tag unknown">External</span></td><td class="kind-tool">Tooling quirk</td><td>Rustfmt follows module declarations; the project guidance is to check status after formatting.</td></tr>
+      <tr><td><code>aglet edit --note-stdin</code> replaces whole note</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>The flag has defined replacement semantics and conflicts with other note-operation flags.</td></tr>
+      <tr><td>Direct SQLite <code>when_date</code> imports need store format and do not sync <code>When</code></td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Direct-write integration hazard</td><td>The store parser expects a specific format and direct SQL bypasses assignment/provenance logic.</td></tr>
+      <tr><td>ViewEdit criteria row ordering</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Known bug pattern</td><td>The heading calls this a “Surprising Bug”; sorted display rows can edit the wrong underlying criterion.</td></tr>
+      <tr><td>View columns storage vs CLI display</td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Storage/API mismatch</td><td>Current storage is section-local while a legacy column exists; CLI visibility is incomplete for board-column changes.</td></tr>
+      <tr><td>View category aliases storage</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>Aliases are display metadata only and should not affect identity or query behavior.</td></tr>
+      <tr><td>Category Manager action/filter cursor rendering</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Rendering bug risk</td><td>Without explicit cursor positioning, text editing works but the caret appears missing or intermittent.</td></tr>
+      <tr><td>InputPanel note cursor requires explicit position</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Rendering bug risk</td><td>Styling the textarea cursor alone is insufficient; the terminal cursor must be placed explicitly.</td></tr>
+      <tr><td>Blocking save overlay must queue after validation</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">UX regression risk</td><td>Queuing before validation causes a confusing flash and leaves users in the editor without an obvious save.</td></tr>
+      <tr><td>Category create parent defaults</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>The parent picker was removed; parent selection now comes from whether the user pressed <code>n</code> or <code>N</code>.</td></tr>
+      <tr><td>Item assign search Enter behavior</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>The precedence is designed to avoid accidental category creation while preserving create-new behavior.</td></tr>
+      <tr><td>Item assign picker Enter must not re-toggle dirty selection</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Regression guard</td><td>Reusing the Space handler on Enter would undo the just-applied assignment.</td></tr>
+      <tr><td>Board table column spacing budget</td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Layout implementation hazard</td><td>The board can visually collapse if spacing is increased without subtracting spacing budget.</td></tr>
+      <tr><td>Done toggle blocker-cleanup prompt uses <code>Mode::ConfirmDelete</code></td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Implementation design</td><td>The confirm mode intentionally multiplexes delete and done-cleanup flows through extra state.</td></tr>
+      <tr><td>View-edit tests must not assume <code>views[0]</code> is editable</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Test guidance</td><td>The immutable system view can appear first; tests should select a named mutable view.</td></tr>
+      <tr><td>Preview info pane scroll clamp must use rendered line count</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Scrolling bug risk</td><td>Clamping only assignment rows prevents users from scrolling to metadata/link content.</td></tr>
+      <tr><td>Add-item context text must use fixed help row</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Layout/UX bug risk</td><td>Rendering context next to <code>Text&gt;</code> makes it float as cursor and wrapping change.</td></tr>
+      <tr><td>TUI auto-refresh interval is DB-backed in <code>app_settings</code></td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>The interval is persisted per database and loaded at startup, with fallback for missing values.</td></tr>
+      <tr><td>TUI run loop must not redraw while idle</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Performance design</td><td>The run loop should draw only after real UI changes, avoiding idle layout work.</td></tr>
+      <tr><td>Link wizard target list must be stateful to scroll</td><td><span class="tag unintentional">Unintentional</span></td><td class="kind-bug">Navigation bug risk</td><td>A plain list lets selection move while the viewport remains pinned, hiding the active row.</td></tr>
+      <tr><td>Generated section insert must preserve base criteria</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>Generated slots must carry backing section criteria so inserted items receive expected assignments.</td></tr>
+      <tr><td>Clap <code>--help</code> coverage requires per-arg comments</td><td><span class="tag mixed">Mixed</span></td><td class="kind-hazard">Tooling/API documentation hazard</td><td>Clap shows blank help for args without per-arg help; tests enforce user-facing documentation.</td></tr>
+      <tr><td>Inline When validation feedback is pane-local</td><td><span class="tag intentional">Intentional</span></td><td class="kind-design">Behavior as design</td><td>Validation errors belong in the open editor pane, not the global footer.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recommended Triage</h2>
+  <table>
+    <thead>
+      <tr><th>Priority</th><th>Items</th><th>Suggested treatment</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="kind-bug">Fix or ticket</td><td>Schema drift, stale claim provenance, ViewEdit row ordering, cursor rendering, blocking overlay validation, item assign retoggle, preview clamp, add-item context, link wizard scroll</td><td>These are most plausibly bugs or regression traps. Keep or add tests when touching them.</td></tr>
+      <tr><td class="kind-doc">Clean up docs</td><td>Older proposal docs, TUI spec vs implementation, local issue DB naming drift</td><td>Update stale guidance or add clearer source-of-truth notes.</td></tr>
+      <tr><td class="kind-design">Preserve as design</td><td>Implicit match scope, action firing semantics, category aliases, category create defaults, search Enter precedence, generated section inserts, pane-local When feedback</td><td>Treat as intentional unless a product decision changes the behavior.</td></tr>
+      <tr><td class="kind-hazard">Use caution</td><td>Legacy sticky assignments, direct SQLite writes, view column storage, board spacing, Clap help, rustfmt spillover</td><td>Not necessarily product bugs, but easy to trip over during implementation.</td></tr>
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aglet UX Audit — June 2026</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --panel2: #22262f;
+    --ink: #e6e3da;
+    --ink-dim: #9a968a;
+    --accent: #e8b04b;
+    --cyan: #6fc3c9;
+    --red: #e06c5f;
+    --orange: #e09a4b;
+    --green: #8fbf6f;
+    --border: #343945;
+    --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 Georgia, "Iowan Old Style", serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 28px 96px; }
+  header.masthead { border-bottom: 3px double var(--border); padding-bottom: 24px; margin-bottom: 36px; }
+  .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: .22em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  h1 { font-size: 40px; line-height: 1.15; margin: 0 0 12px; font-weight: 600; }
+  .subtitle { color: var(--ink-dim); font-size: 18px; max-width: 64ch; }
+  .meta { font-family: var(--mono); font-size: 12.5px; color: var(--ink-dim); margin-top: 16px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+
+  h2 { font-size: 26px; margin: 56px 0 6px; padding-top: 18px; border-top: 1px solid var(--border); }
+  h2 .secnum { color: var(--accent); font-family: var(--mono); font-size: 17px; margin-right: 10px; }
+  h3 { font-size: 19px; margin: 30px 0 8px; }
+  p { max-width: 76ch; }
+  .lede { color: var(--ink-dim); margin-top: 0; }
+
+  table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font-size: 14.5px; }
+  th { text-align: left; font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); border-bottom: 1px solid var(--border); padding: 8px 12px 8px 0; }
+  td { vertical-align: top; padding: 9px 12px 9px 0; border-bottom: 1px solid #262a33; }
+  td:first-child { white-space: nowrap; }
+  code, kbd { font-family: var(--mono); font-size: 13px; background: var(--panel2); border-radius: 4px; padding: 1px 6px; color: var(--cyan); }
+  kbd { color: var(--accent); border: 1px solid var(--border); border-bottom-width: 2px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.5; color: #cdd3de; }
+  pre .hl { color: var(--accent); }
+
+  .finding { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--ink-dim); border-radius: 8px; padding: 18px 22px; margin: 18px 0; }
+  .finding.p1 { border-left-color: var(--red); }
+  .finding.p2 { border-left-color: var(--orange); }
+  .finding.p3 { border-left-color: var(--cyan); }
+  .finding h4 { margin: 0 0 6px; font-size: 17px; }
+  .finding .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; border-radius: 99px; padding: 2px 10px; margin-right: 8px; }
+  .tag.sev1 { background: #3a2320; color: var(--red); }
+  .tag.sev2 { background: #3a2f20; color: var(--orange); }
+  .tag.sev3 { background: #203338; color: var(--cyan); }
+  .tag.area { background: var(--panel2); color: var(--ink-dim); }
+  .finding p { margin: 8px 0; }
+  .finding .rec { color: var(--green); }
+  .finding .rec::before { content: "→ "; font-family: var(--mono); }
+  .evidence { color: var(--ink-dim); font-size: 14.5px; }
+
+  .good { background: #1d251c; border: 1px solid #2e3d2a; border-radius: 8px; padding: 14px 20px; margin: 12px 0; }
+  .good b { color: var(--green); }
+
+  ul { padding-left: 22px; } li { margin: 4px 0; max-width: 74ch; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px 24px; font-size: 15px; columns: 2; column-gap: 40px; }
+  .toc a { color: var(--cyan); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc div { break-inside: avoid; margin: 3px 0; }
+  .footnote { color: var(--ink-dim); font-size: 13.5px; border-top: 1px solid var(--border); margin-top: 64px; padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="kicker">UX Audit &amp; Recommendations</div>
+  <h1>Aglet TUI/CLI — Usability Review</h1>
+  <p class="subtitle">A full-surface inventory and pain-point review of the aglet personal information manager, with prioritized recommendations. Audit only — no behavior changes proposed to core semantics.</p>
+  <div class="meta">
+    Date: <b>2026-06-09</b> · Method: <b>code/docs inventory + live TUI session (tmux, <code>../mds.ag</code>) + CLI probes</b> · Branch: <b>combined/cli-integration-and-fixes</b><br>
+    All hands-on testing used clearly-marked scratch items, removed afterwards. One scratch entry remains in the deletion log (by design — deletions are logged).
+  </div>
+</header>
+
+<nav class="toc">
+  <div><a href="#inventory">1. Functional surface inventory</a></div>
+  <div><a href="#works">2. What already works well</a></div>
+  <div><a href="#p1">3. Priority 1 — trust &amp; data-integrity pain points</a></div>
+  <div><a href="#p2">4. Priority 2 — discoverability &amp; consistency</a></div>
+  <div><a href="#p3">5. Priority 3 — polish &amp; output quality</a></div>
+  <div><a href="#cli">6. CLI-specific findings</a></div>
+  <div><a href="#recs">7. Recommendation summary &amp; quick wins</a></div>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="inventory"><span class="secnum">1</span>Functional Surface Inventory</h2>
+<p class="lede">The complete behavior surface, compiled from <code>aglet --help</code> trees, the TUI mode enum (19 modes in <code>aglet-tui/src/lib.rs:184</code>), AGENTS.md, docs/specs, and live use.</p>
+
+<h3>1.1 Item lifecycle</h3>
+<table>
+<tr><th>Capability</th><th>Surface</th><th>Notes</th></tr>
+<tr><td>Create</td><td>CLI <code>add</code> (prints <code>created &lt;uuid&gt;</code>, may print <code>parsed_when=…</code>); TUI <kbd>n</kbd>, <kbd>Enter</kbd> on empty slot, search-bar "create" on Enter</td><td>Date parsed from title text ("friday" → 2026-06-12); section criteria auto-assigned on add; implicit-string categories auto-assigned</td></tr>
+<tr><td>Edit</td><td>CLI <code>edit</code> (text positional; <code>--note/--append-note/--note-stdin/--clear-note</code> mutually exclusive; <code>--when/--clear-when</code>; <code>--recurrence/--clear-recurrence</code>; <code>--done true|false</code>); TUI <kbd>e</kbd>/<kbd>Enter</kbd> InputPanel</td><td>Empty stdin note payload is a no-op</td></tr>
+<tr><td>Show</td><td>CLI <code>show</code> with full assignment provenance; TUI preview pane (<kbd>p</kbd>, <kbd>i</kbd>/<kbd>o</kbd> Summary/Info), edit-panel inspector popup <kbd>I</kbd></td><td>Provenance explanations are the best part of the product (see §2)</td></tr>
+<tr><td>List / search</td><td>CLI <code>list</code> (view, AND/OR/NOT category filters, blocked filters, numeric value filters, multi-key sort, table/json, <code>--include-done</code>); <code>search</code>; TUI <kbd>/</kbd> per-section, <kbd>g/</kbd> global session</td><td>Search semantics centralized in <code>aglet_core::query::matches_text_search</code> (text/note/UUID/category name); TUI adds fuzzy/substring toggle</td></tr>
+<tr><td>Done state</td><td>CLI <code>edit --done</code>; TUI <kbd>d</kbd>/<kbd>D</kbd> incl. batch</td><td>Done clears claim assignment; done-with-blockers prompts cleanup (reuses ConfirmDelete mode)</td></tr>
+<tr><td>Delete / restore</td><td>CLI <code>delete</code>, <code>deleted</code> (log), <code>restore &lt;log-id&gt;</code>; TUI <kbd>x</kbd> with y/Esc confirm, <kbd>r</kbd> remove-from-view</td><td>Restore replays surviving category assignments; timestamps reset to restore time. No TUI restore UI</td></tr>
+<tr><td>Dates / When</td><td>Storage <code>items.when_date</code> (<code>YYYY-MM-DD HH:MM:SS</code> only) + synced reserved <code>When</code> assignment; recurrence rules (<code>daily</code>, <code>every friday</code>, <code>monthly on the 13th</code>…), series carry-forward (<code>recurrence:carry</code> provenance)</td><td>Parser: absolute forms, today/tomorrow/yesterday, this/next weekday, trailing times. No "next week"-style phrases (help text says so); direct SQLite writes don't sync the <code>When</code> assignment</td></tr>
+<tr><td>Numeric values</td><td>CLI <code>category set-value</code>, <code>category format</code> (decimals/currency/thousands), list value filters; TUI <kbd>Enter</kbd> on numeric column cell, <kbd>f</kbd>/<kbd>F</kbd> format &amp; summary cycling</td><td>Value stored on the assignment edge; section sums render in TUI only</td></tr>
+<tr><td>Export / import</td><td>CLI <code>export</code> (Markdown, optional view scope, <code>--include-links</code>); <code>import csv</code></td><td>Deterministic export covered by snapshot test</td></tr>
+</table>
+
+<h3>1.2 Categories &amp; assignment</h3>
+<table>
+<tr><th>Capability</th><th>Surface</th><th>Notes</th></tr>
+<tr><td>CRUD &amp; hierarchy</td><td>CLI <code>category create/delete/rename/reparent/update/list/show</code>; TUI Category Manager (<kbd>c</kbd>/<kbd>F9</kbd>): tree, <kbd>n</kbd>/<kbd>N</kbd> sibling/child, <kbd>H/J/K/L</kbd> moves, <kbd>&lt;&lt;</kbd>/<kbd>&gt;&gt;</kbd> level shifts, details pane (flags, also-match, conditions, actions, note)</td><td>Reserved: <code>Done</code>, <code>When</code>, <code>Entry</code> (immutable, can't be child names)</td></tr>
+<tr><td>Exclusive parents</td><td>Flag on parent; one child active per item; child <em>order defines derived-conflict precedence</em> (earlier sibling wins, later suppressed)</td><td>Manual/accepted assignments are durable and never replaced by later derived siblings</td></tr>
+<tr><td>Assignment sources</td><td><code>Manual</code>, <code>AutoMatch</code>/<code>AutoClassified</code> (implicit string, provider <code>implicit_string</code>), <code>Subsumption</code> (parents inherited from children), action-derived, suggestion-accepted, <code>nlp:date</code> for When</td><td>Implicit-string matches evaluate against title <em>and full note body</em>; new implicit/profile assignments are live (auto-break), manual/action/accepted are sticky</td></tr>
+<tr><td>Conditions &amp; actions</td><td>CLI <code>add-condition</code>, <code>add-date-condition</code>, <code>set-condition-mode</code> (ANY/ALL), <code>remove-condition</code>, <code>add-action</code>, <code>remove-action</code>; TUI details-pane editors</td><td>Actions are event-driven "on assignment" — adding an action does <em>not</em> retroactively fire for already-assigned items; disabling implicit match evicts only live (non-sticky) rows</td></tr>
+<tr><td>Unassign</td><td>CLI <code>category unassign</code>; TUI assign picker toggle, inspect-driven unassign</td><td>Unassign immediately reprocesses the item; live assignments can auto-break right after</td></tr>
+</table>
+
+<h3>1.3 Views</h3>
+<table>
+<tr><th>Capability</th><th>Surface</th><th>Notes</th></tr>
+<tr><td>CRUD</td><td>CLI <code>view create/edit/clone/rename/delete/list/show</code>; TUI View Palette (<kbd>v</kbd>/<kbd>V</kbd>/<kbd>F8</kbd>) + full View Editor (criteria, sections, columns, unmatched, aliases, flow, date ranges) with live preview</td><td>New-view wizard defers persistence until <kbd>S</kbd>; <code>All Items</code> is immutable; clone copies config with fresh ID</td></tr>
+<tr><td>Semantics</td><td>Include = AND; exclude; sections with own criteria, auto-assign/auto-unassign category sets, <code>show_children</code> generated subsections, unmatched section (label configurable), hide-dependent-items, section flow vertical/horizontal, per-section columns + summaries, category display aliases, remove-from-view category set, item-column label</td><td>Items matching multiple sections appear in each (documented as expected); aliases are display-only</td></tr>
+<tr><td>Datebook</td><td>CLI <code>view create-datebook</code>, <code>datebook-browse</code>; TUI <kbd>{</kbd>/<kbd>}</kbd>/<kbd>0</kbd></td><td>Buckets by interval (months observed); recurring items appear only at next occurrence</td></tr>
+</table>
+
+<h3>1.4 Links, claim workflow, persistence, TUI shell</h3>
+<table>
+<tr><th>Capability</th><th>Surface</th><th>Notes</th></tr>
+<tr><td>Links</td><td>CLI <code>link depends-on/blocks/related</code>, <code>unlink</code>; TUI Link Wizard <kbd>b</kbd>/<kbd>B</kbd> (blocked-by, depends-on, blocks, related, clear)</td><td><code>blocked</code> = ≥1 unresolved depends-on; done prerequisites don't block; derived <code>--blocked/--not-blocked</code> filters on list/search/view show</td></tr>
+<tr><td>Claim workflow</td><td>CLI <code>ready</code>, <code>claim &lt;id&gt;</code>, <code>release</code>/<code>unclaim</code>; config (Ready category, Claim target) lives in TUI Global Settings only</td><td>Claimable = Ready ∧ ¬claimed ∧ ¬done ∧ ¬blocked; separate concept from links; claim races possible between list and claim</td></tr>
+<tr><td>Persistence</td><td>SQLite <code>.ag</code>; <code>--db</code> / <code>AGLET_DB</code>; <code>Store::init()</code> runs idempotent repair migrations on every open; <code>SCHEMA_SQL</code> only below version stamp</td><td>Observed drift: DBs stamped current but missing tables/columns; decode paths coerce malformed values silently (gaps.md §3.3)</td></tr>
+<tr><td>TUI shell</td><td>19 modes; 2-row footer (status + hints); board/table lanes w/ horizontal flow; preview pane; selection &amp; batch ops; undo/redo (<kbd>Ctrl-Z</kbd>/<kbd>C-S-Z</kbd>); auto-refresh off/1s/5s (persisted per-DB); fuzzy/substring search mode (persisted); classification: literal auto-apply + semantic suggest/review (<kbd>C</kbd>), Ollama/OpenAI providers; <kbd>Ctrl-G</kbd> $EDITOR; <kbd>Ctrl-L</kbd> reload</td><td>Esc = cancel everywhere, dirty-confirm on complex editors; Enter saves single-field panels; <kbd>S</kbd>/<kbd>Ctrl-S</kbd> saves complex editors</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="works"><span class="secnum">2</span>What Already Works Well</h2>
+<div class="good"><b>Assignment provenance is excellent.</b> <code>aglet show</code> explains every assignment in plain language ("Inherited from child Sheffield Financial", "Auto-classified by implicit_string: matched also-match term '(maybe)'"). This is the single best trust-builder in the product — several recommendations below amount to "surface this existing provenance earlier."</div>
+<div class="good"><b>Undo is real and communicative.</b> <kbd>d</kbd> → <kbd>Ctrl-Z</kbd> reported "Undid mark done" and restored the item; the hint row contextually revealed redo. (Note: <code>docs/specs/product/gaps.md</code> still claims undo doesn't exist — doc drift.)</div>
+<div class="good"><b>Recovery story exists.</b> Deletion log + <code>restore</code> with actor attribution (<code>by=user:tui</code>) is a solid safety net.</div>
+<div class="good"><b>Error messages with agency.</b> Ambiguous prefix errors list all matching UUIDs; unconfigured workflow says exactly where to configure it. Exit codes and stderr usage are correct.</div>
+<div class="good"><b>The View Editor is genuinely good.</b> Settings/Sections/Details/live-Preview layout reads clearly; the preview showing per-section match counts is a great feedback loop. Esc/dirty-confirm semantics are consistent.</div>
+<div class="good"><b>Empty states teach.</b> "No items. n:add item v:switch view q:quit" — exactly right.</div>
+
+<!-- ============================================================ -->
+<h2 id="p1"><span class="secnum">3</span>Priority 1 — Trust &amp; Data-Integrity Pain Points</h2>
+<p class="lede">Cases where the system changes or ignores user data without telling them. These erode trust in an app whose core promise is "your items go where they should."</p>
+
+<div class="finding p1">
+  <h4><span class="tag sev1">P1</span><span class="tag area">TUI · When editing</span>Lenient date parsing silently ignores part of what the user typed</h4>
+  <p class="evidence"><b>Observed:</b> In the edit panel, appending garbage to the When field (<code>2026-06-12 00:00X</code>, or <code>…next wek</code>) and pressing <kbd>Ctrl-S</kbd> saved and closed with no message. The parser (<code>board.rs:5157-5189</code>) falls through to <code>BasicDateParser</code>, which extracts any recognizable date token from within the string and discards the rest. The user cannot tell whether their edit took effect; a typo like "next wek" appended to an existing date is silently dropped.</p>
+  <p class="rec">On save, when the parsed result differs from the literal input, echo the normalization: <code>When: saved as 2026-06-12 (interpreted from "2026-06-12 00:00X")</code>. Better: live parse-preview line under the When field (the inline When popup already does pane-local feedback — reuse that pattern in the full edit panel), and reject input with unconsumed trailing tokens.</p>
+</div>
+
+<div class="finding p1">
+  <h4><span class="tag sev1">P1</span><span class="tag area">TUI · Add item</span>Section auto-assign categories are invisible at the moment they fire</h4>
+  <p class="evidence"><b>Observed:</b> Adding an item to the TODOs section showed only <code>Adding to "TODOs" (auto-assign 1 categories)</code> — without naming the category. The section was (mis)configured with <em>Auto-assign on add: Overdue</em>, so every new TODO instantly displayed Priority "Overdue" with no explanation. The misconfiguration was only discoverable four levels deep in the View Editor's section details. (Also: "1 categories" — grammar.)</p>
+  <p class="rec">Name the categories in the context line: <code>Adding to "TODOs" — will assign: Overdue</code>. Consider a View Editor lint that warns when an auto-assign category is not part of the section's criteria (the natural configuration is for them to match).</p>
+</div>
+
+<div class="finding p1">
+  <h4><span class="tag sev1">P1</span><span class="tag area">Core · Implicit matching</span>Note text triggers semantic-feeling misclassifications</h4>
+  <p class="evidence"><b>Observed live:</b> A bill item's note "Paid via app, <b>maybe</b> only works during biz hours?" auto-assigned the GTD category <code>Someday/Maybe</code> via also-match term "(maybe)" — silently re-filing a dated payment into the someday bucket. AGENTS.md already documents this class of surprise (notes matching <code>Ready</code>/<code>CLI</code>/<code>TUI</code>).</p>
+  <p class="rec">Three dials, any of which would help: (a) default also-match/implicit matching to <em>title only</em>, with note matching opt-in per category; (b) route note-text matches through the suggestion queue (Suggest/Review) instead of auto-apply, reusing the existing literal/semantic split; (c) show a transient toast when a save triggers auto-assignments: <code>Auto-assigned: Someday/Maybe (matched "maybe" in note) — u to undo</code>. The provenance already exists; it's just never pushed to the user at assignment time.</p>
+</div>
+
+<div class="finding p1">
+  <h4><span class="tag sev1">P1</span><span class="tag area">TUI · Delete</span>Delete confirmation is a footer-only prompt that doesn't name the target</h4>
+  <p class="evidence"><b>Observed:</b> <kbd>x</kbd> shows "Delete item? y:confirm Esc:cancel" in the bottom status row only — two hundred columns away from the selected item, with no item title, and visually identical to any other status line. The same mode is multiplexed with the done-blocker-cleanup prompt. Deletion is recoverable only via CLI (<code>aglet deleted</code> / <code>restore</code>); the TUI has no restore surface.</p>
+  <p class="rec">Use a small centered confirm popup naming the item ("Delete 'Wash DRZ'? This is logged and restorable via CLI."), or at minimum include the truncated title in the footer prompt. Longer term: a TUI deleted-items browser (the data model already supports it), and include delete in Ctrl-Z undo if it isn't.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="p2"><span class="secnum">4</span>Priority 2 — Discoverability &amp; Consistency</h2>
+<p class="lede">Aglet inherits Lotus Agenda's flexibility-overwhelm problem (the Wikipedia quote in your own README). Most of these findings are about the gap between the app's actual coherence and what the chrome communicates.</p>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Help</span>The help panel clips its bottom third and breaks alignment</h4>
+  <p class="evidence"><b>Observed at 220×50:</b> the GLOBAL section (settings, category manager, undo, quit!) is cut off with no scroll affordance — <code>render_help_panel</code> renders a fixed Paragraph with no scroll state (<code>render/mod.rs:4830</code>). Key-column padding breaks for wide keys: "v/V/F8 ,/. gaViews, previous/next view", "S-↑/S-↓Move item", and unicode arrows misalign rows.</p>
+  <p class="rec">Make the panel scrollable (j/k/PgDn like the inspector popup), widen the key gutter to fit the longest key string, and consider two columns at wide terminal sizes — the content easily fits 220 cols side-by-side.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Footer</span>The two footer rows contradict each other and silently drop hints</h4>
+  <p class="evidence"><b>Observed:</b> View palette status row says "n new, d datebook, r rename, x delete, e edit"; the hint row below says "N:new c:clone r:rename e:edit x:delete" — different case for new, clone vs datebook each appearing in only one row. Category manager: status row says "H/J/K/L move, &lt;&lt;/&gt;&gt; shift level", hint row says "S-↑/↓:move H/L:level". The Normal-mode hint row carries ~20 entries and entries appear/disappear as state changes (redo appeared, settings hints fell off), so users can't build spatial memory. Datebook keys <kbd>{</kbd>/<kbd>}</kbd>/<kbd>0</kbd> never appear in the footer at all, even in a datebook view.</p>
+  <p class="rec">Single source of truth: generate both rows from one keymap table per mode so they can't diverge. Curate Normal mode to ≤10 stable, high-frequency hints + "?:more". Make hints context-sensitive by view type (datebook keys when in a datebook).</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Pickers</span>Popup text inputs render in the global footer, far from the popup</h4>
+  <p class="evidence"><b>Observed:</b> In the assign picker, typing <kbd>/</kbd> puts the filter text ("Category&gt; moto") in the bottom screen footer while the filtered results live in a centered popup — 20+ rows of eye travel, and the typed query is easy to miss entirely. AGENTS.md notes the same family of issues with Category Manager inline-edit cursors.</p>
+  <p class="rec">Render the input row inside the popup (the Link Wizard already does this correctly with its "Search&gt;" box — make it the standard).</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Assign picker</span>The dual-marker checkbox language is cryptic</h4>
+  <p class="evidence"><b>Observed:</b> Rows render like <code>[-] [x] TODO [exclusive]</code> with legend "[+] add [-] remove [x] assigned [ ] not assigned". Two adjacent brackets (pending-change + current-state) require the legend to decode, and a <code>[-]</code> appeared on TODO before any user toggle (derived/subsumption state interacting with pending markers). Exclusive-group radio behavior (toggling one sibling clears another) is not signaled before it happens.</p>
+  <p class="rec">One marker per row with color/word for the delta: <code>[x] TODO</code>, <code>[x→ ] TODO (will remove)</code>, <code>[ →x] Home (will add)</code>; dim derived-only assignments and label them ("via Sheffield Financial") using the provenance that <code>show</code> already has. Show "(replaces: Low)" on exclusive siblings before apply.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Category tree</span>Filtered trees keep indentation but hide ancestors</h4>
+  <p class="evidence"><b>Observed:</b> Filtering categories on "moto" rendered "Moto Expenses 2026" and "Adams Motorsports Park" at their original depths with all parents (Finance → Expenses…) hidden — indentation with nothing to be relative to. With 60+ categories in a real DB this makes filter results genuinely ambiguous (two "2025"/"2026" leaves exist under different parents).</p>
+  <p class="rec">Either show matched nodes flat with a breadcrumb suffix ("Moto Expenses 2026 — Finance ▸ Expenses") or keep dimmed ancestor rows in the filtered tree.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Search</span>Enter's search-or-create duality risks accidental creation</h4>
+  <p class="evidence"><b>Observed:</b> The persistent bar reads "Search or create…"; in section search, Enter is "jump/create"; in the assign-picker input, Enter creates a new category when there's no exact/single match. The precedence rules (exact match → single visible match → create) are sensible but invisible, so a typo'd search plus Enter mints a new item/category. Also surprising: Enter on a global-search hit opened the full edit panel rather than just navigating to the item.</p>
+  <p class="rec">Make creation explicit at the moment of commit: when Enter would create, require one more keystroke with a labeled prompt ("No match — Enter again to create item 'reserach: flights'"), or reserve create for <kbd>Ctrl-Enter</kbd>. Have global-search Enter select/reveal, with <kbd>e</kbd> to edit.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Edit vs Add</span>Add and Edit panels present different category models</h4>
+  <p class="evidence"><b>Observed:</b> Add Item shows an inline Categories checklist pane; Edit Item shows an "Actions" pane (<kbd>a</kbd> Assign categories, <kbd>i</kbd> Inspect) — categories are a hop away behind the full picker. Same item, same concept, two layouts and two muscle memories.</p>
+  <p class="rec">Converge on the inline checklist in both panels (Edit's checkboxes already initialize from full assignment state per AGENTS.md), keeping <kbd>a</kbd> as a shortcut to the full picker for deep trees.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Board header</span>Section headers conflate title, count, and column labels</h4>
+  <p class="evidence"><b>Observed:</b> The first section of "TODO list" renders as <code>(4)─────When ─── TODOs ─── Priority ─── Area</code> — a bare count, then column headers, with the section's identity carried only by the item-column label. The third section's item column is labeled "Done", which collides with the reserved Done concept and reads as a status column. Meanwhile "Overdue (1)" renders title-first. Which text is the section name is guesswork.</p>
+  <p class="rec">Always render <code>Title (count)</code> as the leading element of the divider, visually distinct (bold/color) from column headers; never let the item-column label visually replace the section title.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Datebook</span>Period browsing jumps a year, and recurrences vanish from future buckets</h4>
+  <p class="evidence"><b>Observed:</b> In a month-bucketed datebook, <kbd>}</kbd> jumped June 2026 → June 2027 (window-length steps), though README says "next period" and the sections are months. A monthly recurring bill (DRZ Payment ↻) appears only in its next-occurrence bucket; July onward show (0) — so the natural "upcoming bills" reading of a datebook is wrong.</p>
+  <p class="rec">Step by one bucket on <kbd>{</kbd>/<kbd>}</kbd> (window-jump on <kbd>Shift</kbd> variants), and project recurrence occurrences into future buckets as ghost entries (dimmed, "↻ projected") without materializing items.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">TUI · Classification</span>Provider misconfiguration surfaces as per-save noise instead of a settings warning</h4>
+  <p class="evidence"><b>Observed:</b> Every save flashes "Classification complete: no new suggestions (OpenAI: OPENAI_API_KEY not set)". Global Settings shows provider OpenAI / gpt-5.4-nano with no indication the key is missing. The one place the user could fix it is the one place that doesn't mention it.</p>
+  <p class="rec">Validate the provider in Global Settings (inline "⚠ OPENAI_API_KEY not set" next to the provider row); after the first failed save-classification, suppress repeats for the session. Also: the category manager's top status line ("Literal: Auto-apply | Semantic: Suggest/Review | Ready queue: (unset) | Claim result: (unset)") is jargon-dense — hide unset workflow fields unless configured.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="p3"><span class="secnum">5</span>Priority 3 — Polish &amp; Output Quality</h2>
+
+<div class="finding p3">
+  <h4><span class="tag sev3">P3</span><span class="tag area">Both</span>Raw machine formats leak into user-facing surfaces</h4>
+  <p class="evidence">Preview/Info and CLI show <code>When: 2026-06-13 00:00:00</code> (midnight noise on date-only items), <code>Created: 2026-05-09T17:53:53.026833Z</code> (microseconds, UTC) — while the board already renders dates humanely. Deleted-log lines are raw pipe-delimited. A dangling view alias renders as <code>(deleted:ab362776-…) =&gt; Category</code>.</p>
+  <p class="rec">One shared human date formatter (date-only when time is midnight; local time; "3 days ago" optional); prune or label dangling aliases ("(deleted category)") and clean them on view save.</p>
+</div>
+
+<div class="finding p3">
+  <h4><span class="tag sev3">P3</span><span class="tag area">Both</span>Category lists everywhere include the full ancestor/reserved closure</h4>
+  <p class="evidence">A single bill item lists 14 categories ("Area, Cost, Cost Category, DRZ4SM, Expenses, Finance, … TODO, Vendor, When") in preview, CLI list, and board "All Categories" columns — because subsumed parents and reserved categories (<code>When</code>) are flattened in. The signal (DRZ4SM, Payment, Sheffield Financial) drowns.</p>
+  <p class="rec">Default display to leaf/direct assignments, with parents available behind a toggle or dimmed; exclude reserved plumbing categories (<code>When</code>, <code>Entry</code>) from display lists by default.</p>
+</div>
+
+<div class="finding p3">
+  <h4><span class="tag sev3">P3</span><span class="tag area">TUI</span>Link Wizard ships an empty mystery box</h4>
+  <p class="evidence">The wizard's top region renders as an empty bordered rectangle (presumably the source-item display) above Relationship/Target/Matches. Matches rows are prefixed "open | …" — status-as-prefix reads like debug output.</p>
+  <p class="rec">Fill the header with "Source: &lt;item title&gt;" (and count for multi-select); render done/open as a glyph not a pipe-prefixed word.</p>
+</div>
+
+<div class="finding p3">
+  <h4><span class="tag sev3">P3</span><span class="tag area">Docs</span>Spec/docs drift misleads both users and agents</h4>
+  <p class="evidence"><code>gaps.md</code> says undo is empty/no-undo-contract (it exists and works); the TUI redesign spec describes save keys and regions that differ from shipped code; older proposals describe pre-live sticky semantics; AGENTS.md itself flags all of these. The README cheat-sheet omits newer keys that exist in-app (<kbd>f</kbd>/<kbd>F</kbd> numeric format, <kbd>s</kbd> sort, <kbd>m</kbd>/<kbd>z</kbd> lanes, <kbd>g s</kbd> settings).</p>
+  <p class="rec">One pass to retire/update stale specs (your own AGENTS.md lifecycle rules cover this), and generate the README cheat-sheet from the same keymap table proposed for the footer.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="cli"><span class="secnum">6</span>CLI-Specific Findings</h2>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">CLI · view show</span>Board columns are declared but never rendered — finance views are TUI-only</h4>
+  <p class="evidence"><b>Observed:</b> <code>view show "Moto Budget Combined"</code> prints <code>columns: When [when,w=12] | Vendor [standard,w=26] | Cost [standard,w=12]</code>, then a generic ID/STATUS/WHEN/TITLE table with no Vendor/Cost values and no section sums. The view's entire purpose (cost tracking) is invisible from the CLI; the columns header is a tease. AGENTS.md confirms column rendering is TUI-only.</p>
+  <p class="rec">Render configured columns as table columns in <code>view show</code> (and totals rows where summaries are configured); JSON format should include column values too. This is the single highest-leverage CLI improvement for agent workflows.</p>
+</div>
+
+<div class="finding p2">
+  <h4><span class="tag sev2">P2</span><span class="tag area">CLI · list</span>Default list output is built for parsing, not reading — and serves neither perfectly</h4>
+  <p class="evidence">Three lines per item, full 36-char UUIDs, raw ISO whens, exhaustive category closures, and a STATUS column that says <code>open</code> even when the item's workflow Status category is "In Progress" (documented gotcha). Short-prefix matching exists on input but outputs never exploit it.</p>
+  <p class="rec">Default to a compact one-line row: 8-char id prefix, humane date, title, leaf categories; <code>--verbose</code> for today's output. Either populate STATUS from the workflow Status family or rename the column (<code>done?</code>) to stop implying it.</p>
+</div>
+
+<div class="finding p3">
+  <h4><span class="tag sev3">P3</span><span class="tag area">CLI · workflow</span>Claim workflow is CLI-operated but TUI-configured</h4>
+  <p class="evidence"><code>aglet ready</code> errors with "set Ready Queue and Claim Target categories in TUI Global Settings" — a good message, but the primary consumers of claim are headless agents that may never open the TUI.</p>
+  <p class="rec">Add <code>aglet workflow set --ready &lt;cat&gt; --claim &lt;cat&gt;</code> (and <code>workflow show</code>); keep the TUI settings as the same storage.</p>
+</div>
+
+<div class="finding p3">
+  <h4><span class="tag sev3">P3</span><span class="tag area">CLI · ergonomics</span>Multi-step authoring requires N round-trips</h4>
+  <p class="evidence">The canonical create flow is add + one <code>category assign</code> invocation per category (AGENTS.md documents the awk-extraction pattern). Each is a separate process launch; agents and humans both pay it.</p>
+  <p class="rec"><code>add "title" --category Work --category High --when friday</code> (repeatable flag, already idiomatic with <code>list</code>) would collapse the pattern; print assignment results in the same output.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="recs"><span class="secnum">7</span>Recommendation Summary</h2>
+
+<h3>Quick wins (small diffs, high trust payoff)</h3>
+<ul>
+  <li>Name auto-assign categories in the add-item context line; fix "1 categories".</li>
+  <li>Echo the normalized When after save when it differs from typed input; show parse feedback in the edit panel like the inline When popup already does.</li>
+  <li>Put the item title in the delete confirmation; mention restorability.</li>
+  <li>Make the help panel scrollable and fix its key-column alignment.</li>
+  <li>Inline "key not set" warning next to the semantic provider in Global Settings; stop repeating it on every save.</li>
+  <li>Show <kbd>{</kbd>/<kbd>}</kbd>/<kbd>0</kbd> hints when a datebook view is active.</li>
+  <li>Label dangling aliases as deleted categories instead of printing raw UUIDs.</li>
+</ul>
+
+<h3>Structural (one design, many symptoms)</h3>
+<ul>
+  <li><b>Single keymap table per mode</b> driving footer status row, hint row, help panel, and README cheat-sheet — eliminates every contradiction found in §4 at once.</li>
+  <li><b>Provenance-forward assignment UX:</b> toast on auto-assignment, derived-vs-manual distinction in pickers and category lists, leaf-first category display. The data already exists; this is presentation.</li>
+  <li><b>Explicit-create commit step</b> everywhere Enter can currently mint a new item/category from a search box.</li>
+  <li><b>CLI view-column rendering</b> + compact one-line list default, so the CLI tells the same story as the TUI.</li>
+</ul>
+
+<h3>Worth a design discussion before touching</h3>
+<ul>
+  <li>Implicit matching scope (title vs note; auto-apply vs suggest) — changes classification behavior, the heart of the product. Recommend suggest-not-apply for note-only matches as the conservative first step.</li>
+  <li>Datebook recurrence projection — display-layer ghosts vs materialized occurrences interacts with the recurrence engine and series carry semantics.</li>
+  <li>Add/Edit panel convergence — touches the InputPanel architecture mid-evolution (Phase 5 just completed).</li>
+</ul>
+
+<div class="footnote">
+  Method notes: live session driven via tmux at 220×50 against <code>../mds.ag</code> (user's working database); flows exercised: add/edit/done/delete with undo, When parsing (valid + invalid), assign picker + filter, link wizard, section &amp; global search, view palette, view editor (read-only pass), category manager, global settings, suggestion review, datebook browsing, preview Summary/Info. CLI probes: help tree walk, list/search/show/view show/deleted/export/edit/link/import/category format, error cases (unknown category, ambiguous prefix <code>4</code>, invalid prefix, unconfigured workflow). Scratch item <code>4d40d93b</code> created and deleted; one deletion-log entry remains. No code, data, or config changes were made beyond that scratch item.
+</div>
+
+</div>
+</body>
+</html>
