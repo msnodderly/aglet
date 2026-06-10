@@ -1238,11 +1238,7 @@ pub(super) fn auto_assign_outside_criteria(
 /// Renders a When datetime for user-facing echoes: date-only when the time
 /// component is midnight, otherwise date + HH:MM.
 pub(super) fn format_when_echo(dt: DateTime) -> String {
-    if dt.hour() == 0 && dt.minute() == 0 && dt.second() == 0 && dt.subsec_nanosecond() == 0 {
-        dt.strftime("%Y-%m-%d").to_string()
-    } else {
-        dt.strftime("%Y-%m-%d %H:%M").to_string()
-    }
+    aglet_core::dates::format_human_datetime(dt)
 }
 
 /// True when `input` already spells a canonical rendering of `dt`, so the

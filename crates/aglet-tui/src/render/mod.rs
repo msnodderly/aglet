@@ -3923,11 +3923,17 @@ impl App {
             format!(
                 "  When: {}",
                 item.when_date
-                    .map(|value| value.strftime("%Y-%m-%d %H:%M:%S").to_string())
+                    .map(aglet_core::dates::format_human_datetime)
                     .unwrap_or_else(|| "-".to_string())
             ),
-            format!("  Created: {}", item.created_at),
-            format!("  Modified: {}", item.modified_at),
+            format!(
+                "  Created: {}",
+                aglet_core::dates::format_human_timestamp(item.created_at, Timestamp::now())
+            ),
+            format!(
+                "  Modified: {}",
+                aglet_core::dates::format_human_timestamp(item.modified_at, Timestamp::now())
+            ),
         ];
         if let Some(links) = self.item_links_by_item_id.get(&item.id) {
             lines.push(String::new());
@@ -5171,7 +5177,12 @@ impl App {
             // naturally hides until the next Enter/Tab resolves it.
             if let Some(ref rule) = panel.parsed_recurrence_rule {
                 let trimmed = panel.when_buffer.text().trim().replace(' ', "T");
-                if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
+                let parsed = trimmed.parse::<jiff::civil::DateTime>().or_else(|_| {
+                    trimmed
+                        .parse::<jiff::civil::Date>()
+                        .map(|date| date.at(0, 0, 0, 0))
+                });
+                if let Ok(dt) = parsed {
                     let next = rule.next_date(dt);
                     let annotation =
                         format!("  \u{21BB} {} \u{2192} {}", rule.display(), next.date());

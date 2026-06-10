@@ -1699,7 +1699,7 @@ impl App {
         let current_value = self
             .selected_item()
             .and_then(|item| item.when_date)
-            .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
+            .map(aglet_core::dates::format_human_datetime)
             .unwrap_or_default();
 
         self.when_edit_target = Some(WhenEditTarget {
@@ -4225,7 +4225,7 @@ impl App {
             let existing_recurrence = item.recurrence_rule.clone();
             let when_value = item
                 .when_date
-                .map(|value| value.strftime("%Y-%m-%d %H:%M").to_string())
+                .map(aglet_core::dates::format_human_datetime)
                 .unwrap_or_default();
             let mut panel = input_panel::InputPanel::new_edit_item(
                 item_id,

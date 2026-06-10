@@ -1,7 +1,40 @@
 use jiff::civil::{Date, DateTime, Weekday};
-use jiff::Span;
+use jiff::{Span, Timestamp};
 
 use crate::model::{weekday_to_u8, RecurrenceFrequency, RecurrenceRule};
+
+/// Renders a stored datetime for human-facing surfaces: date-only when the
+/// time component is midnight, otherwise `YYYY-MM-DD HH:MM`. Display-only —
+/// the `YYYY-MM-DD HH:MM:SS` store contract is untouched.
+pub fn format_human_datetime(dt: DateTime) -> String {
+    if dt.hour() == 0 && dt.minute() == 0 && dt.second() == 0 && dt.subsec_nanosecond() == 0 {
+        dt.strftime("%Y-%m-%d").to_string()
+    } else {
+        dt.strftime("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+/// Renders a created/modified timestamp in local time without sub-second
+/// precision, with a relative suffix: `2026-05-09 17:53 (31 days ago)`.
+/// `now` is injected for testability.
+pub fn format_human_timestamp(ts: Timestamp, now: Timestamp) -> String {
+    let zoned = ts.to_zoned(jiff::tz::TimeZone::system());
+    let base = zoned.strftime("%Y-%m-%d %H:%M").to_string();
+    let delta_secs = now.as_second() - ts.as_second();
+    let days = delta_secs / 86_400;
+    let suffix = if days == 0 && delta_secs >= 0 {
+        "today".to_string()
+    } else if days == 1 {
+        "1 day ago".to_string()
+    } else if days > 1 {
+        format!("{days} days ago")
+    } else if days == -1 || (days == 0 && delta_secs < 0) {
+        "upcoming".to_string()
+    } else {
+        format!("in {} days", -days)
+    };
+    format!("{base} ({suffix})")
+}
 
 /// Parses date/time expressions from item text.
 pub trait DateParser: Send + Sync {
@@ -1587,6 +1620,39 @@ mod tests {
 
     fn parser_with_policy(policy: WeekdayDisambiguationPolicy) -> BasicDateParser {
         BasicDateParser::with_weekday_policy(policy)
+    }
+
+    #[test]
+    fn format_human_datetime_elides_midnight() {
+        assert_eq!(
+            super::format_human_datetime(datetime(2026, 6, 13, 0, 0)),
+            "2026-06-13"
+        );
+        assert_eq!(
+            super::format_human_datetime(datetime(2026, 6, 13, 15, 30)),
+            "2026-06-13 15:30"
+        );
+    }
+
+    #[test]
+    fn format_human_timestamp_renders_relative_suffix() {
+        let now: jiff::Timestamp = "2026-06-09T12:00:00Z".parse().expect("now");
+        let month_ago: jiff::Timestamp = "2026-05-09T11:00:00Z".parse().expect("ts");
+        let rendered = super::format_human_timestamp(month_ago, now);
+        assert!(
+            rendered.contains("(31 days ago)"),
+            "expected relative suffix: {rendered}"
+        );
+        assert!(
+            !rendered.contains('T') && !rendered.contains('Z'),
+            "no machine separators: {rendered}"
+        );
+
+        let today: jiff::Timestamp = "2026-06-09T08:00:00Z".parse().expect("ts");
+        assert!(
+            super::format_human_timestamp(today, now).contains("(today)"),
+            "same-day timestamps read as today"
+        );
     }
 
     #[test]

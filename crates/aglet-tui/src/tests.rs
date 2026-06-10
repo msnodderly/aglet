@@ -16479,7 +16479,7 @@ fn board_dynamic_when_column_shows_date_without_time() {
 }
 
 #[test]
-fn item_info_metadata_keeps_full_when_datetime() {
+fn item_info_metadata_uses_humane_when_datetime() {
     let store = Store::open_memory().expect("open store");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
@@ -16502,8 +16502,39 @@ fn item_info_metadata_keeps_full_when_datetime() {
         .find(|line| line.trim_start().starts_with("When:"))
         .expect("info lines should include when metadata");
     assert!(
-        when_line.contains("2026-03-07 14:25:00"),
-        "info metadata should keep full datetime: {when_line}"
+        when_line.contains("2026-03-07 14:25") && !when_line.contains("14:25:00"),
+        "info metadata should render humane datetime without seconds: {when_line}"
+    );
+
+    // Midnight elides to date-only; created/modified have no T..Z noise.
+    aglet
+        .set_item_when_date(
+            item.id,
+            Some(Date::new(2026, 6, 13).expect("date").at(0, 0, 0, 0)),
+            Some("test:when".to_string()),
+        )
+        .expect("set midnight when");
+    let loaded = store.get_item(item.id).expect("reload item");
+    let info_lines = app.item_info_header_lines_for_item(&loaded);
+    let when_line = info_lines
+        .iter()
+        .find(|line| line.trim_start().starts_with("When:"))
+        .expect("when line");
+    assert!(
+        when_line.contains("2026-06-13") && !when_line.contains("00:00"),
+        "midnight When should render date-only: {when_line}"
+    );
+    let created_line = info_lines
+        .iter()
+        .find(|line| line.trim_start().starts_with("Created:"))
+        .expect("created line");
+    assert!(
+        !created_line.contains('T') && !created_line.contains('Z'),
+        "created timestamp should render in local time without T..Z: {created_line}"
+    );
+    assert!(
+        created_line.contains("(today)"),
+        "created timestamp should carry a relative suffix: {created_line}"
     );
 }
 
