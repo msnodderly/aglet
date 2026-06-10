@@ -185,7 +185,11 @@ pub(crate) static NORMAL_KEYMAP: &[KeyBinding] = &[
         "b / B",
         "Open dependency link wizard (blocked-by / blocks)",
     ),
-    doc(HelpSection::CurrentItem, "=", "Classify selected item(s) now"),
+    doc(
+        HelpSection::CurrentItem,
+        "=",
+        "Classify selected item(s) now",
+    ),
     doc_hint(
         HelpSection::CurrentItem,
         "p / i/o",
@@ -256,7 +260,11 @@ pub(crate) static NORMAL_KEYMAP: &[KeyBinding] = &[
         "Edit column value (on a column cell)",
     ),
     doc(HelpSection::Columns, "+/-", "Add / remove board column"),
-    doc(HelpSection::Columns, "H/L", "Move board column left / right"),
+    doc(
+        HelpSection::Columns,
+        "H/L",
+        "Move board column left / right",
+    ),
     doc_hint_when(
         HelpSection::Columns,
         "f",
@@ -289,9 +297,21 @@ pub(crate) static NORMAL_KEYMAP: &[KeyBinding] = &[
         "{/}/0",
         "Browse previous / next period; return to today",
     ),
-    hint_only(HelpSection::Datebook, ("}", "fwd"), KeyContext::DatebookView),
-    hint_only(HelpSection::Datebook, ("{", "back"), KeyContext::DatebookView),
-    hint_only(HelpSection::Datebook, ("0", "today"), KeyContext::DatebookView),
+    hint_only(
+        HelpSection::Datebook,
+        ("}", "fwd"),
+        KeyContext::DatebookView,
+    ),
+    hint_only(
+        HelpSection::Datebook,
+        ("{", "back"),
+        KeyContext::DatebookView,
+    ),
+    hint_only(
+        HelpSection::Datebook,
+        ("0", "today"),
+        KeyContext::DatebookView,
+    ),
     // ── Global ──
     doc_hint(
         HelpSection::Global,

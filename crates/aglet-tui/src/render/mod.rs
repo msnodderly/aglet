@@ -4851,8 +4851,7 @@ impl App {
                 .max()
                 .unwrap_or(10)
                 .saturating_add(2);
-            let mut block_lines =
-                vec![Line::from(Span::styled(section.help_label(), header))];
+            let mut block_lines = vec![Line::from(Span::styled(section.help_label(), header))];
             for binding in entries {
                 block_lines.push(help_entry(binding.keys, binding.desc, gutter));
             }

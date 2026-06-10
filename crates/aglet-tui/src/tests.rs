@@ -7626,7 +7626,9 @@ fn help_panel_scrolls_to_last_section_on_small_terminals() {
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
     app.handle_key(KeyCode::End, &aglet).expect("End scrolls");
-    terminal.draw(|frame| app.draw(frame)).expect("render scrolled");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render scrolled");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
         rendered.contains("Quit"),
@@ -7697,10 +7699,7 @@ fn keymap_rows_are_documented_or_footer_only() {
             assert!(
                 binding.context != super::KeyContext::Always,
                 "footer-only keymap row {:?} must be contextual (documented rows cover Always)",
-                binding
-                    .hint
-                    .map(|(k, _)| k)
-                    .unwrap_or_default()
+                binding.hint.map(|(k, _)| k).unwrap_or_default()
             );
         }
     }
@@ -7712,10 +7711,7 @@ fn keymap_stable_footer_hints_have_no_duplicate_keys() {
     for binding in super::NORMAL_KEYMAP {
         if binding.context == super::KeyContext::Always {
             if let Some((key, _)) = binding.hint {
-                assert!(
-                    seen.insert(key),
-                    "duplicate stable footer hint key: {key}"
-                );
+                assert!(seen.insert(key), "duplicate stable footer hint key: {key}");
             }
         }
     }

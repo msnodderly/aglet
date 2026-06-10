@@ -55,6 +55,7 @@ mod undo;
 
 pub use error::{TuiError, TuiResult};
 
+use keymap::*;
 use modes::view_edit::{
     BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
     ViewEditRegion, ViewEditState,
@@ -83,7 +84,6 @@ use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
     SuggestionReviewFocus, SuggestionReviewItem, SuggestionReviewState,
 };
-use keymap::*;
 use ui_support::*;
 use undo::{UndoEntry, UndoState};
 
