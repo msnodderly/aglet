@@ -183,6 +183,21 @@ fn build_segmented_board_border_title(
     sorted_segments.sort_by_key(|segment| (segment.priority, segment.start));
     let mut rendered_ranges: Vec<(usize, usize)> = Vec::new();
 
+    // The section title renders first and always wins over column headers
+    // (UX audit P2-8): a header whose column starts under the title is
+    // right-shifted within its column span instead of squeezing the title
+    // down to a bare count.
+    let left_title = truncate_board_cell(base_label, width);
+    let title_len = left_title.chars().count();
+    for (idx, ch) in left_title.chars().enumerate() {
+        chars[idx] = ch;
+    }
+    let title_reserved_end = if title_len > 0 {
+        (title_len + 2).min(width)
+    } else {
+        0
+    };
+
     for segment in sorted_segments {
         if segment.width == 0 || segment.text.trim().is_empty() || segment.start >= width {
             continue;
@@ -192,8 +207,12 @@ fn build_segmented_board_border_title(
         if zone_end <= zone_start {
             continue;
         }
-        let start = zone_start;
+        let start = zone_start.max(title_reserved_end);
         let end = zone_end;
+        if start >= end {
+            // Column lies entirely under the title; the title wins.
+            continue;
+        }
         if rendered_ranges
             .iter()
             .any(|(existing_start, existing_end)| start < *existing_end && *existing_start < end)
@@ -215,21 +234,6 @@ fn build_segmented_board_border_title(
         rendered_ranges.push((start, render_end));
     }
 
-    let title_budget = rendered_ranges
-        .iter()
-        .map(|(start, _)| *start)
-        .min()
-        .map(|start| start.saturating_sub(2))
-        .unwrap_or(width)
-        .min(width);
-    let left_title = truncate_board_cell(base_label, title_budget);
-    for (idx, ch) in left_title.chars().enumerate() {
-        if idx >= width {
-            break;
-        }
-        chars[idx] = ch;
-    }
-
     chars.into_iter().collect()
 }
 
@@ -249,6 +253,21 @@ fn build_segmented_board_border_title_line(
     sorted_segments.sort_by_key(|segment| (segment.priority, segment.start));
     let mut rendered_ranges: Vec<(usize, usize)> = Vec::new();
 
+    // Mirror the text builder: the title renders first (bold, to stand out
+    // from column headers) and overlapping headers are right-shifted.
+    let title_len = truncate_board_cell(base_label, width).chars().count();
+    if title_len > 0 {
+        let title_style = base_style.add_modifier(Modifier::BOLD);
+        for style in styles.iter_mut().take(title_len.min(width)) {
+            *style = title_style;
+        }
+    }
+    let title_reserved_end = if title_len > 0 {
+        (title_len + 2).min(width)
+    } else {
+        0
+    };
+
     for segment in sorted_segments {
         if segment.width == 0 || segment.text.trim().is_empty() || segment.start >= width {
             continue;
@@ -258,8 +277,11 @@ fn build_segmented_board_border_title_line(
         if zone_end <= zone_start {
             continue;
         }
-        let start = zone_start;
+        let start = zone_start.max(title_reserved_end);
         let end = zone_end;
+        if start >= end {
+            continue;
+        }
         if rendered_ranges
             .iter()
             .any(|(existing_start, existing_end)| start < *existing_end && *existing_start < end)
@@ -279,18 +301,6 @@ fn build_segmented_board_border_title_line(
             };
         }
         rendered_ranges.push((start, render_end));
-    }
-
-    let title_budget = rendered_ranges
-        .iter()
-        .map(|(start, _)| *start)
-        .min()
-        .map(|start| start.saturating_sub(2))
-        .unwrap_or(width)
-        .min(width);
-    let left_title = truncate_board_cell(base_label, title_budget);
-    for idx in 0..left_title.chars().count().min(styles.len()) {
-        styles[idx] = base_style;
     }
 
     if chars.is_empty() {
@@ -2861,17 +2871,11 @@ impl App {
                         active: false,
                     });
                 }
-                let left_border_title = if item_board_column_index > 0 {
-                    if filter_suffix.is_empty() {
-                        format!("({})", slot.items.len())
-                    } else {
-                        format!("({}){}", slot.items.len(), filter_suffix)
-                    }
-                } else {
-                    title.clone()
-                };
+                // Always lead with "Title (count)" — the item-column label
+                // renders as a normal column header and never substitutes
+                // for the section's identity (UX audit P2-8).
                 let border_title = build_segmented_board_border_title_line(
-                    &left_border_title,
+                    &title,
                     &border_segments,
                     inner_width as usize,
                     Style::default().fg(border_color),

@@ -16937,6 +16937,17 @@ fn board_inline_border_shows_item_label_when_item_column_is_reordered() {
         when_index < task_index && task_index < done_index,
         "item label should render in the reordered slot: {border_line}"
     );
+    // UX audit P2-8: the divider always leads with the section title; the
+    // item-column label never substitutes for it.
+    assert!(
+        border_line.contains("Ready (1)"),
+        "divider should lead with the section title and count: {border_line}"
+    );
+    let title_index = border_line.find("Ready (1)").expect("title");
+    assert!(
+        title_index < when_index,
+        "title should precede column headers: {border_line}"
+    );
 
     let _ = std::fs::remove_file(&db_path);
 }
