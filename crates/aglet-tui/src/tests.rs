@@ -3813,6 +3813,97 @@ fn confirm_delete_popup_renders_done_blocker_variant() {
 }
 
 #[test]
+fn missing_key_warning_reported_once_per_session() {
+    let mut app = App::default();
+    let messages = vec![
+        "OpenAI: OPENAI_API_KEY not set".to_string(),
+        "other diagnostic".to_string(),
+    ];
+    assert_eq!(
+        app.suppress_reported_key_warnings(messages.clone()),
+        messages,
+        "first occurrence should pass through"
+    );
+    assert_eq!(
+        app.suppress_reported_key_warnings(messages),
+        vec!["other diagnostic".to_string()],
+        "repeat missing-key warning should be suppressed; other messages kept"
+    );
+}
+
+#[test]
+fn global_settings_semantic_provider_row_warns_on_missing_openai_key() {
+    use aglet_core::classification::SemanticProviderKind;
+    let prior = std::env::var("OPENAI_API_KEY").ok();
+    std::env::remove_var("OPENAI_API_KEY");
+
+    let mut app = App {
+        mode: Mode::GlobalSettings,
+        ..App::default()
+    };
+    app.classification.ui.config.semantic_provider = SemanticProviderKind::OpenAi;
+    app.settings.global_settings = Some(super::GlobalSettingsState { selected_row: 0 });
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        text.contains("\u{26A0} OPENAI_API_KEY not set"),
+        "settings should warn about the missing provider key: {text}"
+    );
+
+    std::env::set_var("OPENAI_API_KEY", "test-key");
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !text.contains("OPENAI_API_KEY not set"),
+        "warning should disappear once the key is present: {text}"
+    );
+
+    match prior {
+        Some(value) => std::env::set_var("OPENAI_API_KEY", value),
+        None => std::env::remove_var("OPENAI_API_KEY"),
+    }
+}
+
+#[test]
+fn category_manager_status_hides_unset_workflow_segments() {
+    let mut app = App {
+        mode: Mode::CategoryManager,
+        ..App::default()
+    };
+    app.ensure_category_manager_session();
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !text.contains("Ready queue") && !text.contains("Claim result"),
+        "unconfigured workflow segments should be hidden: {text}"
+    );
+
+    let ready = Category::new("ReadyQueue".to_string());
+    app.workflow_config.ready_category_id = Some(ready.id);
+    app.categories = vec![ready];
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        text.contains("Ready queue") && text.contains("ReadyQueue"),
+        "configured ready queue should render: {text}"
+    );
+    assert!(
+        !text.contains("Claim result"),
+        "still-unset claim segment should stay hidden: {text}"
+    );
+}
+
+#[test]
 fn view_edit_section_details_no_warning_when_auto_assign_in_criteria() {
     let mut app = view_edit_auto_assign_lint_app(true);
     let backend = TestBackend::new(200, 35);
@@ -4901,7 +4992,7 @@ fn manual_classify_selected_items_reports_semantic_mode_off() {
 #[test]
 fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
     let item_id = ItemId::new_v4();
-    let app = App::default();
+    let mut app = App::default();
     let result = ProcessItemResult {
         semantic_candidates_seen: 2,
         semantic_candidates_queued_review: 0,
@@ -4925,7 +5016,7 @@ fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
 #[test]
 fn classification_feedback_reports_unavailable_semantic_candidates() {
     let item_id = ItemId::new_v4();
-    let app = App::default();
+    let mut app = App::default();
     let result = ProcessItemResult {
         semantic_candidates_seen: 2,
         semantic_candidates_queued_review: 0,
@@ -4949,7 +5040,7 @@ fn classification_feedback_reports_unavailable_semantic_candidates() {
 #[test]
 fn classification_feedback_surfaces_debug_on_transport_error() {
     let item_id = ItemId::new_v4();
-    let app = App::default();
+    let mut app = App::default();
     let result = ProcessItemResult {
         semantic_candidates_seen: 0,
         semantic_debug_messages: vec![
@@ -8087,12 +8178,12 @@ fn category_manager_render_shows_global_settings_block() {
         "category manager should show classification summary: {rendered}"
     );
     assert!(
-        rendered.contains("Ready queue: (unset)"),
-        "category manager should show ready queue summary: {rendered}"
+        !rendered.contains("Ready queue"),
+        "category manager should hide the unset ready-queue segment: {rendered}"
     );
     assert!(
-        rendered.contains("Claim result: (unset)"),
-        "category manager should show claim summary: {rendered}"
+        !rendered.contains("Claim result"),
+        "category manager should hide the unset claim segment: {rendered}"
     );
     assert!(
         !rendered.contains("(m)"),

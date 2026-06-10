@@ -6222,12 +6222,40 @@ impl App {
                         )
                     }
                     GlobalSettingsRow::SemanticProvider => {
-                        format!(
+                        let mut text = format!(
                             "Semantic provider   < {} >",
                             modes::global_settings::semantic_provider_label(
                                 self.classification.ui.config.semantic_provider
                             )
-                        )
+                        );
+                        // Env-var check only; provider reachability is out of
+                        // scope. This is the fixable place, so warn here
+                        // instead of on every save.
+                        use aglet_core::classification::SemanticProviderKind;
+                        let missing_key_var =
+                            match self.classification.ui.config.semantic_provider {
+                                SemanticProviderKind::OpenAi
+                                    if self.classification.ui.config.openai.api_key().is_none() =>
+                                {
+                                    Some("OPENAI_API_KEY")
+                                }
+                                SemanticProviderKind::OpenRouter
+                                    if self
+                                        .classification
+                                        .ui
+                                        .config
+                                        .openrouter
+                                        .api_key()
+                                        .is_none() =>
+                                {
+                                    Some("OPENROUTER_API_KEY")
+                                }
+                                _ => None,
+                            };
+                        if let Some(var) = missing_key_var {
+                            text.push_str(&format!("   \u{26A0} {var} not set"));
+                        }
+                        text
                     }
                     GlobalSettingsRow::OllamaBaseUrl => {
                         format!(
@@ -7258,7 +7286,7 @@ impl App {
             .and_then(|id| self.categories.iter().find(|c| c.id == id))
             .map(|c| c.name.as_str())
             .unwrap_or("(unset)");
-        let summary_line = Line::from(vec![
+        let mut summary_spans = vec![
             Span::styled("Literal", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(literal_mode, Style::default().add_modifier(Modifier::BOLD)),
@@ -7266,15 +7294,26 @@ impl App {
             Span::styled("Semantic", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(semantic_mode, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::raw(": "),
-            Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::raw(": "),
-            Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
-        ]);
+        ];
+        // Claim-workflow segments are jargon for non-claim users; show them
+        // only once the workflow categories are actually configured.
+        if ready_name != "(unset)" {
+            summary_spans.extend([
+                Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::raw(": "),
+                Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
+            ]);
+        }
+        if claim_name != "(unset)" {
+            summary_spans.extend([
+                Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::raw(": "),
+                Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
+            ]);
+        }
+        let summary_line = Line::from(summary_spans);
         frame.render_widget(
             Paragraph::new(summary_line)
                 .style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
