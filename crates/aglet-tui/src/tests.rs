@@ -3710,6 +3710,45 @@ fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
 }
 
 #[test]
+fn item_assign_create_confirm_disarms_on_intervening_keypress() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let item = Item::new("demo".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::ItemAssignInput;
+    app.set_input("NewCat".to_string());
+
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("first enter arms");
+    assert!(
+        app.status.contains("Enter again to create"),
+        "arming status expected: {}",
+        app.status
+    );
+
+    // Editing the query disarms the pending confirm.
+    app.handle_item_assign_category_input_key(KeyCode::Char('s'), &aglet)
+        .expect("typing disarms");
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("enter after edit re-arms instead of creating");
+    assert!(
+        !app.categories.iter().any(|c| c.name == "NewCats"),
+        "edited query must re-arm, not create"
+    );
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("confirming enter creates");
+    assert!(
+        app.categories.iter().any(|c| c.name == "NewCats"),
+        "second enter on unchanged query should create"
+    );
+}
+
+#[test]
 fn category_breadcrumb_walks_ancestors_and_truncates_deep_paths() {
     let root = Category::new("Finance".to_string());
     let mut expenses = Category::new("Expenses".to_string());
@@ -6229,7 +6268,18 @@ fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
     app.set_input("wor".to_string());
 
     app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
-        .expect("enter should create new category for ambiguous match");
+        .expect("first enter should arm the create confirm");
+    assert!(
+        app.status.contains("Enter again to create category \"wor\""),
+        "first enter should arm, not create: {}",
+        app.status
+    );
+    assert!(
+        !app.categories.iter().any(|category| category.name == "wor"),
+        "no category should exist after the arming enter"
+    );
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter should create new category for ambiguous match");
 
     let created = app
         .categories
@@ -6345,7 +6395,18 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
     app.set_input("wor".to_string());
 
     app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
-        .expect("enter should create category from filter text and close");
+        .expect("first enter should arm the create confirm");
+    assert_eq!(
+        app.mode,
+        Mode::ItemAssignInput,
+        "armed confirm should keep the input focused"
+    );
+    assert!(
+        !app.categories.iter().any(|category| category.name == "wor"),
+        "no category should exist after the arming enter"
+    );
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter should create category and assign");
 
     let created = app
         .categories
@@ -6355,7 +6416,11 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
         .expect("new category should be created");
     let updated = store.get_item(item.id).expect("load updated item");
     assert!(updated.assignments.contains_key(&created.id));
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.mode,
+        Mode::ItemAssignPicker,
+        "confirmed create returns to the picker"
+    );
     assert!(
         app.status.contains("Created and assigned category wor"),
         "status should report create+assign outcome: {}",
@@ -6426,7 +6491,9 @@ fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() 
     app.search_mode = SearchMode::Fuzzy;
     app.set_input("NewTag".to_string());
     app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
-        .expect("enter should create a non-matching category and close");
+        .expect("first enter should arm the create confirm");
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter should create a non-matching category and close");
     assert!(
         app.categories
             .iter()
@@ -10078,7 +10145,9 @@ fn batch_assign_input_creates_category_and_assigns_selected_items() {
         .expect("open typed category entry");
     app.set_input("Sprint".to_string());
     app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
-        .expect("create and assign category");
+        .expect("first enter arms the create confirm");
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter creates and assigns category");
 
     let sprint = app
         .categories
