@@ -6232,26 +6232,20 @@ impl App {
                         // scope. This is the fixable place, so warn here
                         // instead of on every save.
                         use aglet_core::classification::SemanticProviderKind;
-                        let missing_key_var =
-                            match self.classification.ui.config.semantic_provider {
-                                SemanticProviderKind::OpenAi
-                                    if self.classification.ui.config.openai.api_key().is_none() =>
-                                {
-                                    Some("OPENAI_API_KEY")
-                                }
-                                SemanticProviderKind::OpenRouter
-                                    if self
-                                        .classification
-                                        .ui
-                                        .config
-                                        .openrouter
-                                        .api_key()
-                                        .is_none() =>
-                                {
-                                    Some("OPENROUTER_API_KEY")
-                                }
-                                _ => None,
-                            };
+                        let missing_key_var = match self.classification.ui.config.semantic_provider
+                        {
+                            SemanticProviderKind::OpenAi
+                                if self.classification.ui.config.openai.api_key().is_none() =>
+                            {
+                                Some("OPENAI_API_KEY")
+                            }
+                            SemanticProviderKind::OpenRouter
+                                if self.classification.ui.config.openrouter.api_key().is_none() =>
+                            {
+                                Some("OPENROUTER_API_KEY")
+                            }
+                            _ => None,
+                        };
                         if let Some(var) = missing_key_var {
                             text.push_str(&format!("   \u{26A0} {var} not set"));
                         }

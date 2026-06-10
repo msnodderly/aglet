@@ -3894,10 +3894,8 @@ impl App {
     /// Resolves category IDs to display names, sorted case-insensitively.
     fn sorted_category_names(&self, ids: &HashSet<CategoryId>) -> Vec<String> {
         let names = category_name_map(&self.categories);
-        let mut resolved: Vec<String> = ids
-            .iter()
-            .filter_map(|id| names.get(id).cloned())
-            .collect();
+        let mut resolved: Vec<String> =
+            ids.iter().filter_map(|id| names.get(id).cloned()).collect();
         resolved.sort_by_key(|name| name.to_ascii_lowercase());
         resolved
     }
@@ -6756,7 +6754,11 @@ mod tests {
             ..App::default()
         };
         app.category_rows = build_category_rows(&app.categories);
-        app.input_panel = Some(input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[]));
+        app.input_panel = Some(input_panel::InputPanel::new_add_item(
+            "Main",
+            &HashSet::new(),
+            &[],
+        ));
         app.mode = Mode::InputPanel;
         if let Some(panel) = &mut app.input_panel {
             panel.focus = input_panel::InputPanelFocus::Categories;
@@ -6801,7 +6803,11 @@ mod tests {
             ..App::default()
         };
         app.category_rows = build_category_rows(&app.categories);
-        app.input_panel = Some(input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[]));
+        app.input_panel = Some(input_panel::InputPanel::new_add_item(
+            "Main",
+            &HashSet::new(),
+            &[],
+        ));
         app.mode = Mode::InputPanel;
         if let Some(panel) = &mut app.input_panel {
             panel.focus = input_panel::InputPanelFocus::Categories;
@@ -6910,7 +6916,11 @@ mod tests {
     #[test]
     fn ctrl_g_sets_pending_external_edit_for_text() {
         let mut app = App {
-            input_panel: Some(input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[])),
+            input_panel: Some(input_panel::InputPanel::new_add_item(
+                "Main",
+                &HashSet::new(),
+                &[],
+            )),
             mode: Mode::InputPanel,
             transient: TransientUiState {
                 key_modifiers: KeyModifiers::CONTROL,

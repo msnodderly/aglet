@@ -4648,7 +4648,11 @@ fn enter_on_empty_slot_opens_add_item_panel() {
 fn add_item_panel_context_is_static_not_inline_with_text_input() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+            &[],
+        )),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4728,7 +4732,11 @@ fn add_item_panel_context_names_auto_assign_categories_in_help_row() {
 fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+            &[],
+        )),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4756,7 +4764,11 @@ fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
 fn add_item_panel_shows_live_when_parse_preview() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+            &[],
+        )),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4783,7 +4795,11 @@ fn add_item_panel_shows_live_when_parse_preview() {
 fn add_item_panel_shows_when_parse_error_preview() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+            &[],
+        )),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4891,7 +4907,11 @@ fn add_item_render_hides_reserved_categories_in_modal_list() {
     let mut app = App {
         mode: Mode::InputPanel,
         categories: vec![when, entry, done, todo, motorcycles],
-        input_panel: Some(input_panel::InputPanel::new_add_item("Garage", &HashSet::new(), &[])),
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Garage",
+            &HashSet::new(),
+            &[],
+        )),
         ..App::default()
     };
     app.category_rows = build_category_rows(&app.categories);
