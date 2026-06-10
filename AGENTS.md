@@ -739,6 +739,11 @@ Practical implications:
   done-state prompts do not leak into delete behavior.
 - Footer status/hints for `Mode::ConfirmDelete` are dynamic; if you touch
   confirm UI copy, update both delete and done-cleanup branches.
+- `Mode::ConfirmDelete` also renders a centered confirm popup
+  (`render_confirm_delete_popup`) with both branches: delete confirms quote
+  the target item title(s) plus an `aglet deleted`/`aglet restore`
+  recoverability note; the done-blocker branch has its own title and keys.
+  Copy changes must update the popup branches as well as the footer.
 
 ## View-Edit Tests Must Not Assume `views[0]` Is Editable (Surprising)
 
@@ -775,7 +780,8 @@ appear to "float" as the cursor moves/typing changes line content.
 
 Practical implications:
 - Keep add-item context in the fixed help/status row (`regions.help`) and
-  include destination + auto-assign count.
+  include destination + auto-assign category names (`will assign: A, B +N
+  more`), not a bare count.
 - Do not render add-item context near the text cursor row; numeric-value panels
   may still use the context row near the value input.
 - Preserve a regression test that asserts the `Text>` line does not contain the
@@ -958,6 +964,9 @@ Practical implications:
   including the attempted text.
 - Invalid `When` help text should list supported date forms and explicitly note
   that phrases like `last week` / `next week` are not supported yet.
+- Add/Edit InputPanels render a live parse preview in the context row under
+  the `When` field (normalized value, `(interpreted from "...")` note, or the
+  parse error); saves echo the stored value via `when_saved_status`.
 
 ## Inline When Editor Must Keep Full Item Context Visible (UX)
 

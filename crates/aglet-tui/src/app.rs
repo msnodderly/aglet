@@ -593,13 +593,16 @@ impl App {
                 };
                 self.status =
                     format!("Classification complete: {queued} new {sug_word} (Shift+C to review)");
-            } else if !result.debug_summaries.is_empty() {
-                self.status = format!(
-                    "Classification complete: no new suggestions ({})",
-                    result.debug_summaries.join("; ")
-                );
             } else {
-                self.status = "Classification complete: no new suggestions".to_string();
+                let summaries = self.suppress_reported_key_warnings(result.debug_summaries.clone());
+                if summaries.is_empty() {
+                    self.status = "Classification complete: no new suggestions".to_string();
+                } else {
+                    self.status = format!(
+                        "Classification complete: no new suggestions ({})",
+                        summaries.join("; ")
+                    );
+                }
             }
         }
 
@@ -1147,8 +1150,26 @@ impl App {
         Some(message)
     }
 
+    /// Filters provider missing-API-key warnings that were already reported
+    /// this session, recording new ones as reported. Other messages pass
+    /// through untouched.
+    pub(crate) fn suppress_reported_key_warnings(&mut self, messages: Vec<String>) -> Vec<String> {
+        messages
+            .into_iter()
+            .filter(|msg| {
+                if msg.contains("API_KEY not set") {
+                    self.classification
+                        .reported_missing_key_warnings
+                        .insert(msg.clone())
+                } else {
+                    true
+                }
+            })
+            .collect()
+    }
+
     pub(crate) fn classification_feedback_for_saved_item(
-        &self,
+        &mut self,
         item_id: ItemId,
         result: &aglet_core::engine::ProcessItemResult,
     ) -> Option<(String, bool)> {
@@ -1161,7 +1182,12 @@ impl App {
                     unique.push(msg.clone());
                 }
             }
-            Some(unique.join("; "))
+            let unique = self.suppress_reported_key_warnings(unique);
+            if unique.is_empty() {
+                None
+            } else {
+                Some(unique.join("; "))
+            }
         };
         let pending_for_item = self.pending_suggestion_count_for_item(item_id);
         if pending_for_item > 0 {

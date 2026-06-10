@@ -120,6 +120,7 @@ impl InputPanel {
     pub(crate) fn new_add_item(
         section_title: &str,
         on_insert_assign: &HashSet<CategoryId>,
+        auto_assign_names: &[String],
     ) -> Self {
         Self {
             kind: InputPanelKind::AddItem,
@@ -128,7 +129,7 @@ impl InputPanel {
             categories: on_insert_assign.clone(),
             focus: InputPanelFocus::Text,
             item_id: None,
-            preview_context: format_section_context(section_title, on_insert_assign),
+            preview_context: format_section_context(section_title, auto_assign_names),
             category_cursor: 0,
             action_cursor: 0,
             category_filter: TextBuffer::empty(),
@@ -553,12 +554,28 @@ impl InputPanel {
     }
 }
 
-fn format_section_context(section_title: &str, on_insert_assign: &HashSet<CategoryId>) -> String {
-    format!(
-        "Adding to \"{}\" (auto-assign {} categories)",
-        section_title,
-        on_insert_assign.len()
-    )
+/// Number of auto-assign category names spelled out in the add-item context
+/// row before collapsing the rest into `+N more`.
+const SECTION_CONTEXT_MAX_NAMES: usize = 3;
+
+fn format_section_context(section_title: &str, auto_assign_names: &[String]) -> String {
+    if auto_assign_names.is_empty() {
+        return format!("Adding to \"{section_title}\"");
+    }
+    let shown = auto_assign_names
+        .iter()
+        .take(SECTION_CONTEXT_MAX_NAMES)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let extra = auto_assign_names
+        .len()
+        .saturating_sub(SECTION_CONTEXT_MAX_NAMES);
+    if extra > 0 {
+        format!("Adding to \"{section_title}\" — will assign: {shown} +{extra} more")
+    } else {
+        format!("Adding to \"{section_title}\" — will assign: {shown}")
+    }
 }
 
 #[cfg(test)]
@@ -566,7 +583,7 @@ mod tests {
     use super::*;
 
     fn add_panel() -> InputPanel {
-        InputPanel::new_add_item("Open", &HashSet::new())
+        InputPanel::new_add_item("Open", &HashSet::new(), &[])
     }
 
     fn name_panel() -> InputPanel {
@@ -856,26 +873,36 @@ mod tests {
 
     #[test]
     fn new_add_item_has_empty_fields() {
-        let p = InputPanel::new_add_item("Open", &HashSet::new());
+        let p = InputPanel::new_add_item("Open", &HashSet::new(), &[]);
         assert_eq!(p.kind, InputPanelKind::AddItem);
         assert!(p.text.is_empty());
         assert!(p.note.is_empty());
         assert!(p.categories.is_empty());
         assert!(p.item_id.is_none());
-        assert!(p.preview_context.contains("Open"));
-        assert!(p.preview_context.contains("auto-assign 0 categories"));
+        assert_eq!(p.preview_context, "Adding to \"Open\"");
     }
 
     #[test]
-    fn new_add_item_context_mentions_auto_assign() {
+    fn new_add_item_context_names_auto_assign_categories() {
         let mut cats = HashSet::new();
         cats.insert(CategoryId::new_v4());
-        cats.insert(CategoryId::new_v4());
-        let p = InputPanel::new_add_item("Backlog", &cats);
-        assert!(
-            p.preview_context.contains("2 categories"),
-            "got: {}",
-            p.preview_context
+        let p = InputPanel::new_add_item("Backlog", &cats, &["Overdue".to_string()]);
+        assert_eq!(
+            p.preview_context,
+            "Adding to \"Backlog\" — will assign: Overdue"
+        );
+    }
+
+    #[test]
+    fn new_add_item_context_truncates_long_auto_assign_lists() {
+        let names: Vec<String> = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let p = InputPanel::new_add_item("Backlog", &HashSet::new(), &names);
+        assert_eq!(
+            p.preview_context,
+            "Adding to \"Backlog\" — will assign: Alpha, Beta, Gamma +2 more"
         );
     }
 
@@ -1033,7 +1060,7 @@ mod tests {
 
     #[test]
     fn add_item_dirty_on_any_input() {
-        let p = InputPanel::new_add_item("Section", &std::collections::HashSet::new());
+        let p = InputPanel::new_add_item("Section", &std::collections::HashSet::new(), &[]);
         assert!(!p.is_dirty());
         let mut p2 = p.clone();
         p2.text.set("something".to_string());

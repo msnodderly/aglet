@@ -379,6 +379,10 @@ struct ClassificationAppState {
     suggestion_review: Option<SuggestionReviewState>,
     worker: async_classify::ClassificationWorker,
     in_flight_classifications: HashSet<ItemId>,
+    /// Missing-API-key warnings already shown this session. The first save
+    /// reports the failure; later saves drop the parenthetical (the durable
+    /// signal lives in Global Settings next to the provider row).
+    reported_missing_key_warnings: HashSet<String>,
 }
 
 impl Default for ClassificationAppState {
@@ -388,6 +392,7 @@ impl Default for ClassificationAppState {
             suggestion_review: None,
             worker: async_classify::ClassificationWorker::spawn(),
             in_flight_classifications: HashSet::new(),
+            reported_missing_key_warnings: HashSet::new(),
         }
     }
 }

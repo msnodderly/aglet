@@ -611,12 +611,123 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
+        if self.mode == Mode::ConfirmDelete {
+            self.render_confirm_delete_popup(frame, frame.area());
+        }
         if self.mode == Mode::HelpPanel {
             self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
         }
         if self.mode == Mode::SuggestionReview {
             self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
         }
+    }
+
+    /// Centered confirm popup for Mode::ConfirmDelete. The mode is multiplexed:
+    /// it hosts both the delete confirmation and the done-blocker-cleanup
+    /// prompt, so both branches render here (the footer keeps its dynamic
+    /// copy as a secondary cue).
+    fn render_confirm_delete_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let muted = Style::default().fg(MUTED_TEXT_COLOR);
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        let popup_title;
+        let border_color;
+        let keys_hint;
+
+        if let Some(done_confirm) = &self.done_blocks_confirm {
+            popup_title = "Mark Done";
+            border_color = Color::Yellow;
+            keys_hint = "y:remove links + done   n:done only   Esc:cancel";
+            let message = match &done_confirm.scope {
+                DoneBlocksConfirmScope::Single {
+                    blocked_item_ids, ..
+                } => {
+                    let blocked_count = blocked_item_ids.len();
+                    let suffix = if blocked_count == 1 { "" } else { "s" };
+                    format!(
+                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
+                    )
+                }
+                DoneBlocksConfirmScope::Batch {
+                    blocking_item_count,
+                    blocked_link_count,
+                    ..
+                } => {
+                    let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
+                    let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
+                    format!(
+                        "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
+                    )
+                }
+            };
+            lines.push(Line::from(message));
+        } else {
+            popup_title = "Confirm Delete";
+            border_color = Color::Red;
+            keys_hint = "y:confirm   Esc:cancel";
+            const TITLE_WIDTH: usize = 52;
+            const SHOWN_TITLES: usize = 3;
+            if let Some(batch_ids) = &self.batch_delete_item_ids {
+                let count = batch_ids.len();
+                let suffix = if count == 1 { "" } else { "s" };
+                lines.push(Line::from(format!("Delete {count} item{suffix}?")));
+                for id in batch_ids.iter().take(SHOWN_TITLES) {
+                    let title = self
+                        .item_title_for_id(*id)
+                        .unwrap_or_else(|| "(unknown item)".to_string());
+                    lines.push(Line::from(format!(
+                        "  \u{2022} {}",
+                        truncate_board_cell(&title, TITLE_WIDTH)
+                    )));
+                }
+                if count > SHOWN_TITLES {
+                    lines.push(Line::from(Span::styled(
+                        format!("  \u{2026} and {} more", count - SHOWN_TITLES),
+                        muted,
+                    )));
+                }
+            } else {
+                let title = self
+                    .selected_item()
+                    .map(|item| item.text.clone())
+                    .unwrap_or_else(|| "item".to_string());
+                lines.push(Line::from(format!(
+                    "Delete \"{}\"?",
+                    truncate_board_cell(&title, TITLE_WIDTH)
+                )));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Logged \u{2014} restorable via 'aglet deleted' / 'aglet restore'",
+                muted,
+            )));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(keys_hint, muted)));
+
+        let width = area.width.saturating_sub(4).clamp(20, 66);
+        let height = (lines.len() as u16).saturating_add(2);
+        let popup = centered_fixed_rect(area, width, height);
+        frame.render_widget(Clear, popup);
+        let block = Block::default()
+            .title(popup_title)
+            .title_style(Style::default().fg(Color::White))
+            .borders(Borders::ALL)
+            .border_style(
+                Style::default()
+                    .fg(border_color)
+                    .add_modifier(Modifier::BOLD),
+            );
+        frame.render_widget(Paragraph::new(lines).block(block), popup);
+    }
+
+    /// Looks up an item's title in the currently loaded slots.
+    fn item_title_for_id(&self, item_id: ItemId) -> Option<String> {
+        self.slots
+            .iter()
+            .flat_map(|slot| slot.items.iter())
+            .find(|item| item.id == item_id)
+            .map(|item| item.text.clone())
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
@@ -5070,6 +5181,46 @@ impl App {
             frame.render_widget(Paragraph::new(Line::from(when_spans)), when_rect);
         }
 
+        // Live When parse preview (AddItem/EditItem): the context row under the
+        // When field shows what the current buffer text will be stored as — or
+        // the parse error — before the panel is saved.
+        if matches!(
+            panel.kind,
+            InputPanelKind::AddItem | InputPanelKind::EditItem
+        ) {
+            if let Some(context_rect) = regions.context {
+                let raw = panel.when_buffer.trimmed().to_string();
+                if !raw.is_empty() {
+                    let (preview_text, preview_style) = match Self::parse_when_datetime_input(&raw)
+                    {
+                        Ok(Some((dt, rule))) => {
+                            let mut text = format!(
+                                "  \u{21B3} When: {}",
+                                when_echo_with_interpretation(&raw, dt)
+                            );
+                            if let Some(rule) =
+                                panel.parsed_recurrence_rule.as_ref().or(rule.as_ref())
+                            {
+                                text.push_str(&format!("  \u{21BB} {}", rule.display()));
+                            }
+                            (text, Style::default().fg(MUTED_TEXT_COLOR))
+                        }
+                        Ok(None) => (String::new(), Style::default()),
+                        Err(e) => (
+                            format!("  \u{21B3} When: {e}"),
+                            Style::default().fg(Color::LightRed),
+                        ),
+                    };
+                    if !preview_text.is_empty() {
+                        frame.render_widget(
+                            Paragraph::new(preview_text).style(preview_style),
+                            context_rect,
+                        );
+                    }
+                }
+            }
+        }
+
         // Note (not shown for NameInput)
         if let Some(note_rect) = regions.note {
             let note_focused = panel.focus == InputPanelFocus::Note;
@@ -6071,12 +6222,34 @@ impl App {
                         )
                     }
                     GlobalSettingsRow::SemanticProvider => {
-                        format!(
+                        let mut text = format!(
                             "Semantic provider   < {} >",
                             modes::global_settings::semantic_provider_label(
                                 self.classification.ui.config.semantic_provider
                             )
-                        )
+                        );
+                        // Env-var check only; provider reachability is out of
+                        // scope. This is the fixable place, so warn here
+                        // instead of on every save.
+                        use aglet_core::classification::SemanticProviderKind;
+                        let missing_key_var = match self.classification.ui.config.semantic_provider
+                        {
+                            SemanticProviderKind::OpenAi
+                                if self.classification.ui.config.openai.api_key().is_none() =>
+                            {
+                                Some("OPENAI_API_KEY")
+                            }
+                            SemanticProviderKind::OpenRouter
+                                if self.classification.ui.config.openrouter.api_key().is_none() =>
+                            {
+                                Some("OPENROUTER_API_KEY")
+                            }
+                            _ => None,
+                        };
+                        if let Some(var) = missing_key_var {
+                            text.push_str(&format!("   \u{26A0} {var} not set"));
+                        }
+                        text
                     }
                     GlobalSettingsRow::OllamaBaseUrl => {
                         format!(
@@ -7107,7 +7280,7 @@ impl App {
             .and_then(|id| self.categories.iter().find(|c| c.id == id))
             .map(|c| c.name.as_str())
             .unwrap_or("(unset)");
-        let summary_line = Line::from(vec![
+        let mut summary_spans = vec![
             Span::styled("Literal", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(literal_mode, Style::default().add_modifier(Modifier::BOLD)),
@@ -7115,15 +7288,26 @@ impl App {
             Span::styled("Semantic", Style::default().fg(MUTED_TEXT_COLOR)),
             Span::raw(": "),
             Span::styled(semantic_mode, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::raw(": "),
-            Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
-            Span::raw(": "),
-            Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
-        ]);
+        ];
+        // Claim-workflow segments are jargon for non-claim users; show them
+        // only once the workflow categories are actually configured.
+        if ready_name != "(unset)" {
+            summary_spans.extend([
+                Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::styled("Ready queue", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::raw(": "),
+                Span::styled(ready_name, Style::default().add_modifier(Modifier::BOLD)),
+            ]);
+        }
+        if claim_name != "(unset)" {
+            summary_spans.extend([
+                Span::styled(" | ", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::styled("Claim result", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::raw(": "),
+                Span::styled(claim_name, Style::default().add_modifier(Modifier::BOLD)),
+            ]);
+        }
+        let summary_line = Line::from(summary_spans);
         frame.render_widget(
             Paragraph::new(summary_line)
                 .style(Style::default().fg(CATEGORY_MANAGER_PANE_FOCUS))
@@ -9335,12 +9519,23 @@ impl App {
                 ))));
 
                 // ── Group 3: Automation / Behavior ──
+                let auto_assign_summary = {
+                    let mut summary = summarize_category_set(&section.on_insert_assign);
+                    if auto_assign_outside_criteria(
+                        &section.on_insert_assign,
+                        &section.criteria,
+                        &self.categories,
+                    ) {
+                        summary.push_str("  \u{26A0} not in section criteria");
+                    }
+                    summary
+                };
                 items.push(
                     ListItem::new(Line::from(format!(
                         "{}{:<width$}{}",
                         row_marker(section_field_selected(4)),
                         "Auto-assign on add",
-                        summarize_category_set(&section.on_insert_assign),
+                        auto_assign_summary,
                         width = pad
                     )))
                     .style(style_for_section_field(

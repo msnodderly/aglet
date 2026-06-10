@@ -930,7 +930,7 @@ pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
     horizontal[1]
 }
 
-fn centered_fixed_rect(area: Rect, width: u16, height: u16) -> Rect {
+pub(super) fn centered_fixed_rect(area: Rect, width: u16, height: u16) -> Rect {
     if area.width == 0 || area.height == 0 {
         return area;
     }
@@ -1201,8 +1201,78 @@ pub(super) fn input_panel_popup_regions(
     }
 }
 
+/// True when any of a section's auto-assign-on-add categories is neither one
+/// of the section's include criteria (And/Or) nor a descendant of one — the
+/// misconfiguration that silently tags every new item with an unrelated
+/// category (UX audit P1-2 lint).
+pub(super) fn auto_assign_outside_criteria(
+    on_insert_assign: &HashSet<CategoryId>,
+    criteria: &Query,
+    categories: &[Category],
+) -> bool {
+    if on_insert_assign.is_empty() {
+        return false;
+    }
+    let include_ids: HashSet<CategoryId> = criteria
+        .and_category_ids()
+        .chain(criteria.or_category_ids())
+        .collect();
+    let parent_by_id: HashMap<CategoryId, Option<CategoryId>> =
+        categories.iter().map(|c| (c.id, c.parent)).collect();
+    on_insert_assign.iter().any(|&start| {
+        let mut id = start;
+        // Hop guard against malformed parent cycles.
+        for _ in 0..64 {
+            if include_ids.contains(&id) {
+                return false;
+            }
+            match parent_by_id.get(&id).copied().flatten() {
+                Some(parent) => id = parent,
+                None => return true,
+            }
+        }
+        true
+    })
+}
+
+/// Renders a When datetime for user-facing echoes: date-only when the time
+/// component is midnight, otherwise date + HH:MM.
+pub(super) fn format_when_echo(dt: DateTime) -> String {
+    if dt.hour() == 0 && dt.minute() == 0 && dt.second() == 0 && dt.subsec_nanosecond() == 0 {
+        dt.strftime("%Y-%m-%d").to_string()
+    } else {
+        dt.strftime("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+/// True when `input` already spells a canonical rendering of `dt`, so the
+/// echo needs no "(interpreted from ...)" note.
+fn when_input_is_canonical(input: &str, dt: DateTime) -> bool {
+    let input = input.trim();
+    input == format_when_echo(dt)
+        || input == dt.strftime("%Y-%m-%d %H:%M").to_string()
+        || input == dt.strftime("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// Echo of what a When input resolves to, e.g. `2026-06-12` or
+/// `2026-06-12 (interpreted from "2026-06-12 00:00X")`.
+pub(super) fn when_echo_with_interpretation(input: &str, dt: DateTime) -> String {
+    let canonical = format_when_echo(dt);
+    if when_input_is_canonical(input, dt) {
+        canonical
+    } else {
+        format!("{canonical} (interpreted from \"{}\")", input.trim())
+    }
+}
+
+/// Status fragment reporting what a When edit actually stored.
+pub(super) fn when_saved_status(input: &str, dt: DateTime) -> String {
+    format!("When saved as {}", when_echo_with_interpretation(input, dt))
+}
+
 pub(super) fn add_capture_status_message(
     parsed_when: Option<DateTime>,
+    when_input: &str,
     unknown_hashtags: &[String],
 ) -> String {
     let warning = if unknown_hashtags.is_empty() {
@@ -1212,8 +1282,8 @@ pub(super) fn add_capture_status_message(
     };
     match parsed_when {
         Some(when) => format!(
-            "Item added (parsed when: {}{warning})",
-            when.strftime("%Y-%m-%d %H:%M:%S")
+            "Item added | {}{warning}",
+            when_saved_status(when_input, when)
         ),
         None => format!("Item added{warning}"),
     }

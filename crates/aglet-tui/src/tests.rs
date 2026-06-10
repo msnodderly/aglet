@@ -3553,21 +3553,366 @@ fn add_capture_status_message_includes_parsed_datetime_when_present() {
     let when = Date::new(2026, 2, 24).expect("valid date").at(15, 0, 0, 0);
 
     assert_eq!(
-        add_capture_status_message(Some(when), &[]),
-        "Item added (parsed when: 2026-02-24 15:00:00)"
+        add_capture_status_message(Some(when), "2026-02-24 15:00", &[]),
+        "Item added | When saved as 2026-02-24 15:00"
     );
 }
 
 #[test]
 fn add_capture_status_message_defaults_when_no_datetime() {
-    assert_eq!(add_capture_status_message(None, &[]), "Item added");
+    assert_eq!(add_capture_status_message(None, "", &[]), "Item added");
 }
 
 #[test]
 fn add_capture_status_message_includes_unknown_hashtag_warning() {
     assert_eq!(
-        add_capture_status_message(None, &["office".to_string(), "someday".to_string()]),
+        add_capture_status_message(None, "", &["office".to_string(), "someday".to_string()]),
         "Item added | warning unknown_hashtags=office,someday"
+    );
+}
+
+#[test]
+fn when_saved_status_echoes_canonical_input_without_interpretation_note() {
+    let dt = Date::new(2026, 6, 12).expect("valid date").at(0, 0, 0, 0);
+    assert_eq!(
+        super::when_saved_status("2026-06-12", dt),
+        "When saved as 2026-06-12"
+    );
+    // The normalized buffer form (with explicit midnight) is also canonical.
+    assert_eq!(
+        super::when_saved_status("2026-06-12 00:00", dt),
+        "When saved as 2026-06-12"
+    );
+}
+
+#[test]
+fn when_saved_status_reports_interpretation_for_garbage_suffix_input() {
+    let dt = Date::new(2026, 6, 12).expect("valid date").at(0, 0, 0, 0);
+    assert_eq!(
+        super::when_saved_status("2026-06-12 00:00X", dt),
+        "When saved as 2026-06-12 (interpreted from \"2026-06-12 00:00X\")"
+    );
+}
+
+#[test]
+fn when_saved_status_reports_interpretation_for_relative_phrases() {
+    let dt = Date::new(2026, 6, 13).expect("valid date").at(0, 0, 0, 0);
+    assert_eq!(
+        super::when_saved_status("tomorrow", dt),
+        "When saved as 2026-06-13 (interpreted from \"tomorrow\")"
+    );
+}
+
+#[test]
+fn format_when_echo_keeps_time_when_not_midnight() {
+    let dt = Date::new(2026, 6, 12).expect("valid date").at(15, 30, 0, 0);
+    assert_eq!(super::format_when_echo(dt), "2026-06-12 15:30");
+}
+
+#[test]
+fn auto_assign_outside_criteria_flags_unrelated_category() {
+    let todos = Category::new("TODOs".to_string());
+    let overdue = Category::new("Overdue".to_string());
+    let mut criteria = Query::default();
+    criteria.set_criterion(CriterionMode::And, todos.id);
+    let mut on_insert = HashSet::new();
+    on_insert.insert(overdue.id);
+    assert!(super::auto_assign_outside_criteria(
+        &on_insert,
+        &criteria,
+        &[todos, overdue]
+    ));
+}
+
+#[test]
+fn auto_assign_inside_criteria_or_descendant_is_clean() {
+    let todos = Category::new("TODOs".to_string());
+    let mut urgent = Category::new("Urgent".to_string());
+    urgent.parent = Some(todos.id);
+    let mut criteria = Query::default();
+    criteria.set_criterion(CriterionMode::Or, todos.id);
+
+    let mut direct = HashSet::new();
+    direct.insert(todos.id);
+    assert!(!super::auto_assign_outside_criteria(
+        &direct,
+        &criteria,
+        &[todos.clone(), urgent.clone()]
+    ));
+
+    let mut descendant = HashSet::new();
+    descendant.insert(urgent.id);
+    assert!(!super::auto_assign_outside_criteria(
+        &descendant,
+        &criteria,
+        &[todos, urgent]
+    ));
+}
+
+#[test]
+fn auto_assign_empty_set_never_warns() {
+    let criteria = Query::default();
+    assert!(!super::auto_assign_outside_criteria(
+        &HashSet::new(),
+        &criteria,
+        &[]
+    ));
+}
+
+fn view_edit_auto_assign_lint_app(auto_assign_in_criteria: bool) -> App {
+    let todos = Category::new("TODOs".to_string());
+    let overdue = Category::new("Overdue".to_string());
+    let mut criteria = Query::default();
+    criteria.set_criterion(CriterionMode::And, todos.id);
+    if auto_assign_in_criteria {
+        criteria.set_criterion(CriterionMode::Or, overdue.id);
+    }
+    let mut on_insert = HashSet::new();
+    on_insert.insert(overdue.id);
+    let section = Section {
+        title: "Open".to_string(),
+        criteria,
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: on_insert,
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    };
+    let mut view = View::new("Board".to_string());
+    view.sections.push(section);
+
+    let mut app = App {
+        categories: vec![todos, overdue],
+        views: vec![view.clone()],
+        ..App::default()
+    };
+    app.open_view_edit(view);
+    if let Some(state) = app.view_edit_state.as_mut() {
+        state.region = ViewEditRegion::Sections;
+        state.section_index = 0;
+        state.sections_view_row_selected = false;
+    }
+    app
+}
+
+#[test]
+fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
+    let mut app = view_edit_auto_assign_lint_app(false);
+    let backend = TestBackend::new(200, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        text.contains("\u{26A0} not in section criteria"),
+        "auto-assign outside criteria should render a lint warning: {text}"
+    );
+}
+
+fn confirm_delete_app(items: Vec<Item>) -> App {
+    let mut app = App {
+        mode: Mode::ConfirmDelete,
+        slots: vec![super::Slot {
+            title: "Main".to_string(),
+            items,
+            context: super::SlotContext::Unmatched,
+        }],
+        slot_index: 0,
+        item_index: 0,
+        ..App::default()
+    };
+    app.column_index = 0;
+    app
+}
+
+#[test]
+fn confirm_delete_popup_names_single_item() {
+    let item = Item::new("Wash DRZ".to_string());
+    let mut app = confirm_delete_app(vec![item]);
+    app.batch_delete_item_ids = None;
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        text.contains("Delete \"Wash DRZ\"?"),
+        "confirm popup should quote the item title: {text}"
+    );
+    assert!(
+        text.contains("restorable via 'aglet deleted'"),
+        "confirm popup should note recoverability: {text}"
+    );
+    assert!(
+        text.contains("y:confirm"),
+        "confirm popup should show keys: {text}"
+    );
+}
+
+#[test]
+fn confirm_delete_popup_lists_batch_titles_with_count() {
+    let items: Vec<Item> = ["First chore", "Second chore", "Third chore", "Fourth chore"]
+        .iter()
+        .map(|t| Item::new(t.to_string()))
+        .collect();
+    let ids: Vec<ItemId> = items.iter().map(|i| i.id).collect();
+    let mut app = confirm_delete_app(items);
+    app.batch_delete_item_ids = Some(ids);
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        text.contains("Delete 4 items?"),
+        "confirm popup should show batch count: {text}"
+    );
+    assert!(
+        text.contains("First chore"),
+        "confirm popup should list the first titles: {text}"
+    );
+    assert!(
+        text.contains("and 1 more"),
+        "confirm popup should summarize overflow titles: {text}"
+    );
+}
+
+#[test]
+fn confirm_delete_popup_renders_done_blocker_variant() {
+    let item = Item::new("Blocking item".to_string());
+    let blocked = ItemId::new_v4();
+    let item_id = item.id;
+    let mut app = confirm_delete_app(vec![item]);
+    app.done_blocks_confirm = Some(super::DoneBlocksConfirmState {
+        scope: super::DoneBlocksConfirmScope::Single {
+            item_id,
+            blocked_item_ids: vec![blocked],
+        },
+        origin: super::DoneToggleOrigin::NormalMode,
+    });
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        text.contains("This item blocks 1 other item"),
+        "done-blocker popup should describe the blocked link: {text}"
+    );
+    assert!(
+        text.contains("n:done only"),
+        "done-blocker popup should show its distinct keys: {text}"
+    );
+    assert!(
+        !text.contains("Confirm Delete"),
+        "done-blocker variant should not be titled as a delete: {text}"
+    );
+}
+
+#[test]
+fn missing_key_warning_reported_once_per_session() {
+    let mut app = App::default();
+    let messages = vec![
+        "OpenAI: OPENAI_API_KEY not set".to_string(),
+        "other diagnostic".to_string(),
+    ];
+    assert_eq!(
+        app.suppress_reported_key_warnings(messages.clone()),
+        messages,
+        "first occurrence should pass through"
+    );
+    assert_eq!(
+        app.suppress_reported_key_warnings(messages),
+        vec!["other diagnostic".to_string()],
+        "repeat missing-key warning should be suppressed; other messages kept"
+    );
+}
+
+#[test]
+fn global_settings_semantic_provider_row_warns_on_missing_openai_key() {
+    use aglet_core::classification::SemanticProviderKind;
+    let prior = std::env::var("OPENAI_API_KEY").ok();
+    std::env::remove_var("OPENAI_API_KEY");
+
+    let mut app = App {
+        mode: Mode::GlobalSettings,
+        ..App::default()
+    };
+    app.classification.ui.config.semantic_provider = SemanticProviderKind::OpenAi;
+    app.settings.global_settings = Some(super::GlobalSettingsState { selected_row: 0 });
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        text.contains("\u{26A0} OPENAI_API_KEY not set"),
+        "settings should warn about the missing provider key: {text}"
+    );
+
+    std::env::set_var("OPENAI_API_KEY", "test-key");
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !text.contains("OPENAI_API_KEY not set"),
+        "warning should disappear once the key is present: {text}"
+    );
+
+    match prior {
+        Some(value) => std::env::set_var("OPENAI_API_KEY", value),
+        None => std::env::remove_var("OPENAI_API_KEY"),
+    }
+}
+
+#[test]
+fn category_manager_status_hides_unset_workflow_segments() {
+    let mut app = App {
+        mode: Mode::CategoryManager,
+        ..App::default()
+    };
+    app.ensure_category_manager_session();
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !text.contains("Ready queue") && !text.contains("Claim result"),
+        "unconfigured workflow segments should be hidden: {text}"
+    );
+
+    let ready = Category::new("ReadyQueue".to_string());
+    app.workflow_config.ready_category_id = Some(ready.id);
+    app.categories = vec![ready];
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        text.contains("Ready queue") && text.contains("ReadyQueue"),
+        "configured ready queue should render: {text}"
+    );
+    assert!(
+        !text.contains("Claim result"),
+        "still-unset claim segment should stay hidden: {text}"
+    );
+}
+
+#[test]
+fn view_edit_section_details_no_warning_when_auto_assign_in_criteria() {
+    let mut app = view_edit_auto_assign_lint_app(true);
+    let backend = TestBackend::new(200, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !text.contains("\u{26A0} not in section criteria"),
+        "auto-assign covered by criteria should not warn: {text}"
     );
 }
 
@@ -4306,6 +4651,7 @@ fn add_item_panel_context_is_static_not_inline_with_text_input() {
         input_panel: Some(input_panel::InputPanel::new_add_item(
             "Unassigned",
             &std::collections::HashSet::new(),
+            &[],
         )),
         ..App::default()
     };
@@ -4334,11 +4680,51 @@ fn add_item_panel_context_is_static_not_inline_with_text_input() {
             .any(|line| line.contains("Adding to \"Unassigned\"")),
         "context should still be visible in a static row"
     );
+}
+
+#[test]
+fn add_item_panel_context_names_auto_assign_categories_in_help_row() {
+    let overdue = Category::new("Overdue".to_string());
+    let mut on_insert = std::collections::HashSet::new();
+    on_insert.insert(overdue.id);
+
+    let mut app = App {
+        mode: Mode::InputPanel,
+        categories: vec![overdue],
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "TODOs",
+            &on_insert,
+            &["Overdue".to_string()],
+        )),
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    if let Some(panel) = &mut app.input_panel {
+        panel.text.set("Draft title".to_string());
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let lines = terminal_buffer_lines(&terminal);
+
+    let context_line = lines
+        .iter()
+        .find(|line| line.contains("Adding to \"TODOs\""))
+        .expect("context row should be rendered");
     assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("auto-assign 0 categories")),
-        "context should include auto-assigned category count"
+        context_line.contains("will assign: Overdue"),
+        "context should name the auto-assign categories: {context_line:?}"
+    );
+    let text_line = lines
+        .iter()
+        .find(|line| line.contains("Description: Draft title"))
+        .expect("text input line should be rendered");
+    assert!(
+        !text_line.contains("Adding to"),
+        "add-item context must stay off the Text> line: {text_line:?}"
     );
 }
 
@@ -4349,6 +4735,7 @@ fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
         input_panel: Some(input_panel::InputPanel::new_add_item(
             "Unassigned",
             &std::collections::HashSet::new(),
+            &[],
         )),
         ..App::default()
     };
@@ -4374,6 +4761,142 @@ fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
 }
 
 #[test]
+fn add_item_panel_shows_live_when_parse_preview() {
+    let mut app = App {
+        mode: Mode::InputPanel,
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+            &[],
+        )),
+        ..App::default()
+    };
+    if let Some(panel) = &mut app.input_panel {
+        panel.focus = input_panel::InputPanelFocus::When;
+        panel.when_buffer.set("2026-06-12 00:00X".to_string());
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let lines = terminal_buffer_lines(&terminal);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("When: 2026-06-12") && line.contains("interpreted from")),
+        "panel should show a live parse preview noting the interpretation: {lines:?}"
+    );
+}
+
+#[test]
+fn add_item_panel_shows_when_parse_error_preview() {
+    let mut app = App {
+        mode: Mode::InputPanel,
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "Unassigned",
+            &std::collections::HashSet::new(),
+            &[],
+        )),
+        ..App::default()
+    };
+    if let Some(panel) = &mut app.input_panel {
+        panel.focus = input_panel::InputPanelFocus::When;
+        panel.when_buffer.set("next weem".to_string());
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let lines = terminal_buffer_lines(&terminal);
+
+    assert!(
+        lines.iter().any(|line| line.contains("Could not parse")),
+        "panel should show a parse error preview for unparseable input: {lines:?}"
+    );
+}
+
+#[test]
+fn save_input_panel_edit_status_reports_when_interpretation() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let item = Item::new("Demo".to_string());
+    let reference = jiff::Zoned::now().date();
+    aglet.create_item_cheap(&item, reference).expect("create");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut panel = input_panel::InputPanel::new_edit_item(
+        item.id,
+        "Demo".to_string(),
+        String::new(),
+        String::new(),
+        HashSet::new(),
+        HashMap::new(),
+        HashMap::new(),
+    );
+    panel.when_buffer.set("2026-06-12 00:00X".to_string());
+    app.input_panel = Some(panel);
+    app.mode = Mode::InputPanel;
+
+    app.save_input_panel_edit(&aglet).expect("save edit");
+    assert!(
+        app.status.contains("When saved as 2026-06-12"),
+        "status should echo the normalized When value: {}",
+        app.status
+    );
+    assert!(
+        app.status.contains("interpreted from"),
+        "status should note the interpretation of the raw input: {}",
+        app.status
+    );
+}
+
+#[test]
+fn save_input_panel_edit_status_reports_when_cleared() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let item = Item::new("Demo".to_string());
+    let reference = jiff::Zoned::now().date();
+    aglet.create_item_cheap(&item, reference).expect("create");
+    aglet
+        .set_item_when_date(
+            item.id,
+            Some(Date::new(2026, 6, 12).expect("date").at(0, 0, 0, 0)),
+            None,
+        )
+        .expect("set when");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    let mut panel = input_panel::InputPanel::new_edit_item(
+        item.id,
+        "Demo".to_string(),
+        String::new(),
+        "2026-06-12 00:00".to_string(),
+        HashSet::new(),
+        HashMap::new(),
+        HashMap::new(),
+    );
+    panel.when_buffer.set(String::new());
+    app.input_panel = Some(panel);
+    app.mode = Mode::InputPanel;
+
+    app.save_input_panel_edit(&aglet).expect("save edit");
+    assert!(
+        app.status.contains("When cleared"),
+        "status should report the cleared When date: {}",
+        app.status
+    );
+}
+
+#[test]
 fn add_item_render_hides_reserved_categories_in_modal_list() {
     let when = Category::new("When".to_string());
     let entry = Category::new("Entry".to_string());
@@ -4387,6 +4910,7 @@ fn add_item_render_hides_reserved_categories_in_modal_list() {
         input_panel: Some(input_panel::InputPanel::new_add_item(
             "Garage",
             &HashSet::new(),
+            &[],
         )),
         ..App::default()
     };
@@ -4446,7 +4970,7 @@ fn add_item_save_submits_background_classification() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new());
+    let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new(), &[]);
     panel.text.set("Plan travel".to_string());
     panel.focus = input_panel::InputPanelFocus::Categories;
     app.mode = Mode::InputPanel;
@@ -4488,7 +5012,7 @@ fn manual_classify_selected_items_reports_semantic_mode_off() {
 #[test]
 fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
     let item_id = ItemId::new_v4();
-    let app = App::default();
+    let mut app = App::default();
     let result = ProcessItemResult {
         semantic_candidates_seen: 2,
         semantic_candidates_queued_review: 0,
@@ -4512,7 +5036,7 @@ fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
 #[test]
 fn classification_feedback_reports_unavailable_semantic_candidates() {
     let item_id = ItemId::new_v4();
-    let app = App::default();
+    let mut app = App::default();
     let result = ProcessItemResult {
         semantic_candidates_seen: 2,
         semantic_candidates_queued_review: 0,
@@ -4536,7 +5060,7 @@ fn classification_feedback_reports_unavailable_semantic_candidates() {
 #[test]
 fn classification_feedback_surfaces_debug_on_transport_error() {
     let item_id = ItemId::new_v4();
-    let app = App::default();
+    let mut app = App::default();
     let result = ProcessItemResult {
         semantic_candidates_seen: 0,
         semantic_debug_messages: vec![
@@ -7214,7 +7738,7 @@ fn edit_item_panel_footer_shows_esc_cancel() {
 #[test]
 fn add_item_panel_note_focus_hides_capital_s_save_hint() {
     let mut panel =
-        input_panel::InputPanel::new_add_item("Title", &std::collections::HashSet::new());
+        input_panel::InputPanel::new_add_item("Title", &std::collections::HashSet::new(), &[]);
     panel.focus = input_panel::InputPanelFocus::Note;
     let mut app = App {
         mode: Mode::InputPanel,
@@ -7674,12 +8198,12 @@ fn category_manager_render_shows_global_settings_block() {
         "category manager should show classification summary: {rendered}"
     );
     assert!(
-        rendered.contains("Ready queue: (unset)"),
-        "category manager should show ready queue summary: {rendered}"
+        !rendered.contains("Ready queue"),
+        "category manager should hide the unset ready-queue segment: {rendered}"
     );
     assert!(
-        rendered.contains("Claim result: (unset)"),
-        "category manager should show claim summary: {rendered}"
+        !rendered.contains("Claim result"),
+        "category manager should hide the unset claim segment: {rendered}"
     );
     assert!(
         !rendered.contains("(m)"),
