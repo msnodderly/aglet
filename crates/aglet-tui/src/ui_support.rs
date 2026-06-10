@@ -1201,6 +1201,40 @@ pub(super) fn input_panel_popup_regions(
     }
 }
 
+/// True when any of a section's auto-assign-on-add categories is neither one
+/// of the section's include criteria (And/Or) nor a descendant of one — the
+/// misconfiguration that silently tags every new item with an unrelated
+/// category (UX audit P1-2 lint).
+pub(super) fn auto_assign_outside_criteria(
+    on_insert_assign: &HashSet<CategoryId>,
+    criteria: &Query,
+    categories: &[Category],
+) -> bool {
+    if on_insert_assign.is_empty() {
+        return false;
+    }
+    let include_ids: HashSet<CategoryId> = criteria
+        .and_category_ids()
+        .chain(criteria.or_category_ids())
+        .collect();
+    let parent_by_id: HashMap<CategoryId, Option<CategoryId>> =
+        categories.iter().map(|c| (c.id, c.parent)).collect();
+    on_insert_assign.iter().any(|&start| {
+        let mut id = start;
+        // Hop guard against malformed parent cycles.
+        for _ in 0..64 {
+            if include_ids.contains(&id) {
+                return false;
+            }
+            match parent_by_id.get(&id).copied().flatten() {
+                Some(parent) => id = parent,
+                None => return true,
+            }
+        }
+        true
+    })
+}
+
 /// Renders a When datetime for user-facing echoes: date-only when the time
 /// component is midnight, otherwise date + HH:MM.
 pub(super) fn format_when_echo(dt: DateTime) -> String {

@@ -3891,6 +3891,17 @@ impl App {
         self.handle_normal_key(key.code, aglet)
     }
 
+    /// Resolves category IDs to display names, sorted case-insensitively.
+    fn sorted_category_names(&self, ids: &HashSet<CategoryId>) -> Vec<String> {
+        let names = category_name_map(&self.categories);
+        let mut resolved: Vec<String> = ids
+            .iter()
+            .filter_map(|id| names.get(id).cloned())
+            .collect();
+        resolved.sort_by_key(|name| name.to_ascii_lowercase());
+        resolved
+    }
+
     /// Open an InputPanel for adding a new item in the current section.
     pub(crate) fn open_input_panel_add_item(&mut self) {
         let (section_title, on_insert_assign) = self
@@ -3914,7 +3925,12 @@ impl App {
             })
             .unwrap_or_else(|| ("Items".to_string(), HashSet::new()));
 
-        let mut panel = input_panel::InputPanel::new_add_item(&section_title, &on_insert_assign);
+        let auto_assign_names = self.sorted_category_names(&on_insert_assign);
+        let mut panel = input_panel::InputPanel::new_add_item(
+            &section_title,
+            &on_insert_assign,
+            &auto_assign_names,
+        );
 
         // For datebook views, pre-fill the when date from the current section's
         // date range so items are created in the focused time slot.
@@ -4956,9 +4972,22 @@ impl App {
         // Insert into section context (applies on_insert_assign rules).
         // Skip for datebook views: items land in sections by when_date, not
         // category assignment, and datebook views have no manual sections.
+        let mut auto_assigned_names: Vec<String> = Vec::new();
         if let Some(view) = self.current_view().cloned() {
             if view.datebook_config.is_none() {
                 if let Some(context) = self.current_slot().map(|slot| slot.context.clone()) {
+                    let auto_assign_ids = match &context {
+                        SlotContext::GeneratedSection {
+                            on_insert_assign, ..
+                        } => on_insert_assign.clone(),
+                        SlotContext::Section { section_index } => view
+                            .sections
+                            .get(*section_index)
+                            .map(|s| s.on_insert_assign.clone())
+                            .unwrap_or_default(),
+                        SlotContext::Unmatched => HashSet::new(),
+                    };
+                    auto_assigned_names = self.sorted_category_names(&auto_assign_ids);
                     self.insert_into_context(aglet, item.id, &view, &context)?;
                 }
             }
@@ -4981,6 +5010,13 @@ impl App {
         self.status = add_capture_status_message(created.when_date, &when_text, &unknown_hashtags);
         if let Some(when_error) = when_parse_error {
             self.status = format!("{} | {when_error}", self.status);
+        }
+        if !auto_assigned_names.is_empty() {
+            self.status = format!(
+                "{} | Auto-assigned: {}",
+                self.status,
+                auto_assigned_names.join(", ")
+            );
         }
         if let Some((suffix, show_review_hint)) =
             self.classification_feedback_for_saved_item(item.id, &process_result)
@@ -6720,10 +6756,7 @@ mod tests {
             ..App::default()
         };
         app.category_rows = build_category_rows(&app.categories);
-        app.input_panel = Some(input_panel::InputPanel::new_add_item(
-            "Main",
-            &HashSet::new(),
-        ));
+        app.input_panel = Some(input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[]));
         app.mode = Mode::InputPanel;
         if let Some(panel) = &mut app.input_panel {
             panel.focus = input_panel::InputPanelFocus::Categories;
@@ -6768,10 +6801,7 @@ mod tests {
             ..App::default()
         };
         app.category_rows = build_category_rows(&app.categories);
-        app.input_panel = Some(input_panel::InputPanel::new_add_item(
-            "Main",
-            &HashSet::new(),
-        ));
+        app.input_panel = Some(input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[]));
         app.mode = Mode::InputPanel;
         if let Some(panel) = &mut app.input_panel {
             panel.focus = input_panel::InputPanelFocus::Categories;
@@ -6855,7 +6885,7 @@ mod tests {
         };
         app.category_rows = build_category_rows(&app.categories);
 
-        let mut panel = input_panel::InputPanel::new_add_item("Test", &HashSet::new());
+        let mut panel = input_panel::InputPanel::new_add_item("Test", &HashSet::new(), &[]);
         panel.focus = input_panel::InputPanelFocus::Categories;
         panel.category_cursor = 1;
 
@@ -6880,10 +6910,7 @@ mod tests {
     #[test]
     fn ctrl_g_sets_pending_external_edit_for_text() {
         let mut app = App {
-            input_panel: Some(input_panel::InputPanel::new_add_item(
-                "Main",
-                &HashSet::new(),
-            )),
+            input_panel: Some(input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[])),
             mode: Mode::InputPanel,
             transient: TransientUiState {
                 key_modifiers: KeyModifiers::CONTROL,
@@ -6905,7 +6932,7 @@ mod tests {
 
     #[test]
     fn ctrl_g_sets_pending_external_edit_for_note() {
-        let mut panel = input_panel::InputPanel::new_add_item("Main", &HashSet::new());
+        let mut panel = input_panel::InputPanel::new_add_item("Main", &HashSet::new(), &[]);
         panel.focus = input_panel::InputPanelFocus::Note;
         let mut app = App {
             input_panel: Some(panel),

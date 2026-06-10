@@ -3610,6 +3610,119 @@ fn format_when_echo_keeps_time_when_not_midnight() {
 }
 
 #[test]
+fn auto_assign_outside_criteria_flags_unrelated_category() {
+    let todos = Category::new("TODOs".to_string());
+    let overdue = Category::new("Overdue".to_string());
+    let mut criteria = Query::default();
+    criteria.set_criterion(CriterionMode::And, todos.id);
+    let mut on_insert = HashSet::new();
+    on_insert.insert(overdue.id);
+    assert!(super::auto_assign_outside_criteria(
+        &on_insert,
+        &criteria,
+        &[todos, overdue]
+    ));
+}
+
+#[test]
+fn auto_assign_inside_criteria_or_descendant_is_clean() {
+    let todos = Category::new("TODOs".to_string());
+    let mut urgent = Category::new("Urgent".to_string());
+    urgent.parent = Some(todos.id);
+    let mut criteria = Query::default();
+    criteria.set_criterion(CriterionMode::Or, todos.id);
+
+    let mut direct = HashSet::new();
+    direct.insert(todos.id);
+    assert!(!super::auto_assign_outside_criteria(
+        &direct,
+        &criteria,
+        &[todos.clone(), urgent.clone()]
+    ));
+
+    let mut descendant = HashSet::new();
+    descendant.insert(urgent.id);
+    assert!(!super::auto_assign_outside_criteria(
+        &descendant,
+        &criteria,
+        &[todos, urgent]
+    ));
+}
+
+#[test]
+fn auto_assign_empty_set_never_warns() {
+    let criteria = Query::default();
+    assert!(!super::auto_assign_outside_criteria(
+        &HashSet::new(),
+        &criteria,
+        &[]
+    ));
+}
+
+fn view_edit_auto_assign_lint_app(auto_assign_in_criteria: bool) -> App {
+    let todos = Category::new("TODOs".to_string());
+    let overdue = Category::new("Overdue".to_string());
+    let mut criteria = Query::default();
+    criteria.set_criterion(CriterionMode::And, todos.id);
+    if auto_assign_in_criteria {
+        criteria.set_criterion(CriterionMode::Or, overdue.id);
+    }
+    let mut on_insert = HashSet::new();
+    on_insert.insert(overdue.id);
+    let section = Section {
+        title: "Open".to_string(),
+        criteria,
+        columns: Vec::new(),
+        item_column_index: 0,
+        on_insert_assign: on_insert,
+        on_remove_unassign: HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    };
+    let mut view = View::new("Board".to_string());
+    view.sections.push(section);
+
+    let mut app = App {
+        categories: vec![todos, overdue],
+        views: vec![view.clone()],
+        ..App::default()
+    };
+    app.open_view_edit(view);
+    if let Some(state) = app.view_edit_state.as_mut() {
+        state.region = ViewEditRegion::Sections;
+        state.section_index = 0;
+        state.sections_view_row_selected = false;
+    }
+    app
+}
+
+#[test]
+fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
+    let mut app = view_edit_auto_assign_lint_app(false);
+    let backend = TestBackend::new(200, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        text.contains("\u{26A0} not in section criteria"),
+        "auto-assign outside criteria should render a lint warning: {text}"
+    );
+}
+
+#[test]
+fn view_edit_section_details_no_warning_when_auto_assign_in_criteria() {
+    let mut app = view_edit_auto_assign_lint_app(true);
+    let backend = TestBackend::new(200, 35);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let text = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        !text.contains("\u{26A0} not in section criteria"),
+        "auto-assign covered by criteria should not warn: {text}"
+    );
+}
+
+#[test]
 fn build_category_rows_marks_reserved_and_tracks_depth() {
     let mut work = Category::new("Work".to_string());
     work.conditions.push(Condition::ImplicitString);
@@ -4341,10 +4454,7 @@ fn enter_on_empty_slot_opens_add_item_panel() {
 fn add_item_panel_context_is_static_not_inline_with_text_input() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item(
-            "Unassigned",
-            &std::collections::HashSet::new(),
-        )),
+        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4372,11 +4482,51 @@ fn add_item_panel_context_is_static_not_inline_with_text_input() {
             .any(|line| line.contains("Adding to \"Unassigned\"")),
         "context should still be visible in a static row"
     );
+}
+
+#[test]
+fn add_item_panel_context_names_auto_assign_categories_in_help_row() {
+    let overdue = Category::new("Overdue".to_string());
+    let mut on_insert = std::collections::HashSet::new();
+    on_insert.insert(overdue.id);
+
+    let mut app = App {
+        mode: Mode::InputPanel,
+        categories: vec![overdue],
+        input_panel: Some(input_panel::InputPanel::new_add_item(
+            "TODOs",
+            &on_insert,
+            &["Overdue".to_string()],
+        )),
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    if let Some(panel) = &mut app.input_panel {
+        panel.text.set("Draft title".to_string());
+    }
+
+    let backend = TestBackend::new(110, 28);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("render add-item panel");
+    let lines = terminal_buffer_lines(&terminal);
+
+    let context_line = lines
+        .iter()
+        .find(|line| line.contains("Adding to \"TODOs\""))
+        .expect("context row should be rendered");
     assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("auto-assign 0 categories")),
-        "context should include auto-assigned category count"
+        context_line.contains("will assign: Overdue"),
+        "context should name the auto-assign categories: {context_line:?}"
+    );
+    let text_line = lines
+        .iter()
+        .find(|line| line.contains("Description: Draft title"))
+        .expect("text input line should be rendered");
+    assert!(
+        !text_line.contains("Adding to"),
+        "add-item context must stay off the Text> line: {text_line:?}"
     );
 }
 
@@ -4384,10 +4534,7 @@ fn add_item_panel_context_is_static_not_inline_with_text_input() {
 fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item(
-            "Unassigned",
-            &std::collections::HashSet::new(),
-        )),
+        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4415,10 +4562,7 @@ fn add_item_panel_context_remains_single_static_row_in_narrow_layout() {
 fn add_item_panel_shows_live_when_parse_preview() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item(
-            "Unassigned",
-            &std::collections::HashSet::new(),
-        )),
+        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4445,10 +4589,7 @@ fn add_item_panel_shows_live_when_parse_preview() {
 fn add_item_panel_shows_when_parse_error_preview() {
     let mut app = App {
         mode: Mode::InputPanel,
-        input_panel: Some(input_panel::InputPanel::new_add_item(
-            "Unassigned",
-            &std::collections::HashSet::new(),
-        )),
+        input_panel: Some(input_panel::InputPanel::new_add_item("Unassigned", &std::collections::HashSet::new(), &[])),
         ..App::default()
     };
     if let Some(panel) = &mut app.input_panel {
@@ -4556,10 +4697,7 @@ fn add_item_render_hides_reserved_categories_in_modal_list() {
     let mut app = App {
         mode: Mode::InputPanel,
         categories: vec![when, entry, done, todo, motorcycles],
-        input_panel: Some(input_panel::InputPanel::new_add_item(
-            "Garage",
-            &HashSet::new(),
-        )),
+        input_panel: Some(input_panel::InputPanel::new_add_item("Garage", &HashSet::new(), &[])),
         ..App::default()
     };
     app.category_rows = build_category_rows(&app.categories);
@@ -4618,7 +4756,7 @@ fn add_item_save_submits_background_classification() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new());
+    let mut panel = input_panel::InputPanel::new_add_item("Unassigned", &HashSet::new(), &[]);
     panel.text.set("Plan travel".to_string());
     panel.focus = input_panel::InputPanelFocus::Categories;
     app.mode = Mode::InputPanel;
@@ -7386,7 +7524,7 @@ fn edit_item_panel_footer_shows_esc_cancel() {
 #[test]
 fn add_item_panel_note_focus_hides_capital_s_save_hint() {
     let mut panel =
-        input_panel::InputPanel::new_add_item("Title", &std::collections::HashSet::new());
+        input_panel::InputPanel::new_add_item("Title", &std::collections::HashSet::new(), &[]);
     panel.focus = input_panel::InputPanelFocus::Note;
     let mut app = App {
         mode: Mode::InputPanel,

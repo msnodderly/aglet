@@ -9375,12 +9375,23 @@ impl App {
                 ))));
 
                 // ── Group 3: Automation / Behavior ──
+                let auto_assign_summary = {
+                    let mut summary = summarize_category_set(&section.on_insert_assign);
+                    if auto_assign_outside_criteria(
+                        &section.on_insert_assign,
+                        &section.criteria,
+                        &self.categories,
+                    ) {
+                        summary.push_str("  \u{26A0} not in section criteria");
+                    }
+                    summary
+                };
                 items.push(
                     ListItem::new(Line::from(format!(
                         "{}{:<width$}{}",
                         row_marker(section_field_selected(4)),
                         "Auto-assign on add",
-                        summarize_category_set(&section.on_insert_assign),
+                        auto_assign_summary,
                         width = pad
                     )))
                     .style(style_for_section_field(
