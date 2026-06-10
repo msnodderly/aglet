@@ -2445,9 +2445,12 @@ impl App {
             KeyCode::F(8) | KeyCode::Char('v') | KeyCode::Char('V') => {
                 self.mode = Mode::ViewPicker;
                 self.picker_index = self.view_index;
-                self.status =
-                    "View palette: Enter switch, n new, d datebook, r rename, x delete, e edit, Esc cancel"
-                        .to_string();
+                // Derived from the same table as the footer hint row so the
+                // two lines can never advertise different keys.
+                self.status = format!(
+                    "View palette: {}",
+                    keymap::hint_summary(keymap::VIEW_PICKER_HINTS)
+                );
             }
             KeyCode::F(10) => {
                 self.open_global_settings(aglet.store())?;
@@ -2456,7 +2459,7 @@ impl App {
                 self.mode = Mode::CategoryManager;
                 self.open_category_manager_session();
                 self.status =
-                    "Category manager: Enter focuses details pane, e/i/a quick toggles, n/N create, r rename, x delete, H/J/K/L move, << / >> shift level".to_string();
+                    "Category manager: Enter focuses details pane, e/i/a quick toggles, n/N create, r rename, x delete, J/K move, H/L or <</>> level".to_string();
             }
             KeyCode::Char(',') => {
                 self.cycle_view(-1, aglet)?;
@@ -3852,9 +3855,31 @@ impl App {
     }
 
     pub(crate) fn handle_help_panel_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+        // Upper bound on scrolling; the renderer clamps further to the
+        // active layout (two-column mode needs less).
+        let max_scroll = keymap::help_panel_content_line_count().saturating_sub(1);
         match code {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
+                self.help_panel_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_add(1).min(max_scroll);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_add(10).min(max_scroll);
+            }
+            KeyCode::PageUp => {
+                self.help_panel_scroll = self.help_panel_scroll.saturating_sub(10);
+            }
+            KeyCode::Home => {
+                self.help_panel_scroll = 0;
+            }
+            KeyCode::End => {
+                self.help_panel_scroll = max_scroll;
             }
             _ => {}
         }

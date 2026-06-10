@@ -879,10 +879,30 @@ Practical implications:
 - Keep a parser regression test that walks the command tree and fails when any
   non-`help` argument lacks help text (current test:
   `clap_help_docs_cover_all_commands_and_arguments`).
+## Key Documentation Is Single-Sourced In `keymap.rs` (Surprising)
+
+`crates/aglet-tui/src/keymap.rs` is the single source for key documentation:
+the help panel, the Normal-mode footer hint row, and the README keybinding
+cheat sheet all render from `NORMAL_KEYMAP`; modal footer hint rows render
+from the per-mode tables in the same file.
+
+Practical implications:
+- New or changed bindings get documented by editing `keymap.rs`, not by
+  touching `render_help_panel` / `footer_hint_pairs` copy directly.
+- The Normal hint row is curated to ≤10 stable entries + `?:help`; contextual
+  entries (datebook `{`/`}`/`0`, undo/redo, `Esc:clear search`, numeric `f`/
+  `F`) use `KeyContext` predicates so they never evict stable hints.
+- `readme_keymap_cheatsheet_matches_keymap_table` fails when the README table
+  drifts; regenerate with `UPDATE_README=1 cargo test -p aglet-tui
+  readme_keymap`.
+- Mode-open status lines that enumerate keys should derive from the same
+  table via `keymap::hint_summary` (see the view palette) so status and hint
+  rows cannot contradict each other.
+
 ## Normal Mode Preview Hint Must Be In Footer (Discoverability)
 
 `p` already toggles item preview in `Mode::Normal`, but discoverability depends
-on `footer_hint_text()` in `crates/aglet-tui/src/render/mod.rs`.
+on the `NORMAL_KEYMAP` hints in `crates/aglet-tui/src/keymap.rs`.
 
 Practical implications:
 - Keep `p:preview` in both normal footer variants:

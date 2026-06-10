@@ -615,7 +615,10 @@ impl App {
             self.render_confirm_delete_popup(frame, frame.area());
         }
         if self.mode == Mode::HelpPanel {
-            self.render_help_panel(frame, centered_rect(52, 90, frame.area()));
+            // Wide terminals get a wider popup so the help content can render
+            // in two side-by-side columns.
+            let width_pct = if frame.area().width >= 160 { 72 } else { 52 };
+            self.render_help_panel(frame, centered_rect(width_pct, 90, frame.area()));
         }
         if self.mode == Mode::SuggestionReview {
             self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
@@ -4463,15 +4466,8 @@ impl App {
 
     fn footer_hint_pairs(&self) -> Vec<(&'static str, &'static str)> {
         match self.mode {
-            Mode::HelpPanel => vec![("Esc", "close"), ("Enter", "close"), ("?", "close")],
-            Mode::SuggestionReview => vec![
-                ("Tab", "pane"),
-                ("Space", "toggle"),
-                ("Enter", "confirm"),
-                ("s", "skip"),
-                ("A", "accept all"),
-                ("Esc", "close"),
-            ],
+            Mode::HelpPanel => HELP_PANEL_HINTS.to_vec(),
+            Mode::SuggestionReview => SUGGESTION_REVIEW_HINTS.to_vec(),
             Mode::GlobalSettings => {
                 if self
                     .settings
@@ -4497,11 +4493,7 @@ impl App {
             }
             Mode::CategoryManager => {
                 if self.category_manager_discard_confirm() {
-                    vec![
-                        ("y", "save & close"),
-                        ("n", "discard"),
-                        ("Esc", "keep editing"),
-                    ]
+                    DISCARD_CONFIRM_HINTS.to_vec()
                 } else if self.settings.classification_mode_picker_open {
                     vec![("j/k", "mode"), ("Enter", "apply"), ("Esc", "close")]
                 } else if self.settings.workflow_role_picker.is_some() {
@@ -4532,9 +4524,7 @@ impl App {
                         CategoryInlineAction::Rename { .. } => {
                             vec![("Enter", "apply"), ("Esc", "cancel")]
                         }
-                        CategoryInlineAction::DeleteConfirm { .. } => {
-                            vec![("y", "confirm"), ("Esc", "cancel")]
-                        }
+                        CategoryInlineAction::DeleteConfirm { .. } => CONFIRM_HINTS.to_vec(),
                     }
                 } else if self.category_manager_filter_editing()
                     || self.category_manager_focus() == Some(CategoryManagerFocus::Filter)
@@ -4554,41 +4544,17 @@ impl App {
                         ("Esc", "close"),
                     ]
                 } else {
-                    vec![
-                        ("n", "new sibling"),
-                        ("N", "new child"),
-                        ("r", "rename"),
-                        ("x", "delete"),
-                        ("S-\u{2191}/\u{2193}", "move"),
-                        ("H/L", "level"),
-                        ("/", "filter"),
-                        ("Tab", "details"),
-                        ("Esc", "close"),
-                    ]
+                    CATEGORY_MANAGER_TREE_HINTS.to_vec()
                 }
             }
-            Mode::ViewPicker => {
-                vec![
-                    ("Enter", "switch"),
-                    ("N", "new"),
-                    ("c", "clone"),
-                    ("r", "rename"),
-                    ("e", "edit"),
-                    ("x", "delete"),
-                    ("Esc", "cancel"),
-                ]
-            }
-            Mode::ViewDeleteConfirm => vec![("y", "confirm"), ("Esc", "cancel")],
+            Mode::ViewPicker => VIEW_PICKER_HINTS.to_vec(),
+            Mode::ViewDeleteConfirm => CONFIRM_HINTS.to_vec(),
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.discard_confirm {
-                        vec![
-                            ("y", "save & close"),
-                            ("n", "discard"),
-                            ("Esc", "keep editing"),
-                        ]
+                        DISCARD_CONFIRM_HINTS.to_vec()
                     } else if state.section_delete_confirm.is_some() {
-                        vec![("y", "confirm"), ("Esc", "cancel")]
+                        CONFIRM_HINTS.to_vec()
                     } else if state.inline_input.is_some() {
                         vec![("Enter", "confirm"), ("Esc", "cancel")]
                     } else if state.overlay.is_some() {
@@ -4691,40 +4657,19 @@ impl App {
                     ("Esc", "close"),
                 ],
             },
-            Mode::ItemAssignInput => vec![("Enter", "assign"), ("Esc", "cancel")],
-            Mode::LinkWizard => vec![
-                ("Tab", "focus"),
-                ("Enter", "apply"),
-                ("/", "target"),
-                ("Esc", "cancel"),
-            ],
-            Mode::CategoryDirectEdit => vec![
-                ("S", "save"),
-                ("Tab", "focus"),
-                ("Enter", "resolve"),
-                ("x", "remove"),
-                ("Esc", "cancel"),
-            ],
-            Mode::CategoryColumnPicker => {
-                vec![("Space", "toggle"), ("Enter", "save"), ("Esc", "cancel")]
-            }
-            Mode::BoardAddColumnPicker => {
-                vec![("Enter", "insert"), ("Tab", "complete"), ("Esc", "cancel")]
-            }
+            Mode::ItemAssignInput => ITEM_ASSIGN_INPUT_HINTS.to_vec(),
+            Mode::LinkWizard => LINK_WIZARD_HINTS.to_vec(),
+            Mode::CategoryDirectEdit => CATEGORY_DIRECT_EDIT_HINTS.to_vec(),
+            Mode::CategoryColumnPicker => CATEGORY_COLUMN_PICKER_HINTS.to_vec(),
+            Mode::BoardAddColumnPicker => BOARD_ADD_COLUMN_HINTS.to_vec(),
             Mode::ConfirmDelete => {
                 if self.done_blocks_confirm.is_some() {
-                    vec![
-                        ("y", "remove links + done"),
-                        ("n", "done only"),
-                        ("Esc", "cancel"),
-                    ]
+                    DONE_BLOCKER_HINTS.to_vec()
                 } else {
-                    vec![("y", "confirm"), ("Esc", "cancel")]
+                    CONFIRM_HINTS.to_vec()
                 }
             }
-            Mode::BoardColumnDeleteConfirm => {
-                vec![("y", "confirm"), ("Esc", "cancel")]
-            }
+            Mode::BoardColumnDeleteConfirm => CONFIRM_HINTS.to_vec(),
             Mode::SearchBarFocused => {
                 if self.global_search_active() {
                     vec![
@@ -4744,15 +4689,11 @@ impl App {
                     hints
                 }
             }
-            Mode::InspectUnassign => vec![("Enter", "unassign"), ("Esc", "cancel")],
+            Mode::InspectUnassign => INSPECT_UNASSIGN_HINTS.to_vec(),
             Mode::InputPanel => {
                 // Discard-confirm prompt takes priority
                 if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
-                    vec![
-                        ("y", "save & close"),
-                        ("n", "discard"),
-                        ("Esc", "keep editing"),
-                    ]
+                    DISCARD_CONFIRM_HINTS.to_vec()
                 } else if self
                     .input_panel
                     .as_ref()
@@ -4802,78 +4743,7 @@ impl App {
                     ]
                 }
             }
-            Mode::Normal => {
-                let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
-                if self.selected_count() > 0 {
-                    hints.extend_from_slice(&[
-                        ("Space", "toggle"),
-                        ("a", "assign"),
-                        ("b/B", "link"),
-                        ("x", "delete"),
-                        ("Esc", "clear sel"),
-                        ("/", "search"),
-                        ("J/K", "jump"),
-                        ("[/]", "move"),
-                        ("=", "classify"),
-                        ("C", "review"),
-                        ("g/", "global"),
-                        ("v", "views"),
-                        ("p", "preview"),
-                        ("q", "quit"),
-                    ]);
-                } else {
-                    hints.extend_from_slice(&[
-                        ("n", "new"),
-                        ("e", "edit"),
-                        ("a", "assign"),
-                        ("d", "done"),
-                        ("/", "search"),
-                        ("J/K", "jump"),
-                        ("[/]", "move"),
-                        ("v", "views"),
-                        ("m", "lanes"),
-                        ("s", "sort"),
-                    ]);
-                    if self.focused_numeric_board_column() {
-                        hints.extend_from_slice(&[("f", "col fmt"), ("F", "col summary")]);
-                    }
-                    hints.extend_from_slice(&[
-                        ("p", "preview"),
-                        ("u", "deps"),
-                        ("=", "classify"),
-                        ("C", "review"),
-                        ("g/", "global"),
-                        ("g s", "settings"),
-                        ("F10", "settings"),
-                        ("z", "cards"),
-                    ]);
-                    if self.section_filters.iter().any(|f| f.is_some()) {
-                        let insert_pos = hints.len().min(5);
-                        hints.insert(insert_pos, ("Esc", "clear search"));
-                    }
-                    if self
-                        .current_view()
-                        .is_some_and(|v| v.datebook_config.is_some())
-                    {
-                        hints.extend_from_slice(&[("}", "fwd"), ("{", "back"), ("0", "today")]);
-                    }
-                    hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
-                }
-                if self.undo.has_undo() {
-                    // Insert undo hint near the front (after primary action keys)
-                    let insert_pos = hints.len().min(4);
-                    hints.insert(insert_pos, ("Ctrl-Z", "undo"));
-                }
-                if self.undo.has_redo() {
-                    // Insert redo hint right after undo
-                    let undo_pos = hints.iter().position(|h| h.0 == "Ctrl-Z");
-                    let insert_pos = undo_pos
-                        .map(|p| p + 1)
-                        .unwrap_or_else(|| hints.len().min(5));
-                    hints.insert(insert_pos, ("Ctrl-Shift-Z", "redo"));
-                }
-                hints
-            }
+            Mode::Normal => self.normal_footer_hints(),
         }
     }
 
@@ -4950,8 +4820,10 @@ impl App {
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
 
-        let help_entry = |key: &str, desc: &str| -> Line<'static> {
-            let pad = 12_usize.saturating_sub(key.len());
+        let help_entry = |key: &str, desc: &str, gutter: usize| -> Line<'static> {
+            // Pad by character count, not byte length — unicode arrows in key
+            // labels must not break the description column.
+            let pad = gutter.saturating_sub(key.chars().count());
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(key.to_string(), key_style),
@@ -4960,71 +4832,31 @@ impl App {
             ])
         };
 
-        let lines: Vec<Line<'static>> = vec![
-            Line::from(Span::styled("CURRENT ITEM", header)),
-            help_entry("n", "Add a new item to the focused section"),
-            help_entry("e / Enter", "Edit selected item; Enter adds when empty"),
-            help_entry("a", "Assign categories to current item or selection"),
-            help_entry("d / D", "Toggle done on selected item(s)"),
-            help_entry("r / x", "Remove from view / delete selected item(s)"),
-            help_entry("b / B", "Open dependency link wizard (blocked-by / blocks)"),
-            help_entry("=", "Classify selected item(s) now"),
-            help_entry("p / i/o", "Toggle preview sidebar / cycle preview mode"),
-            Line::from(""),
-            Line::from(Span::styled("SELECTION", header)),
-            help_entry("Space", "Toggle selection on current item"),
-            help_entry("a/d/x/=", "Batch assign, done, delete, or classify"),
-            help_entry("b / B", "Link selected items with a dependency"),
-            help_entry("Esc", "Clear selection"),
-            Line::from(""),
-            Line::from(Span::styled("NAVIGATION", header)),
-            help_entry(
-                "\u{2191}/k \u{2193}/j",
-                "Move items; scroll preview when focused",
-            ),
-            help_entry("\u{2190}/h \u{2192}/l", "Move between sections or columns"),
-            help_entry("Tab/S-Tab", "Next / previous section; J/K jump section"),
-            help_entry(
-                "[/] or S-\u{2191}/S-\u{2193}",
-                "Move item to previous / next section",
-            ),
-            help_entry("m / z", "Cycle lane layout / card size"),
-            Line::from(""),
-            Line::from(Span::styled("SEARCH", header)),
-            help_entry("/ / g/", "Search focused section / all sections"),
-            help_entry("Esc", "Clear active section filter"),
-            Line::from(""),
-            Line::from(Span::styled("COLUMNS", header)),
-            help_entry("Enter", "Edit column value (on a column cell)"),
-            help_entry("+/-", "Add / remove board column"),
-            help_entry("H/L", "Move board column left / right"),
-            help_entry("f", "Cycle numeric column format"),
-            help_entry("F", "Cycle numeric column summary (Sum/Avg/Min/Max)"),
-            help_entry("s/S or </>", "Sort section by column (asc / desc)"),
-            Line::from(""),
-            Line::from(Span::styled("VIEWS", header)),
-            help_entry("v/V/F8 ,/. ga", "Views, previous/next view, All Items"),
-            Line::from(""),
-            Line::from(Span::styled("DATEBOOK VIEWS", header)),
-            help_entry("{/}/0", "Browse previous / next period; return to today"),
-            Line::from(""),
-            Line::from(Span::styled("GLOBAL", header)),
-            help_entry("C", "Review pending classification suggestions"),
-            help_entry("g s / F10", "Open Global Settings"),
-            help_entry("c / F9", "Open the category manager"),
-            help_entry("u", "Toggle hide-dependent-items filter"),
-            help_entry("Ctrl-G", "Open $EDITOR for text/note (in item editor)"),
-            help_entry("Ctrl-L", "Reload data from disk"),
-            help_entry("Ctrl-Z", "Undo"),
-            help_entry("C-S-Z", "Redo"),
-            help_entry("?", "Toggle this help panel"),
-            help_entry("q", "Quit"),
-            Line::from(""),
-            Line::from(Span::styled(
-                "              Esc / Enter / ? to close",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ];
+        // One block of lines per help section (header + entries); blocks are
+        // packed into one or two columns below.
+        let mut blocks: Vec<Vec<Line<'static>>> = Vec::new();
+        for section in keymap::HelpSection::ALL {
+            let entries: Vec<&KeyBinding> = NORMAL_KEYMAP
+                .iter()
+                .filter(|binding| binding.section == section && !binding.desc.is_empty())
+                .collect();
+            if entries.is_empty() {
+                continue;
+            }
+            // Per-section key gutter: aligned within the section, and one
+            // long key label cannot push every description off-panel.
+            let gutter = entries
+                .iter()
+                .map(|binding| binding.keys.chars().count())
+                .max()
+                .unwrap_or(10)
+                .saturating_add(2);
+            let mut block_lines = vec![Line::from(Span::styled(section.help_label(), header))];
+            for binding in entries {
+                block_lines.push(help_entry(binding.keys, binding.desc, gutter));
+            }
+            blocks.push(block_lines);
+        }
 
         let block = Block::default()
             .title("Keyboard Shortcuts")
@@ -5033,7 +4865,104 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(Clear, area);
         frame.render_widget(block, area);
-        frame.render_widget(Paragraph::new(lines), inner);
+        if inner.height < 2 || inner.width < 4 {
+            return;
+        }
+
+        // Last inner row is a fixed hint/indicator line; content scrolls above.
+        let content_area = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height - 1,
+        };
+        let hint_area = Rect {
+            x: inner.x,
+            y: inner.y + inner.height - 1,
+            width: inner.width,
+            height: 1,
+        };
+
+        let join_blocks = |blocks: &[Vec<Line<'static>>]| -> Vec<Line<'static>> {
+            let mut lines: Vec<Line<'static>> = Vec::new();
+            for block_lines in blocks {
+                if !lines.is_empty() {
+                    lines.push(Line::from(""));
+                }
+                lines.extend(block_lines.iter().cloned());
+            }
+            lines
+        };
+
+        // Wide panels render two columns; content comfortably fits side by side.
+        let two_columns = inner.width >= 120;
+        let columns: Vec<Vec<Line<'static>>> = if two_columns {
+            let total: usize = blocks.iter().map(|b| b.len() + 1).sum();
+            let mut split_at = blocks.len();
+            let mut running = 0usize;
+            for (idx, block_lines) in blocks.iter().enumerate() {
+                running += block_lines.len() + 1;
+                if running >= total / 2 {
+                    split_at = idx + 1;
+                    break;
+                }
+            }
+            vec![
+                join_blocks(&blocks[..split_at]),
+                join_blocks(&blocks[split_at..]),
+            ]
+        } else {
+            vec![join_blocks(&blocks)]
+        };
+
+        let viewport = content_area.height as usize;
+        let tallest = columns.iter().map(Vec::len).max().unwrap_or(0);
+        let max_scroll = tallest.saturating_sub(viewport);
+        let scroll = self.help_panel_scroll.min(max_scroll);
+
+        let column_areas: Vec<Rect> = if two_columns {
+            let half = content_area.width / 2;
+            vec![
+                Rect {
+                    width: half.saturating_sub(2),
+                    ..content_area
+                },
+                Rect {
+                    x: content_area.x + half,
+                    width: content_area.width - half,
+                    ..content_area
+                },
+            ]
+        } else {
+            vec![content_area]
+        };
+        for (lines, column_area) in columns.into_iter().zip(column_areas) {
+            frame.render_widget(
+                Paragraph::new(lines).scroll((scroll as u16, 0)),
+                column_area,
+            );
+        }
+        if max_scroll > 0 {
+            Self::render_vertical_scrollbar(frame, content_area, tallest, scroll);
+        }
+
+        let more_indicator = if scroll < max_scroll {
+            "\u{2026} more \u{2193}   "
+        } else {
+            ""
+        };
+        let hint_text = if max_scroll > 0 {
+            format!("{more_indicator}j/k scroll   Esc / Enter / ? to close")
+        } else {
+            "Esc / Enter / ? to close".to_string()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("  {hint_text}"),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            hint_area,
+        );
     }
 
     pub(crate) fn render_input_panel(
