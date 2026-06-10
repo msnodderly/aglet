@@ -3838,9 +3838,7 @@ fn item_assign_input_renders_inside_popup_not_footer() {
         "typed query should render inside the assign popup: {lines:?}"
     );
     assert!(
-        popup_lines
-            .iter()
-            .any(|line| line.contains("> Category")),
+        popup_lines.iter().any(|line| line.contains("> Category")),
         "popup should show a focused category input block: {lines:?}"
     );
     let footer_lines = &lines[lines.len() - 4..];
@@ -6270,7 +6268,8 @@ fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
     app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
         .expect("first enter should arm the create confirm");
     assert!(
-        app.status.contains("Enter again to create category \"wor\""),
+        app.status
+            .contains("Enter again to create category \"wor\""),
         "first enter should arm, not create: {}",
         app.status
     );

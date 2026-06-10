@@ -2049,7 +2049,7 @@ impl App {
     pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
         match self.mode {
             Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
-            Mode::ItemAssignInput => None, // cursor rendered inside the assign popup
+            Mode::ItemAssignInput => None,  // cursor rendered inside the assign popup
             Mode::Normal
             | Mode::GlobalSettings
             | Mode::HelpPanel
@@ -5614,8 +5614,7 @@ impl App {
 
                             // Filtered lists render flat with a breadcrumb
                             // suffix instead of orphaned indentation (P2-5).
-                            let filtered_flat =
-                                !panel.category_filter.text().trim().is_empty();
+                            let filtered_flat = !panel.category_filter.text().trim().is_empty();
                             let indent = if filtered_flat {
                                 String::new()
                             } else {
@@ -5688,9 +5687,7 @@ impl App {
                                 spans.push(Span::styled(type_suffix.to_string(), suffix_style));
                             }
                             if filtered_flat {
-                                if let Some(crumb) =
-                                    category_breadcrumb(row.id, &self.categories)
-                                {
+                                if let Some(crumb) = category_breadcrumb(row.id, &self.categories) {
                                     spans.push(Span::styled(
                                         format!("  \u{2014} {crumb}"),
                                         suffix_style,
@@ -5888,10 +5885,7 @@ impl App {
     /// Terminal cursor position for the popup-local category input
     /// (`Mode::ItemAssignInput`). Cursor coordinates are set explicitly —
     /// see the Category Manager cursor note in AGENTS.md.
-    pub(crate) fn item_assign_input_cursor_position(
-        &self,
-        popup_area: Rect,
-    ) -> Option<(u16, u16)> {
+    pub(crate) fn item_assign_input_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
         if self.mode != Mode::ItemAssignInput {
             return None;
         }
