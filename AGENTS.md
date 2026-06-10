@@ -879,10 +879,30 @@ Practical implications:
 - Keep a parser regression test that walks the command tree and fails when any
   non-`help` argument lacks help text (current test:
   `clap_help_docs_cover_all_commands_and_arguments`).
+## Key Documentation Is Single-Sourced In `keymap.rs` (Surprising)
+
+`crates/aglet-tui/src/keymap.rs` is the single source for key documentation:
+the help panel, the Normal-mode footer hint row, and the README keybinding
+cheat sheet all render from `NORMAL_KEYMAP`; modal footer hint rows render
+from the per-mode tables in the same file.
+
+Practical implications:
+- New or changed bindings get documented by editing `keymap.rs`, not by
+  touching `render_help_panel` / `footer_hint_pairs` copy directly.
+- The Normal hint row is curated to ≤10 stable entries + `?:help`; contextual
+  entries (datebook `{`/`}`/`0`, undo/redo, `Esc:clear search`, numeric `f`/
+  `F`) use `KeyContext` predicates so they never evict stable hints.
+- `readme_keymap_cheatsheet_matches_keymap_table` fails when the README table
+  drifts; regenerate with `UPDATE_README=1 cargo test -p aglet-tui
+  readme_keymap`.
+- Mode-open status lines that enumerate keys should derive from the same
+  table via `keymap::hint_summary` (see the view palette) so status and hint
+  rows cannot contradict each other.
+
 ## Normal Mode Preview Hint Must Be In Footer (Discoverability)
 
 `p` already toggles item preview in `Mode::Normal`, but discoverability depends
-on `footer_hint_text()` in `crates/aglet-tui/src/render/mod.rs`.
+on the `NORMAL_KEYMAP` hints in `crates/aglet-tui/src/keymap.rs`.
 
 Practical implications:
 - Keep `p:preview` in both normal footer variants:
@@ -918,10 +938,13 @@ In `Mode::Normal`, `g/` now starts a temporary global search session:
 Practical implications:
 - While this session is active, `Esc` returns to the prior view context instead
   of only clearing the current slot filter.
-- `Enter` exact-match resolution searches across all visible slots in `All Items`.
-- Creating from global search (`g/` + query + `Enter`) must keep the session
-  active through add/edit save flows so `Esc` can still return to the original
-  view afterwards.
+- `Enter` reveals (selects) the top visible match across all slots in
+  `All Items` and returns to `Mode::Normal` with the session still active;
+  `e` edits, as everywhere else. Enter does not open the edit panel and does
+  not create items.
+- Editing from global search (`g/` + query + `Enter` + `e`) must keep the
+  session active through add/edit save flows so `Esc` can still return to the
+  original view afterwards.
 - Keep `ga` behavior unchanged; `g` prefix help/status should mention both
   commands (`ga` and `g/`).
 

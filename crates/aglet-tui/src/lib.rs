@@ -44,6 +44,7 @@ mod error;
 mod fuzzy;
 mod input;
 mod input_panel;
+mod keymap;
 mod modes;
 mod projection;
 mod render;
@@ -54,6 +55,7 @@ mod undo;
 
 pub use error::{TuiError, TuiResult};
 
+use keymap::*;
 use modes::view_edit::{
     BucketEditTarget, CategoryEditTarget, ViewEditInlineInput, ViewEditOverlay, ViewEditPaneFocus,
     ViewEditRegion, ViewEditState,
@@ -438,6 +440,8 @@ struct App {
     view_index: usize,
     active_view_name: Option<String>,
     session_hide_dependent_items_override: Option<bool>,
+    /// Scroll offset (in lines) for the help panel popup.
+    help_panel_scroll: usize,
     picker_index: usize,
     view_pending_edit_name: Option<String>,
     view_pending_clone_id: Option<Uuid>,
@@ -460,6 +464,9 @@ struct App {
     board_add_column: Option<BoardAddColumnState>,
     item_assign_category_index: usize,
     item_assign_dirty: bool,
+    /// Armed one-shot confirm for creating a category from the assign input
+    /// (holds the pending name; second Enter creates).
+    item_assign_create_confirm: Option<String>,
     item_assign_anchor_item_id: Option<ItemId>,
     item_assign_target_item_ids: Vec<ItemId>,
     item_assign_pane: ItemAssignPane,
@@ -520,6 +527,7 @@ impl Default for App {
             view_index: 0,
             active_view_name: None,
             session_hide_dependent_items_override: None,
+            help_panel_scroll: 0,
             picker_index: 0,
             view_pending_edit_name: None,
             view_pending_clone_id: None,
@@ -541,6 +549,7 @@ impl Default for App {
             board_add_column: None,
             item_assign_category_index: 0,
             item_assign_dirty: false,
+            item_assign_create_confirm: None,
             item_assign_anchor_item_id: None,
             item_assign_target_item_ids: Vec::new(),
             item_assign_pane: ItemAssignPane::Categories,

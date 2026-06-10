@@ -169,35 +169,47 @@ appointments, renewals, and deadlines visible together.
 
 ### Keybinding Cheat Sheet
 
+<!-- BEGIN GENERATED KEYMAP (regenerate: UPDATE_README=1 cargo test -p aglet-tui readme_keymap) -->
 | Area | Keys | Action |
 | --- | --- | --- |
 | Items | `n` | Add a new item to the focused section |
-| Items | `e` / `Enter` | Edit the selected item; `Enter` adds when the view is empty |
-| Items | `a` | Assign categories to the selected item or selection |
-| Items | `d` / `D` | Toggle done on selected item(s) |
-| Items | `r` / `x` | Remove from view / delete selected item(s) |
-| Items | `b` / `B` | Open dependency link wizard: blocked-by / blocks |
-| Navigation | `Up` / `k`, `Down` / `j` | Move between items |
-| Navigation | `Left` / `h`, `Right` / `l` | Move between sections or columns |
-| Navigation | `Tab` / `Shift-Tab` | Move to next / previous section |
-| Navigation | `J` / `K` | Jump to next / previous section |
+| Items | `e / Enter` | Edit selected item; Enter adds when empty |
+| Items | `a` | Assign categories to current item or selection |
+| Items | `d / D` | Toggle done on selected item(s) |
+| Items | `r / x` | Remove from view / delete selected item(s) |
+| Items | `b / B` | Open dependency link wizard (blocked-by / blocks) |
+| Items | `=` | Classify selected item(s) now |
+| Items | `p / i/o` | Toggle preview sidebar / cycle preview mode |
 | Selection | `Space` | Toggle selection on current item |
-| Selection | `Esc` | Clear selection or active section filter |
-| Search | `/` | Search the focused section |
-| Search | `g/` | Search all sections |
-| Views | `v` / `V` / `F8` | Open the view picker |
-| Views | `,` / `.` | Previous / next view |
-| Views | `ga` | Jump to `All Items` |
-| Categories | `c` / `F9` | Open the category manager |
-| Columns | `+` / `-` | Add / remove a board column |
-| Columns | `H` / `L` | Move board column left / right |
-| Datebook | `{` / `}` | Step to previous / next bucket |
-| Datebook | `(` / `)` | Step backward / forward by a full window |
-| Datebook | `0` | Return to today |
-| Global | `?` | Toggle help |
+| Selection | `a/d/x/=` | Batch assign, done, delete, or classify |
+| Selection | `b / B` | Link selected items with a dependency |
+| Selection | `Esc` | Clear selection |
+| Navigation | `↑/k ↓/j` | Move items; scroll preview when focused |
+| Navigation | `←/h →/l` | Move between sections or columns |
+| Navigation | `Tab/S-Tab` | Next / previous section; J/K jump section |
+| Navigation | `[/] or S-↑/S-↓` | Move item to previous / next section |
+| Navigation | `m / z` | Cycle lane layout / card size |
+| Search | `/ / g/` | Search focused section / all sections |
+| Search | `Esc` | Clear active section filter |
+| Columns | `Enter` | Edit column value (on a column cell) |
+| Columns | `+/-` | Add / remove board column |
+| Columns | `H/L` | Move board column left / right |
+| Columns | `f` | Cycle numeric column format |
+| Columns | `F` | Cycle numeric column summary (Sum/Avg/Min/Max) |
+| Columns | `s/S or </>` | Sort section by column (asc / desc) |
+| Views | `v/V/F8 ,/. ga` | Views, previous/next view, All Items |
+| Datebook | `{/} (/) 0` | Step previous / next bucket; (/) step window; 0 today |
+| Global | `C` | Review pending classification suggestions |
+| Global | `g s / F10` | Open Global Settings |
+| Global | `c / F9` | Open the category manager |
+| Global | `u` | Toggle hide-dependent-items filter |
+| Global | `Ctrl-G` | Open $EDITOR for text/note (in item editor) |
 | Global | `Ctrl-L` | Reload data from disk |
-| Global | `Ctrl-Z` / `Ctrl-Shift-Z` | Undo / redo |
+| Global | `Ctrl-Z` | Undo |
+| Global | `C-S-Z` | Redo |
+| Global | `?` | Toggle this help panel |
 | Global | `q` | Quit |
+<!-- END GENERATED KEYMAP -->
 
 ## Standalone Binary Build
 

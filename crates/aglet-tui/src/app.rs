@@ -1435,6 +1435,7 @@ impl App {
         self.item_assign_anchor_item_id = None;
         self.item_assign_target_item_ids.clear();
         self.item_assign_preview = AssignmentPreview::default();
+        self.item_assign_create_confirm = None;
         self.clear_input();
     }
 
