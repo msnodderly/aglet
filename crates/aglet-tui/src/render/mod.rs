@@ -1088,7 +1088,7 @@ impl App {
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(2), // anchor
+                Constraint::Length(1), // source line
                 Constraint::Length(7), // actions
                 Constraint::Length(3), // target query
                 Constraint::Min(5),    // target matches
@@ -1097,24 +1097,21 @@ impl App {
             ])
             .split(inner);
 
-        let anchor_lines = vec![
-            Line::from(if source_count > 1 {
-                format!("Source set ({source_count} items)")
-            } else {
-                "Anchor item".to_string()
-            }),
-            Line::from(if source_count > 1 {
-                format!("  {} (focused)", truncate_board_cell(&anchor_label, 72))
-            } else {
-                format!("  {}", truncate_board_cell(&anchor_label, 72))
-            }),
-        ];
+        // Plain source line — a 2-row bordered box clipped its own content
+        // and rendered as an empty rectangle (UX audit P3-3).
+        let source_value = if source_count > 1 {
+            format!(
+                "{source_count} items \u{2014} \"{}\", \u{2026}",
+                truncate_board_cell(&anchor_label, 56)
+            )
+        } else {
+            truncate_board_cell(&anchor_label, 64)
+        };
         frame.render_widget(
-            Paragraph::new(anchor_lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::DarkGray)),
-            ),
+            Paragraph::new(Line::from(vec![
+                Span::styled("Source: ", Style::default().fg(MUTED_TEXT_COLOR)),
+                Span::styled(source_value, Style::default().add_modifier(Modifier::BOLD)),
+            ])),
             rows[0],
         );
 
@@ -1172,10 +1169,11 @@ impl App {
                     .iter()
                     .find(|item| item.id == *item_id)
                     .map(|item| {
-                        let status = if item.is_done { "done" } else { "open" };
-                        format!("{status} | {}", item.text)
+                        // Board glyph vocabulary, not debug-style "open |".
+                        let glyph = if item.is_done { '\u{2713}' } else { ' ' };
+                        format!("{glyph} {}", item.text)
                     })
-                    .unwrap_or_else(|| format!("missing | {item_id}"));
+                    .unwrap_or_else(|| format!("? {item_id} (missing)"));
                 target_items.push(ListItem::new(truncate_board_cell(&label, 72)));
             }
             if target_items.is_empty() {
@@ -3042,8 +3040,11 @@ impl App {
                             cells.push(item_cell);
                             cells.extend(right_cells);
                             if synthetic_categories_width > 0 {
-                                let categories =
-                                    item_assignment_labels(item, &category_display_names);
+                                let (categories, _) = item_display_category_labels(
+                                    item,
+                                    &self.categories,
+                                    &category_display_names,
+                                );
                                 let categories_text = if categories.is_empty() {
                                     "-".to_string()
                                 } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -3322,7 +3323,11 @@ impl App {
                                 self.show_note_glyphs && has_note_text(item.note.as_deref()),
                             );
                             let item_text = board_item_label(item);
-                            let categories = item_assignment_labels(item, &category_display_names);
+                            let (categories, _) = item_display_category_labels(
+                                item,
+                                &self.categories,
+                                &category_display_names,
+                            );
                             let categories_text = if categories.is_empty() {
                                 "-".to_string()
                             } else if effective_display_mode == BoardDisplayMode::MultiLine {
@@ -3553,7 +3558,10 @@ impl App {
                     ""
                 };
                 let item_text = board_item_label(item);
-                let category_count = item_assignment_labels(item, category_display_names).len();
+                let category_count =
+                    item_display_category_labels(item, &self.categories, category_display_names)
+                        .0
+                        .len();
                 let mut meta_parts = vec![format!(
                     "due:{}",
                     item.when_date
@@ -3767,7 +3775,8 @@ impl App {
         content_width: Option<usize>,
     ) -> Vec<Line<'_>> {
         let category_names = category_name_map(&self.categories);
-        let categories = item_assignment_labels(item, &category_names);
+        let (categories, hidden_category_count) =
+            item_display_category_labels(item, &self.categories, &category_names);
         let pending_suggestions = self.pending_suggestion_count_for_item(item.id);
         let mut lines = vec![
             Line::from("Summary"),
@@ -3800,6 +3809,14 @@ impl App {
             lines.push(Line::from("  (none)"));
         } else {
             lines.push(Line::from(format!("  {}", categories.join(", "))));
+        }
+        if hidden_category_count > 0 {
+            // Full closure (subsumed parents, reserved plumbing) stays one
+            // keystroke away in the Info pane (UX audit P3-2).
+            lines.push(Line::from(Span::styled(
+                format!("  (+{hidden_category_count} more via rules \u{2014} i:info)"),
+                Style::default().fg(MUTED_TEXT_COLOR),
+            )));
         }
         lines
     }
@@ -3934,11 +3951,17 @@ impl App {
             format!(
                 "  When: {}",
                 item.when_date
-                    .map(|value| value.strftime("%Y-%m-%d %H:%M:%S").to_string())
+                    .map(aglet_core::dates::format_human_datetime)
                     .unwrap_or_else(|| "-".to_string())
             ),
-            format!("  Created: {}", item.created_at),
-            format!("  Modified: {}", item.modified_at),
+            format!(
+                "  Created: {}",
+                aglet_core::dates::format_human_timestamp(item.created_at, Timestamp::now())
+            ),
+            format!(
+                "  Modified: {}",
+                aglet_core::dates::format_human_timestamp(item.modified_at, Timestamp::now())
+            ),
         ];
         if let Some(links) = self.item_links_by_item_id.get(&item.id) {
             lines.push(String::new());
@@ -5110,7 +5133,12 @@ impl App {
             // naturally hides until the next Enter/Tab resolves it.
             if let Some(ref rule) = panel.parsed_recurrence_rule {
                 let trimmed = panel.when_buffer.text().trim().replace(' ', "T");
-                if let Ok(dt) = trimmed.parse::<jiff::civil::DateTime>() {
+                let parsed = trimmed.parse::<jiff::civil::DateTime>().or_else(|_| {
+                    trimmed
+                        .parse::<jiff::civil::Date>()
+                        .map(|date| date.at(0, 0, 0, 0))
+                });
+                if let Ok(dt) = parsed {
                     let next = rule.next_date(dt);
                     let annotation =
                         format!("  \u{21BB} {} \u{2192} {}", rule.display(), next.date());

@@ -163,6 +163,28 @@ pub(super) fn item_assignment_labels(
     labels
 }
 
+/// Leaf-first display labels for an item's categories (direct assignments
+/// only — see `aglet_core::query::display_category_ids`), plus the count of
+/// hidden closure entries (subsumed parents / reserved plumbing).
+pub(super) fn item_display_category_labels(
+    item: &Item,
+    categories: &[Category],
+    category_names: &HashMap<CategoryId, String>,
+) -> (Vec<String>, usize) {
+    let ids = aglet_core::query::display_category_ids(item, categories);
+    let hidden = item.assignments.len().saturating_sub(ids.len());
+    let labels = ids
+        .iter()
+        .map(|category_id| {
+            category_names
+                .get(category_id)
+                .cloned()
+                .unwrap_or_else(|| category_id.to_string())
+        })
+        .collect();
+    (labels, hidden)
+}
+
 pub(super) const BOARD_MULTI_CATEGORY_LINE_CAP: usize = 8;
 
 // TODO(feature): single-line compact rendering not yet used; kept alongside
@@ -1277,11 +1299,7 @@ pub(super) fn category_breadcrumb(
 /// Renders a When datetime for user-facing echoes: date-only when the time
 /// component is midnight, otherwise date + HH:MM.
 pub(super) fn format_when_echo(dt: DateTime) -> String {
-    if dt.hour() == 0 && dt.minute() == 0 && dt.second() == 0 && dt.subsec_nanosecond() == 0 {
-        dt.strftime("%Y-%m-%d").to_string()
-    } else {
-        dt.strftime("%Y-%m-%d %H:%M").to_string()
-    }
+    aglet_core::dates::format_human_datetime(dt)
 }
 
 /// True when `input` already spells a canonical rendering of `dt`, so the
