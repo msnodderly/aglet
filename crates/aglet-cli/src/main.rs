@@ -3535,7 +3535,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 anchor: anchor.into_model(),
                 date_source: date_source.into_model(),
                 browse_offset: 0,
-            browse_interval_offset: 0,
+                browse_interval_offset: 0,
                 ..Default::default()
             };
             if !config.is_valid() {

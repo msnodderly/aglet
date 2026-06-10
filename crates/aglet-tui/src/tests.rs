@@ -18236,7 +18236,11 @@ fn datebook_keys_step_bucket_and_window_independently() {
 
     app.handle_normal_key(KeyCode::Char('}'), &aglet)
         .expect("} steps one bucket");
-    assert_eq!(offsets(&store), (0, 1), "}} should step one bucket interval");
+    assert_eq!(
+        offsets(&store),
+        (0, 1),
+        "}} should step one bucket interval"
+    );
     assert!(
         app.status.starts_with("Datebook: 2026-") || app.status.starts_with("Datebook: 20"),
         "bucket step should report the visible range: {}",

@@ -473,11 +473,8 @@ pub fn compute_datebook_window(
 ) -> (DateTime, DateTime) {
     let base = resolve_datebook_anchor(&config.anchor, reference_date);
     let shifted = apply_browse_offset(base, config.period, config.browse_offset);
-    let shifted = apply_browse_interval_offset(
-        shifted,
-        config.interval,
-        config.browse_interval_offset,
-    );
+    let shifted =
+        apply_browse_interval_offset(shifted, config.interval, config.browse_interval_offset);
     let end = advance_by_period(shifted, config.period);
     (shifted, end)
 }
@@ -538,7 +535,8 @@ fn apply_browse_interval_offset(
         DatebookInterval::Weekly => Span::new().weeks(i64::from(offset)),
         DatebookInterval::Monthly => Span::new().months(offset),
     };
-    base.checked_add(span).expect("browse interval offset overflow")
+    base.checked_add(span)
+        .expect("browse interval offset overflow")
 }
 
 fn apply_browse_offset(base: DateTime, period: DatebookPeriod, offset: i32) -> DateTime {
