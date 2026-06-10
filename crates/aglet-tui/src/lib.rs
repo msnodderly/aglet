@@ -44,6 +44,7 @@ mod error;
 mod fuzzy;
 mod input;
 mod input_panel;
+mod keymap;
 mod modes;
 mod projection;
 mod render;
@@ -82,6 +83,7 @@ use state::classification::{
     ClassificationReviewItem, ClassificationUiState, ReviewSuggestion, SuggestionDecision,
     SuggestionReviewFocus, SuggestionReviewItem, SuggestionReviewState,
 };
+use keymap::*;
 use ui_support::*;
 use undo::{UndoEntry, UndoState};
 

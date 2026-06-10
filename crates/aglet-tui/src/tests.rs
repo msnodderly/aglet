@@ -7504,7 +7504,7 @@ fn when_input_panel_shows_full_item_context_text() {
 }
 
 #[test]
-fn normal_mode_footer_hints_include_preview_shortcut() {
+fn normal_mode_footer_hints_are_curated_and_stable() {
     let mut app = App {
         mode: Mode::Normal,
         status: "Ready".to_string(),
@@ -7515,45 +7515,36 @@ fn normal_mode_footer_hints_include_preview_shortcut() {
     let mut terminal = Terminal::new(backend).expect("test terminal");
     terminal.draw(|frame| app.draw(frame)).expect("render app");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
-    assert!(
-        rendered.contains("p:preview"),
-        "normal footer hints should include preview shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("g s:settings"),
-        "normal footer hints should include global settings shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("F10:settings"),
-        "normal footer hints should include F10 settings shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("?:help"),
-        "normal footer hints should include help shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("z:cards"),
-        "normal footer hints should include card display shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("m:lanes"),
-        "normal footer hints should include lane layout shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("u:deps"),
-        "normal footer hints should include hide-dependent toggle shortcut: {rendered}"
-    );
-    assert!(
-            !rendered.contains("f:col fmt"),
-            "normal footer hints should hide numeric-only format shortcut without numeric focus: {rendered}"
+    // Curated stable hint row (≤10 entries from NORMAL_KEYMAP) + ?:help.
+    for hint in [
+        "n:new",
+        "e:edit",
+        "a:assign",
+        "d:done",
+        "x:delete",
+        "/:search",
+        "v:views",
+        "p:preview",
+        "C:review",
+        "q:quit",
+        "?:help",
+    ] {
+        assert!(
+            rendered.contains(hint),
+            "normal footer hints should include {hint}: {rendered}"
         );
-    assert!(
-            !rendered.contains("F:col summary"),
-            "normal footer hints should hide numeric-only summary shortcut without numeric focus: {rendered}"
+    }
+    // Secondary bindings are documented in the help panel / README, not the
+    // hint row (curation per UX audit P2-2).
+    for absent in ["m:lanes", "z:cards", "u:deps", "g s:settings", "Ctrl-R"] {
+        assert!(
+            !rendered.contains(absent),
+            "curated footer hints should not include {absent}: {rendered}"
         );
+    }
     assert!(
-        !rendered.contains("Ctrl-R"),
-        "normal footer hints should no longer advertise Ctrl-R: {rendered}"
+        !rendered.contains("f:col fmt") && !rendered.contains("F:col summary"),
+        "numeric-only shortcuts should hide without numeric focus: {rendered}"
     );
 
     let mut app = app;
@@ -7566,38 +7557,135 @@ fn normal_mode_footer_hints_include_preview_shortcut() {
         rendered.contains("Esc:clear search"),
         "footer should advertise clear-search when a section filter is active: {rendered}"
     );
-    assert!(
-        rendered.contains("p:preview"),
-        "filtered footer hints should include preview shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("?:help"),
-        "filtered footer hints should include help shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("z:cards"),
-        "filtered footer hints should include card display shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("m:lanes"),
-        "filtered footer hints should include lane layout shortcut: {rendered}"
-    );
-    assert!(
-        rendered.contains("u:deps"),
-        "filtered footer hints should include hide-dependent toggle shortcut: {rendered}"
-    );
-    assert!(
-            !rendered.contains("f:col fmt"),
-            "filtered footer hints should still hide numeric-only format shortcut without numeric focus: {rendered}"
+    for hint in ["n:new", "p:preview", "q:quit", "?:help"] {
+        assert!(
+            rendered.contains(hint),
+            "contextual hints must not evict stable hints ({hint}): {rendered}"
         );
-    assert!(
-            !rendered.contains("F:col summary"),
-            "filtered footer hints should still hide numeric-only summary shortcut without numeric focus: {rendered}"
-        );
-    assert!(
-        !rendered.contains("Ctrl-R"),
-        "filtered footer hints should no longer advertise Ctrl-R: {rendered}"
+    }
+}
+
+#[test]
+fn readme_keymap_cheatsheet_matches_keymap_table() {
+    use super::keymap::{README_KEYMAP_BEGIN, README_KEYMAP_END};
+    let readme_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md");
+    let readme = std::fs::read_to_string(&readme_path).expect("read README.md");
+    let generated = format!(
+        "{README_KEYMAP_BEGIN}\n{}{README_KEYMAP_END}",
+        super::keymap::readme_cheatsheet_markdown()
     );
+
+    let begin = readme
+        .find(README_KEYMAP_BEGIN)
+        .expect("README.md must contain the keymap begin marker");
+    let end = readme
+        .find(README_KEYMAP_END)
+        .expect("README.md must contain the keymap end marker")
+        + README_KEYMAP_END.len();
+    assert!(begin < end, "README keymap markers out of order");
+
+    if std::env::var("UPDATE_README").is_ok() {
+        let updated = format!("{}{}{}", &readme[..begin], generated, &readme[end..]);
+        std::fs::write(&readme_path, updated).expect("write README.md");
+        return;
+    }
+
+    assert_eq!(
+        &readme[begin..end],
+        generated,
+        "README keybinding cheat sheet drifted from the keymap table; \
+         regenerate with: UPDATE_README=1 cargo test -p aglet-tui readme_keymap"
+    );
+}
+
+#[test]
+fn keymap_rows_are_documented_or_footer_only() {
+    for binding in super::NORMAL_KEYMAP {
+        assert!(
+            !binding.desc.is_empty() || binding.hint.is_some(),
+            "keymap row with keys {:?} has neither documentation nor a footer hint",
+            binding.keys
+        );
+        if binding.desc.is_empty() {
+            assert!(
+                binding.context != super::KeyContext::Always,
+                "footer-only keymap row {:?} must be contextual (documented rows cover Always)",
+                binding
+                    .hint
+                    .map(|(k, _)| k)
+                    .unwrap_or_default()
+            );
+        }
+    }
+}
+
+#[test]
+fn keymap_stable_footer_hints_have_no_duplicate_keys() {
+    let mut seen = std::collections::HashSet::new();
+    for binding in super::NORMAL_KEYMAP {
+        if binding.context == super::KeyContext::Always {
+            if let Some((key, _)) = binding.hint {
+                assert!(
+                    seen.insert(key),
+                    "duplicate stable footer hint key: {key}"
+                );
+            }
+        }
+    }
+    assert!(
+        seen.len() <= 10,
+        "stable Normal-mode hint row must stay curated (≤10 entries), got {}",
+        seen.len()
+    );
+}
+
+#[test]
+fn normal_footer_hints_add_datebook_keys_only_in_datebook_views() {
+    let mut app = App::default();
+    assert!(
+        !app.normal_footer_hints().iter().any(|(k, _)| *k == "}"),
+        "datebook hints should be absent outside datebook views"
+    );
+
+    let mut view = View::new("Dates".to_string());
+    view.datebook_config = Some(aglet_core::model::DatebookConfig::default());
+    app.views = vec![view];
+    app.view_index = 0;
+    let hints = app.normal_footer_hints();
+    for key in ["}", "{", "0"] {
+        assert!(
+            hints.iter().any(|(k, _)| *k == key),
+            "datebook view should add the {key} hint: {hints:?}"
+        );
+    }
+}
+
+#[test]
+fn hint_summary_formats_key_desc_pairs() {
+    assert_eq!(
+        super::keymap::hint_summary(&[("Enter", "switch"), ("Esc", "cancel")]),
+        "Enter:switch  Esc:cancel"
+    );
+}
+
+#[test]
+fn view_picker_status_and_hint_row_agree_on_keys() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.handle_normal_key(KeyCode::Char('v'), &aglet)
+        .expect("open view picker");
+    assert_eq!(app.mode, Mode::ViewPicker);
+
+    for (key, desc) in super::VIEW_PICKER_HINTS {
+        assert!(
+            app.status.contains(&format!("{key}:{desc}")),
+            "view palette status should mention {key}:{desc}: {}",
+            app.status
+        );
+    }
 }
 
 #[test]
