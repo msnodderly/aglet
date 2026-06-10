@@ -473,6 +473,11 @@ pub fn compute_datebook_window(
 ) -> (DateTime, DateTime) {
     let base = resolve_datebook_anchor(&config.anchor, reference_date);
     let shifted = apply_browse_offset(base, config.period, config.browse_offset);
+    let shifted = apply_browse_interval_offset(
+        shifted,
+        config.interval,
+        config.browse_interval_offset,
+    );
     let end = advance_by_period(shifted, config.period);
     (shifted, end)
 }
@@ -516,6 +521,24 @@ fn advance_by_interval(dt: DateTime, interval: DatebookInterval) -> DateTime {
         DatebookInterval::Monthly => Span::new().months(1),
     };
     dt.checked_add(span).expect("interval advance overflow")
+}
+
+/// Shift the window start by whole bucket intervals (one section at a time).
+fn apply_browse_interval_offset(
+    base: DateTime,
+    interval: DatebookInterval,
+    offset: i32,
+) -> DateTime {
+    if offset == 0 {
+        return base;
+    }
+    let span = match interval {
+        DatebookInterval::Hourly => Span::new().hours(i64::from(offset)),
+        DatebookInterval::Daily => Span::new().days(i64::from(offset)),
+        DatebookInterval::Weekly => Span::new().weeks(i64::from(offset)),
+        DatebookInterval::Monthly => Span::new().months(offset),
+    };
+    base.checked_add(span).expect("browse interval offset overflow")
 }
 
 fn apply_browse_offset(base: DateTime, period: DatebookPeriod, offset: i32) -> DateTime {
@@ -2058,6 +2081,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         // 2026-04-06 is a Monday
@@ -2081,6 +2105,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfMonth,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         // April 2026
@@ -2099,6 +2124,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfQuarter,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         // Q2 2026
@@ -2121,6 +2147,7 @@ mod tests {
             anchor: DatebookAnchor::Today,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         let reference = day(2026, 4, 6);
@@ -2139,6 +2166,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         let reference = day(2026, 4, 6); // Monday
@@ -2162,6 +2190,37 @@ mod tests {
     }
 
     #[test]
+    fn datebook_interval_offset_steps_window_by_one_bucket() {
+        let mut config = DatebookConfig {
+            period: DatebookPeriod::Year,
+            interval: DatebookInterval::Monthly,
+            anchor: DatebookAnchor::StartOfYear,
+            date_source: DateSource::When,
+            browse_offset: 0,
+            browse_interval_offset: 0,
+            ..Default::default()
+        };
+        let reference = day(2026, 6, 9);
+
+        // +1 bucket in a month-bucketed year: window slides one month.
+        config.browse_interval_offset = 1;
+        let (start, end) = compute_datebook_window(&config, reference);
+        assert_eq!(start, datetime(2026, 2, 1, 0, 0));
+        assert_eq!(end, datetime(2027, 2, 1, 0, 0));
+
+        // Window offset still moves a full year, composing with the bucket.
+        config.browse_offset = 1;
+        let (start, _) = compute_datebook_window(&config, reference);
+        assert_eq!(start, datetime(2027, 2, 1, 0, 0));
+
+        // -1 bucket from the anchor.
+        config.browse_offset = 0;
+        config.browse_interval_offset = -1;
+        let (start, _) = compute_datebook_window(&config, reference);
+        assert_eq!(start, datetime(2025, 12, 1, 0, 0));
+    }
+
+    #[test]
     fn datebook_resolve_buckets_items() {
         let config = DatebookConfig {
             period: DatebookPeriod::Week,
@@ -2169,6 +2228,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         let mut view = View::new("Week".to_string());
@@ -2219,6 +2279,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfWeek,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         let mut view = View::new("Week".to_string());
@@ -2246,6 +2307,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfYear,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         let reference = day(2026, 6, 15);
@@ -2263,6 +2325,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfQuarter,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         // January -> Q1 starts Jan 1
@@ -2309,6 +2372,7 @@ mod tests {
             anchor: DatebookAnchor::StartOfQuarter,
             date_source: DateSource::When,
             browse_offset: 0,
+            browse_interval_offset: 0,
             ..Default::default()
         };
         // Q1 2024 (leap year)

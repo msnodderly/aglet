@@ -783,7 +783,18 @@ enum ViewCommand {
         /// Offset to apply: +N forward, -N backward, 0 reset to anchor.
         #[arg(long, default_value_t = 1)]
         offset: i32,
+        /// Step granularity: a whole window (default) or one bucket interval.
+        #[arg(long, value_enum, default_value_t = BrowseStepArg::Window)]
+        step: BrowseStepArg,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum BrowseStepArg {
+    /// Shift by the full window length (current behavior).
+    Window,
+    /// Shift by one bucket interval (one section).
+    Bucket,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -3524,6 +3535,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 anchor: anchor.into_model(),
                 date_source: date_source.into_model(),
                 browse_offset: 0,
+            browse_interval_offset: 0,
                 ..Default::default()
             };
             if !config.is_valid() {
@@ -3540,7 +3552,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             Ok(())
         }
 
-        ViewCommand::DatebookBrowse { name, offset } => {
+        ViewCommand::DatebookBrowse { name, offset, step } => {
             let mut view = view_by_name(store, &name)?;
             ensure_mutable_view(&view)?;
             if view.datebook_config.is_none() {
@@ -3549,12 +3561,24 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             let config = view.datebook_config.as_mut().unwrap();
             if offset == 0 {
                 config.browse_offset = 0;
+                config.browse_interval_offset = 0;
             } else {
-                config.browse_offset += offset;
+                match step {
+                    BrowseStepArg::Window => config.browse_offset += offset,
+                    BrowseStepArg::Bucket => config.browse_interval_offset += offset,
+                }
             }
             let new_offset = config.browse_offset;
+            let new_interval_offset = config.browse_interval_offset;
             store.update_view(&view).map_err(|e| e.to_string())?;
-            println!("browse offset for \"{}\" set to {}", view.name, new_offset);
+            if new_interval_offset == 0 {
+                println!("browse offset for \"{}\" set to {}", view.name, new_offset);
+            } else {
+                println!(
+                    "browse offset for \"{}\" set to {} (bucket offset {})",
+                    view.name, new_offset, new_interval_offset
+                );
+            }
             Ok(())
         }
     }

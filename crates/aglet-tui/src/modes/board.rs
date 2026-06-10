@@ -68,6 +68,14 @@ enum InlineCreateConfirmKeyAction {
     None,
 }
 
+/// Granularity of a datebook browse step: one bucket interval ({/}) or the
+/// full window ((/)) — UX audit P2-9.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DatebookBrowseStep {
+    Bucket,
+    Window,
+}
+
 fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyAction {
     match code {
         KeyCode::Char('y') => InlineCreateConfirmKeyAction::Confirm,
@@ -2570,13 +2578,19 @@ impl App {
                 self.move_selected_item_between_slots(-1, aglet)?;
             }
             KeyCode::Char('}') => {
-                self.datebook_browse(1, aglet)?;
+                self.datebook_browse(1, DatebookBrowseStep::Bucket, aglet)?;
             }
             KeyCode::Char('{') => {
-                self.datebook_browse(-1, aglet)?;
+                self.datebook_browse(-1, DatebookBrowseStep::Bucket, aglet)?;
+            }
+            KeyCode::Char(')') => {
+                self.datebook_browse(1, DatebookBrowseStep::Window, aglet)?;
+            }
+            KeyCode::Char('(') => {
+                self.datebook_browse(-1, DatebookBrowseStep::Window, aglet)?;
             }
             KeyCode::Char('0') => {
-                self.datebook_browse(0, aglet)?;
+                self.datebook_browse(0, DatebookBrowseStep::Bucket, aglet)?;
             }
             KeyCode::Char('=') => {
                 let item_ids: Vec<ItemId> = if self.has_selected_items() {
@@ -3204,7 +3218,15 @@ impl App {
 
     /// Browse a datebook view forward/backward by one period, or reset to today.
     /// `delta`: +1 = forward, -1 = backward, 0 = reset to today.
-    fn datebook_browse(&mut self, delta: i32, aglet: &Aglet<'_>) -> TuiResult<()> {
+    /// Step the datebook window. `DatebookBrowseStep::Bucket` ({/}) moves by
+    /// one bucket interval; `DatebookBrowseStep::Window` ((/)) moves by the
+    /// full window; delta 0 resets both offsets (UX audit P2-9).
+    fn datebook_browse(
+        &mut self,
+        delta: i32,
+        step: DatebookBrowseStep,
+        aglet: &Aglet<'_>,
+    ) -> TuiResult<()> {
         let Some(mut view) = self.current_view().cloned() else {
             return Ok(());
         };
@@ -3214,18 +3236,36 @@ impl App {
         };
         if delta == 0 {
             config.browse_offset = 0;
+            config.browse_interval_offset = 0;
         } else {
-            config.browse_offset += delta;
+            match step {
+                DatebookBrowseStep::Bucket => config.browse_interval_offset += delta,
+                DatebookBrowseStep::Window => config.browse_offset += delta,
+            }
         }
         let offset = config.browse_offset;
+        let interval_offset = config.browse_interval_offset;
         let period_label = config.period.label().to_lowercase();
+        let (window_start, window_end) =
+            aglet_core::query::compute_datebook_window(config, jiff::Zoned::now().date());
         let view_name = view.name.clone();
 
         aglet.store().update_view(&view)?;
         self.refresh(aglet.store())?;
         self.set_view_selection_by_name(&view_name);
 
-        self.status = if offset == 0 {
+        self.status = if interval_offset != 0 {
+            // Bucket offsets have no simple relative phrase; report the
+            // visible range instead.
+            let range_end = window_end
+                .checked_sub(jiff::Span::new().days(1))
+                .unwrap_or(window_end);
+            format!(
+                "Datebook: {} \u{2013} {}",
+                window_start.date(),
+                range_end.date()
+            )
+        } else if offset == 0 {
             format!("Datebook: this {period_label}")
         } else if offset == 1 {
             format!("Datebook: next {period_label}")

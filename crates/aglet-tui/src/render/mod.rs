@@ -4859,7 +4859,11 @@ impl App {
                         .current_view()
                         .is_some_and(|v| v.datebook_config.is_some())
                     {
-                        hints.extend_from_slice(&[("}", "fwd"), ("{", "back"), ("0", "today")]);
+                        hints.extend_from_slice(&[
+                            ("{/}", "bucket"),
+                            ("(/)", "window"),
+                            ("0", "today"),
+                        ]);
                     }
                     hints.extend_from_slice(&[("Ctrl-L", "reload"), ("q", "quit")]);
                 }
@@ -5010,7 +5014,10 @@ impl App {
             help_entry("v/V/F8 ,/. ga", "Views, previous/next view, All Items"),
             Line::from(""),
             Line::from(Span::styled("DATEBOOK VIEWS", header)),
-            help_entry("{/}/0", "Browse previous / next period; return to today"),
+            help_entry(
+                "{/} (/) 0",
+                "Step previous / next bucket; (/) step window; 0 today",
+            ),
             Line::from(""),
             Line::from(Span::styled("GLOBAL", header)),
             help_entry("C", "Review pending classification suggestions"),

@@ -2850,6 +2850,7 @@ mod tests {
             date_source: DateSource::When,
             empty_sections: EmptySections::Collapse,
             browse_offset: 0,
+            browse_interval_offset: 0,
         };
         let config_json = serde_json::to_string(&config).expect("serialize config");
         conn.execute(
@@ -2910,6 +2911,7 @@ mod tests {
             date_source: DateSource::When,
             empty_sections: EmptySections::Collapse,
             browse_offset: 0,
+            browse_interval_offset: 0,
         };
         let config_json = serde_json::to_string(&config).expect("serialize config");
         conn.execute(

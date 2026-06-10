@@ -191,7 +191,9 @@ appointments, renewals, and deadlines visible together.
 | Categories | `c` / `F9` | Open the category manager |
 | Columns | `+` / `-` | Add / remove a board column |
 | Columns | `H` / `L` | Move board column left / right |
-| Datebook | `{` / `}` / `0` | Browse previous period / next period / return to today |
+| Datebook | `{` / `}` | Step to previous / next bucket |
+| Datebook | `(` / `)` | Step backward / forward by a full window |
+| Datebook | `0` | Return to today |
 | Global | `?` | Toggle help |
 | Global | `Ctrl-L` | Reload data from disk |
 | Global | `Ctrl-Z` / `Ctrl-Shift-Z` | Undo / redo |
