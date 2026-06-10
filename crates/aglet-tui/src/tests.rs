@@ -3709,6 +3709,52 @@ fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
     );
 }
 
+#[test]
+fn item_assign_input_renders_inside_popup_not_footer() {
+    let alpha = Category::new("Alpha".to_string());
+    let mut app = App {
+        mode: Mode::ItemAssignInput,
+        categories: vec![alpha],
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    app.input.set("moto".to_string());
+
+    let backend = TestBackend::new(110, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let lines = terminal_buffer_lines(&terminal);
+
+    let popup_lines = &lines[..lines.len() - 4];
+    assert!(
+        popup_lines.iter().any(|line| line.contains("moto")),
+        "typed query should render inside the assign popup: {lines:?}"
+    );
+    assert!(
+        popup_lines
+            .iter()
+            .any(|line| line.contains("> Category")),
+        "popup should show a focused category input block: {lines:?}"
+    );
+    let footer_lines = &lines[lines.len() - 4..];
+    assert!(
+        !footer_lines.iter().any(|line| line.contains("moto")),
+        "footer should keep hints, not the typed query: {footer_lines:?}"
+    );
+
+    let popup_area = super::centered_rect(88, 72, Rect::new(0, 0, 110, 30));
+    let cursor = app
+        .item_assign_input_cursor_position(popup_area)
+        .expect("cursor should be positioned in the popup input");
+    assert!(
+        cursor.0 > popup_area.x
+            && cursor.0 < popup_area.x + popup_area.width
+            && cursor.1 > popup_area.y
+            && cursor.1 < popup_area.y + popup_area.height,
+        "cursor {cursor:?} should sit inside the popup {popup_area:?}"
+    );
+}
+
 fn confirm_delete_app(items: Vec<Item>) -> App {
     let mut app = App {
         mode: Mode::ConfirmDelete,
@@ -4055,21 +4101,23 @@ fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
 }
 
 #[test]
-fn input_cursor_position_is_set_for_text_input_modes() {
+fn item_assign_input_uses_popup_cursor_not_footer_cursor() {
     let footer = Rect::new(10, 5, 40, 3);
-    let input = "abc";
-    // InputPanel (add/edit) uses a popup cursor, not the footer cursor.
-    // Footer cursor applies to the remaining text-in-footer modes.
+    let popup = Rect::new(4, 2, 80, 24);
     let app = App {
         mode: Mode::ItemAssignInput,
-        input: text_buffer::TextBuffer::new(input.to_string()),
+        input: text_buffer::TextBuffer::new("abc".to_string()),
         ..App::default()
     };
-    let prefix = "Category> ";
-    let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
     assert_eq!(
         app.input_cursor_position(footer),
-        Some((expected_x, footer.y + 1)),
+        None,
+        "assign input no longer hosts its cursor in the footer"
+    );
+    // Input block sits below header/legend/target rows: text row at y+5, x+2.
+    assert_eq!(
+        app.item_assign_input_cursor_position(popup),
+        Some((popup.x + 2 + 3, popup.y + 5)),
     );
 }
 
@@ -4095,28 +4143,37 @@ fn input_cursor_position_is_hidden_for_non_input_modes() {
 }
 
 #[test]
-fn input_cursor_position_clamps_to_footer_inner_width() {
-    let footer = Rect::new(0, 0, 8, 3);
-    // cursor clamps to text length (26), which overflows the 8-wide footer → x=6
-    // "Category> " prefix = 10 chars; inner_x=1; 1+10+26=37 → clamped to 6
+fn item_assign_popup_cursor_clamps_to_input_width() {
+    // Popup width 12 → input inner width 8 (x+2 .. width-4); a 26-char
+    // input keeps the cursor inside the input row.
+    let popup = Rect::new(0, 0, 12, 24);
     let app = App {
         mode: Mode::ItemAssignInput,
         input: text_buffer::TextBuffer::new("abcdefghijklmnopqrstuvwxyz".to_string()),
         ..App::default()
     };
-    assert_eq!(app.input_cursor_position(footer), Some((6, 1)));
+    let (x, y) = app
+        .item_assign_input_cursor_position(popup)
+        .expect("popup cursor");
+    assert_eq!(y, popup.y + 5);
+    assert!(
+        x >= popup.x + 2 && x < popup.x + 2 + 8,
+        "cursor x {x} should clamp inside the input row"
+    );
 }
 
 #[test]
-fn input_cursor_position_tracks_edit_cursor_not_just_input_end() {
-    let footer = Rect::new(0, 0, 40, 3);
-    // "Category> " prefix = 10 chars; inner_x=1; cursor=2 → 1+10+2=13
+fn item_assign_popup_cursor_tracks_edit_cursor_not_just_input_end() {
+    let popup = Rect::new(0, 0, 80, 24);
     let app = App {
         mode: Mode::ItemAssignInput,
         input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
         ..App::default()
     };
-    assert_eq!(app.input_cursor_position(footer), Some((13, 1)));
+    assert_eq!(
+        app.item_assign_input_cursor_position(popup),
+        Some((popup.x + 2 + 2, popup.y + 5)),
+    );
 }
 
 #[test]

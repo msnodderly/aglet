@@ -581,7 +581,11 @@ impl App {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
-            self.render_item_assign_picker(frame, centered_rect(88, 72, frame.area()));
+            let popup_area = centered_rect(88, 72, frame.area());
+            self.render_item_assign_picker(frame, popup_area);
+            if let Some((x, y)) = self.item_assign_input_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
         }
         if self.mode == Mode::LinkWizard {
             let popup_area = centered_rect(72, 72, frame.area());
@@ -2045,7 +2049,7 @@ impl App {
     pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
         match self.mode {
             Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
-            Mode::ItemAssignInput => Some("Category> ".to_string()),
+            Mode::ItemAssignInput => None, // cursor rendered inside the assign popup
             Mode::Normal
             | Mode::GlobalSettings
             | Mode::HelpPanel
@@ -4379,7 +4383,9 @@ impl App {
             Mode::ItemAssignPicker => {
                 "Assign categories (type to filter/create; Enter resolves+closes; Space toggles; Esc closes)".to_string()
             }
-            Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            // Query text renders inside the assign popup; the footer keeps
+            // only the mode status/hints (UX audit P2-3).
+            Mode::ItemAssignInput => self.status.clone(),
             Mode::LinkWizard => {
                 if let Some(state) = self.link_wizard_state() {
                     let action = LinkWizardAction::from_index(state.action_index);
@@ -5849,6 +5855,48 @@ impl App {
         Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
+    /// Inner text row of the assign popup's category input block (bordered
+    /// row between the target line and the panes). Shared by the renderer
+    /// and the cursor positioning so they cannot drift.
+    fn item_assign_popup_input_inner(area: Rect) -> Option<Rect> {
+        if area.width < 6 || area.height < 11 {
+            return None;
+        }
+        Some(Rect {
+            x: area.x.saturating_add(2),
+            y: area.y.saturating_add(5),
+            width: area.width.saturating_sub(4),
+            height: 1,
+        })
+    }
+
+    /// Terminal cursor position for the popup-local category input
+    /// (`Mode::ItemAssignInput`). Cursor coordinates are set explicitly —
+    /// see the Category Manager cursor note in AGENTS.md.
+    pub(crate) fn item_assign_input_cursor_position(
+        &self,
+        popup_area: Rect,
+    ) -> Option<(u16, u16)> {
+        if self.mode != Mode::ItemAssignInput {
+            return None;
+        }
+        let input_inner = Self::item_assign_popup_input_inner(popup_area)?;
+        let (_, visible_cursor) = clip_text_for_row(
+            self.input.text(),
+            self.input.cursor(),
+            input_inner.width as usize,
+            true,
+        );
+        let max_x = input_inner
+            .x
+            .saturating_add(input_inner.width.saturating_sub(1));
+        let cursor_x = input_inner
+            .x
+            .saturating_add(visible_cursor.min(u16::MAX as usize) as u16)
+            .min(max_x);
+        Some((cursor_x, input_inner.y))
+    }
+
     pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
         frame.render_widget(
@@ -5858,7 +5906,7 @@ impl App {
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
         );
-        if area.width < 6 || area.height < 8 {
+        if area.width < 6 || area.height < 11 {
             return;
         }
 
@@ -5875,6 +5923,7 @@ impl App {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(3),
                 Constraint::Min(1),
             ])
             .split(inner);
@@ -5916,10 +5965,49 @@ impl App {
         ]);
         frame.render_widget(Paragraph::new(context_line), chunks[2]);
 
+        // Category input lives inside the popup (next to the results it
+        // filters), not in the global footer (UX audit P2-3).
+        let input_active = self.mode == Mode::ItemAssignInput;
+        let input_border_style = if input_active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        frame.render_widget(
+            Block::default()
+                .title(if input_active {
+                    "> Category"
+                } else {
+                    "Category"
+                })
+                .borders(Borders::ALL)
+                .border_style(input_border_style),
+            chunks[3],
+        );
+        if let Some(input_inner) = Self::item_assign_popup_input_inner(area) {
+            let input_line = if !input_active && self.input.trimmed().is_empty() {
+                Line::from(Span::styled(
+                    "(n or / to type — filters categories; Enter resolves or creates)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))
+            } else {
+                let (visible, _) = clip_text_for_row(
+                    self.input.text(),
+                    self.input.cursor(),
+                    input_inner.width as usize,
+                    input_active,
+                );
+                Line::from(Span::raw(visible))
+            };
+            frame.render_widget(Paragraph::new(input_line), input_inner);
+        }
+
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[3]);
+            .split(chunks[4]);
 
         // ── Left: category pane ────────────────────────────────────────────
         let cat_active = self.item_assign_pane == ItemAssignPane::Categories;
