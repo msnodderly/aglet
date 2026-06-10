@@ -1235,6 +1235,45 @@ pub(super) fn auto_assign_outside_criteria(
     })
 }
 
+/// Ancestor path for a category, used as a dimmed breadcrumb suffix when a
+/// filtered category list renders matches flat (hiding the tree structure),
+/// e.g. `Finance ▸ Expenses`. Deep paths keep the nearest ancestors:
+/// `… ▸ Expenses ▸ 2026`. Returns `None` for root categories.
+pub(super) fn category_breadcrumb(
+    category_id: CategoryId,
+    categories: &[Category],
+) -> Option<String> {
+    let parent_by_id: HashMap<CategoryId, Option<CategoryId>> =
+        categories.iter().map(|c| (c.id, c.parent)).collect();
+    let name_by_id: HashMap<CategoryId, &str> =
+        categories.iter().map(|c| (c.id, c.name.as_str())).collect();
+
+    let mut path: Vec<&str> = Vec::new();
+    let mut current = parent_by_id.get(&category_id).copied().flatten();
+    // Hop guard against malformed parent cycles.
+    for _ in 0..64 {
+        let Some(id) = current else { break };
+        match name_by_id.get(&id) {
+            Some(name) => path.push(name),
+            None => break,
+        }
+        current = parent_by_id.get(&id).copied().flatten();
+    }
+    if path.is_empty() {
+        return None;
+    }
+    path.reverse();
+    const MAX_COMPONENTS: usize = 3;
+    if path.len() > MAX_COMPONENTS {
+        Some(format!(
+            "\u{2026} \u{25B8} {}",
+            path[path.len() - MAX_COMPONENTS..].join(" \u{25B8} ")
+        ))
+    } else {
+        Some(path.join(" \u{25B8} "))
+    }
+}
+
 /// Renders a When datetime for user-facing echoes: date-only when the time
 /// component is midnight, otherwise date + HH:MM.
 pub(super) fn format_when_echo(dt: DateTime) -> String {

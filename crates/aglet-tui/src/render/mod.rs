@@ -581,7 +581,11 @@ impl App {
             self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
         }
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
-            self.render_item_assign_picker(frame, centered_rect(88, 72, frame.area()));
+            let popup_area = centered_rect(88, 72, frame.area());
+            self.render_item_assign_picker(frame, popup_area);
+            if let Some((x, y)) = self.item_assign_input_cursor_position(popup_area) {
+                frame.set_cursor_position((x, y));
+            }
         }
         if self.mode == Mode::LinkWizard {
             let popup_area = centered_rect(72, 72, frame.area());
@@ -2048,7 +2052,7 @@ impl App {
     pub(crate) fn input_prompt_prefix(&self) -> Option<String> {
         match self.mode {
             Mode::SearchBarFocused => None, // cursor rendered by search bar, not footer
-            Mode::ItemAssignInput => Some("Category> ".to_string()),
+            Mode::ItemAssignInput => None,  // cursor rendered inside the assign popup
             Mode::Normal
             | Mode::GlobalSettings
             | Mode::HelpPanel
@@ -4382,7 +4386,9 @@ impl App {
             Mode::ItemAssignPicker => {
                 "Assign categories (type to filter/create; Enter resolves+closes; Space toggles; Esc closes)".to_string()
             }
-            Mode::ItemAssignInput => format!("Category> {}", self.input.text()),
+            // Query text renders inside the assign popup; the footer keeps
+            // only the mode status/hints (UX audit P2-3).
+            Mode::ItemAssignInput => self.status.clone(),
             Mode::LinkWizard => {
                 if let Some(state) = self.link_wizard_state() {
                     let action = LinkWizardAction::from_index(state.action_index);
@@ -5535,7 +5541,14 @@ impl App {
                                 "[ ] "
                             };
 
-                            let indent = "  ".repeat(row.depth);
+                            // Filtered lists render flat with a breadcrumb
+                            // suffix instead of orphaned indentation (P2-5).
+                            let filtered_flat = !panel.category_filter.text().trim().is_empty();
+                            let indent = if filtered_flat {
+                                String::new()
+                            } else {
+                                "  ".repeat(row.depth)
+                            };
 
                             let base_style = if is_cursor {
                                 Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -5598,14 +5611,19 @@ impl App {
                                 }
                             }
 
-                            if type_suffix.is_empty() {
-                                Line::from(Span::styled(main_prefix, base_style))
-                            } else {
-                                Line::from(vec![
-                                    Span::styled(main_prefix, base_style),
-                                    Span::styled(type_suffix.to_string(), suffix_style),
-                                ])
+                            let mut spans = vec![Span::styled(main_prefix, base_style)];
+                            if !type_suffix.is_empty() {
+                                spans.push(Span::styled(type_suffix.to_string(), suffix_style));
                             }
+                            if filtered_flat {
+                                if let Some(crumb) = category_breadcrumb(row.id, &self.categories) {
+                                    spans.push(Span::styled(
+                                        format!("  \u{2014} {crumb}"),
+                                        suffix_style,
+                                    ));
+                                }
+                            }
+                            Line::from(spans)
                         })
                         .collect()
                 };
@@ -5778,6 +5796,45 @@ impl App {
         Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
+    /// Inner text row of the assign popup's category input block (bordered
+    /// row between the target line and the panes). Shared by the renderer
+    /// and the cursor positioning so they cannot drift.
+    fn item_assign_popup_input_inner(area: Rect) -> Option<Rect> {
+        if area.width < 6 || area.height < 11 {
+            return None;
+        }
+        Some(Rect {
+            x: area.x.saturating_add(2),
+            y: area.y.saturating_add(5),
+            width: area.width.saturating_sub(4),
+            height: 1,
+        })
+    }
+
+    /// Terminal cursor position for the popup-local category input
+    /// (`Mode::ItemAssignInput`). Cursor coordinates are set explicitly —
+    /// see the Category Manager cursor note in AGENTS.md.
+    pub(crate) fn item_assign_input_cursor_position(&self, popup_area: Rect) -> Option<(u16, u16)> {
+        if self.mode != Mode::ItemAssignInput {
+            return None;
+        }
+        let input_inner = Self::item_assign_popup_input_inner(popup_area)?;
+        let (_, visible_cursor) = clip_text_for_row(
+            self.input.text(),
+            self.input.cursor(),
+            input_inner.width as usize,
+            true,
+        );
+        let max_x = input_inner
+            .x
+            .saturating_add(input_inner.width.saturating_sub(1));
+        let cursor_x = input_inner
+            .x
+            .saturating_add(visible_cursor.min(u16::MAX as usize) as u16)
+            .min(max_x);
+        Some((cursor_x, input_inner.y))
+    }
+
     pub(crate) fn render_item_assign_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         frame.render_widget(Clear, area);
         frame.render_widget(
@@ -5787,7 +5844,7 @@ impl App {
                 .border_style(Style::default().fg(Color::Cyan)),
             area,
         );
-        if area.width < 6 || area.height < 8 {
+        if area.width < 6 || area.height < 11 {
             return;
         }
 
@@ -5804,6 +5861,7 @@ impl App {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(3),
                 Constraint::Min(1),
             ])
             .split(inner);
@@ -5845,10 +5903,49 @@ impl App {
         ]);
         frame.render_widget(Paragraph::new(context_line), chunks[2]);
 
+        // Category input lives inside the popup (next to the results it
+        // filters), not in the global footer (UX audit P2-3).
+        let input_active = self.mode == Mode::ItemAssignInput;
+        let input_border_style = if input_active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Cyan)
+        };
+        frame.render_widget(
+            Block::default()
+                .title(if input_active {
+                    "> Category"
+                } else {
+                    "Category"
+                })
+                .borders(Borders::ALL)
+                .border_style(input_border_style),
+            chunks[3],
+        );
+        if let Some(input_inner) = Self::item_assign_popup_input_inner(area) {
+            let input_line = if !input_active && self.input.trimmed().is_empty() {
+                Line::from(Span::styled(
+                    "(n or / to type — filters categories; Enter resolves or creates)",
+                    Style::default().fg(MUTED_TEXT_COLOR),
+                ))
+            } else {
+                let (visible, _) = clip_text_for_row(
+                    self.input.text(),
+                    self.input.cursor(),
+                    input_inner.width as usize,
+                    input_active,
+                );
+                Line::from(Span::raw(visible))
+            };
+            frame.render_widget(Paragraph::new(input_line), input_inner);
+        }
+
         let panes = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[3]);
+            .split(chunks[4]);
 
         // ── Left: category pane ────────────────────────────────────────────
         let cat_active = self.item_assign_pane == ItemAssignPane::Categories;
@@ -5917,12 +6014,18 @@ impl App {
                         } else {
                             String::new()
                         };
+                    // Filtered lists hide ancestors, so depth indentation is
+                    // relative to nothing: render matches flat with a dimmed
+                    // breadcrumb instead (UX audit P2-5).
+                    let filtered_flat = !self.input.trimmed().is_empty();
+                    let indent = if filtered_flat {
+                        String::new()
+                    } else {
+                        "  ".repeat(row.depth)
+                    };
                     let text = format!(
-                        "{preview_prefix}{checkbox} {}{}{}{}",
-                        "  ".repeat(row.depth),
-                        row.name,
-                        suffix,
-                        assignment_badge
+                        "{preview_prefix}{checkbox} {indent}{}{}{}",
+                        row.name, suffix, assignment_badge
                     );
                     let style = if to_add {
                         Style::default().fg(Color::Green)
@@ -5931,7 +6034,22 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    ListItem::new(Line::styled(text, style))
+                    let breadcrumb = if filtered_flat {
+                        category_breadcrumb(row.id, &self.categories)
+                    } else {
+                        None
+                    };
+                    let line = match breadcrumb {
+                        Some(crumb) => Line::from(vec![
+                            Span::styled(text, style),
+                            Span::styled(
+                                format!("  \u{2014} {crumb}"),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ),
+                        ]),
+                        None => Line::styled(text, style),
+                    };
+                    ListItem::new(line)
                 })
                 .collect()
         };
@@ -7324,7 +7442,14 @@ impl App {
                 .iter()
                 .filter_map(|idx| self.category_rows.get(*idx))
                 .map(|row| {
-                    let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
+                    // Filtered tree renders flat + breadcrumb (P2-5).
+                    let filtered_flat = !filter_text.trim().is_empty();
+                    let indent = if filtered_flat {
+                        String::new()
+                    } else {
+                        "  ".repeat(row.depth)
+                    };
+                    let mut label = format!("{indent}{}", row.name);
                     label = with_note_marker(label, self.show_note_glyphs && row.has_note);
                     let mut badges: Vec<String> = Vec::new();
                     if row.is_reserved {
@@ -7368,7 +7493,22 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    Row::new(vec![Cell::from(label)]).style(row_style)
+                    let breadcrumb = if filtered_flat {
+                        category_breadcrumb(row.id, &self.categories)
+                    } else {
+                        None
+                    };
+                    let cell = match breadcrumb {
+                        Some(crumb) => Cell::from(Line::from(vec![
+                            Span::raw(label),
+                            Span::styled(
+                                format!("  \u{2014} {crumb}"),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ),
+                        ])),
+                        None => Cell::from(label),
+                    };
+                    Row::new(vec![cell]).style(row_style)
                 })
                 .collect()
         };

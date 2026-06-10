@@ -3709,6 +3709,157 @@ fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
     );
 }
 
+#[test]
+fn item_assign_create_confirm_disarms_on_intervening_keypress() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let item = Item::new("demo".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::ItemAssignInput;
+    app.set_input("NewCat".to_string());
+
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("first enter arms");
+    assert!(
+        app.status.contains("Enter again to create"),
+        "arming status expected: {}",
+        app.status
+    );
+
+    // Editing the query disarms the pending confirm.
+    app.handle_item_assign_category_input_key(KeyCode::Char('s'), &aglet)
+        .expect("typing disarms");
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("enter after edit re-arms instead of creating");
+    assert!(
+        !app.categories.iter().any(|c| c.name == "NewCats"),
+        "edited query must re-arm, not create"
+    );
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("confirming enter creates");
+    assert!(
+        app.categories.iter().any(|c| c.name == "NewCats"),
+        "second enter on unchanged query should create"
+    );
+}
+
+#[test]
+fn category_breadcrumb_walks_ancestors_and_truncates_deep_paths() {
+    let root = Category::new("Finance".to_string());
+    let mut expenses = Category::new("Expenses".to_string());
+    expenses.parent = Some(root.id);
+    let mut moto = Category::new("Moto".to_string());
+    moto.parent = Some(expenses.id);
+    let mut year = Category::new("2026".to_string());
+    year.parent = Some(moto.id);
+    let mut month = Category::new("June".to_string());
+    month.parent = Some(year.id);
+    let cats = vec![
+        root.clone(),
+        expenses.clone(),
+        moto.clone(),
+        year.clone(),
+        month.clone(),
+    ];
+
+    assert_eq!(super::category_breadcrumb(root.id, &cats), None);
+    assert_eq!(
+        super::category_breadcrumb(moto.id, &cats),
+        Some("Finance \u{25B8} Expenses".to_string())
+    );
+    assert_eq!(
+        super::category_breadcrumb(month.id, &cats),
+        Some("\u{2026} \u{25B8} Expenses \u{25B8} Moto \u{25B8} 2026".to_string()),
+        "deep paths keep the nearest ancestors"
+    );
+}
+
+#[test]
+fn filtered_assign_picker_disambiguates_duplicate_leaf_names() {
+    // Two "2026" leaves under different parents — the audit's ambiguity case.
+    let finance = Category::new("Finance".to_string());
+    let moto = Category::new("Moto".to_string());
+    let mut fin_year = Category::new("2026".to_string());
+    fin_year.parent = Some(finance.id);
+    let mut moto_year = Category::new("2026".to_string());
+    moto_year.parent = Some(moto.id);
+
+    let mut app = App {
+        mode: Mode::ItemAssignInput,
+        categories: vec![finance, moto, fin_year, moto_year],
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    app.input.set("2026".to_string());
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let lines = terminal_buffer_lines(&terminal);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("2026") && line.contains("\u{2014} Finance")),
+        "filtered match should carry its Finance breadcrumb: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("2026") && line.contains("\u{2014} Moto")),
+        "filtered match should carry its Moto breadcrumb: {lines:?}"
+    );
+}
+
+#[test]
+fn item_assign_input_renders_inside_popup_not_footer() {
+    let alpha = Category::new("Alpha".to_string());
+    let mut app = App {
+        mode: Mode::ItemAssignInput,
+        categories: vec![alpha],
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    app.input.set("moto".to_string());
+
+    let backend = TestBackend::new(110, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let lines = terminal_buffer_lines(&terminal);
+
+    let popup_lines = &lines[..lines.len() - 4];
+    assert!(
+        popup_lines.iter().any(|line| line.contains("moto")),
+        "typed query should render inside the assign popup: {lines:?}"
+    );
+    assert!(
+        popup_lines.iter().any(|line| line.contains("> Category")),
+        "popup should show a focused category input block: {lines:?}"
+    );
+    let footer_lines = &lines[lines.len() - 4..];
+    assert!(
+        !footer_lines.iter().any(|line| line.contains("moto")),
+        "footer should keep hints, not the typed query: {footer_lines:?}"
+    );
+
+    let popup_area = super::centered_rect(88, 72, Rect::new(0, 0, 110, 30));
+    let cursor = app
+        .item_assign_input_cursor_position(popup_area)
+        .expect("cursor should be positioned in the popup input");
+    assert!(
+        cursor.0 > popup_area.x
+            && cursor.0 < popup_area.x + popup_area.width
+            && cursor.1 > popup_area.y
+            && cursor.1 < popup_area.y + popup_area.height,
+        "cursor {cursor:?} should sit inside the popup {popup_area:?}"
+    );
+}
+
 fn confirm_delete_app(items: Vec<Item>) -> App {
     let mut app = App {
         mode: Mode::ConfirmDelete,
@@ -4055,21 +4206,23 @@ fn first_non_reserved_category_index_defaults_to_zero_when_all_reserved() {
 }
 
 #[test]
-fn input_cursor_position_is_set_for_text_input_modes() {
+fn item_assign_input_uses_popup_cursor_not_footer_cursor() {
     let footer = Rect::new(10, 5, 40, 3);
-    let input = "abc";
-    // InputPanel (add/edit) uses a popup cursor, not the footer cursor.
-    // Footer cursor applies to the remaining text-in-footer modes.
+    let popup = Rect::new(4, 2, 80, 24);
     let app = App {
         mode: Mode::ItemAssignInput,
-        input: text_buffer::TextBuffer::new(input.to_string()),
+        input: text_buffer::TextBuffer::new("abc".to_string()),
         ..App::default()
     };
-    let prefix = "Category> ";
-    let expected_x = footer.x + 1 + prefix.len() as u16 + input.len() as u16;
     assert_eq!(
         app.input_cursor_position(footer),
-        Some((expected_x, footer.y + 1)),
+        None,
+        "assign input no longer hosts its cursor in the footer"
+    );
+    // Input block sits below header/legend/target rows: text row at y+5, x+2.
+    assert_eq!(
+        app.item_assign_input_cursor_position(popup),
+        Some((popup.x + 2 + 3, popup.y + 5)),
     );
 }
 
@@ -4095,28 +4248,37 @@ fn input_cursor_position_is_hidden_for_non_input_modes() {
 }
 
 #[test]
-fn input_cursor_position_clamps_to_footer_inner_width() {
-    let footer = Rect::new(0, 0, 8, 3);
-    // cursor clamps to text length (26), which overflows the 8-wide footer → x=6
-    // "Category> " prefix = 10 chars; inner_x=1; 1+10+26=37 → clamped to 6
+fn item_assign_popup_cursor_clamps_to_input_width() {
+    // Popup width 12 → input inner width 8 (x+2 .. width-4); a 26-char
+    // input keeps the cursor inside the input row.
+    let popup = Rect::new(0, 0, 12, 24);
     let app = App {
         mode: Mode::ItemAssignInput,
         input: text_buffer::TextBuffer::new("abcdefghijklmnopqrstuvwxyz".to_string()),
         ..App::default()
     };
-    assert_eq!(app.input_cursor_position(footer), Some((6, 1)));
+    let (x, y) = app
+        .item_assign_input_cursor_position(popup)
+        .expect("popup cursor");
+    assert_eq!(y, popup.y + 5);
+    assert!(
+        x >= popup.x + 2 && x < popup.x + 2 + 8,
+        "cursor x {x} should clamp inside the input row"
+    );
 }
 
 #[test]
-fn input_cursor_position_tracks_edit_cursor_not_just_input_end() {
-    let footer = Rect::new(0, 0, 40, 3);
-    // "Category> " prefix = 10 chars; inner_x=1; cursor=2 → 1+10+2=13
+fn item_assign_popup_cursor_tracks_edit_cursor_not_just_input_end() {
+    let popup = Rect::new(0, 0, 80, 24);
     let app = App {
         mode: Mode::ItemAssignInput,
         input: text_buffer::TextBuffer::with_cursor("abcd".to_string(), 2),
         ..App::default()
     };
-    assert_eq!(app.input_cursor_position(footer), Some((13, 1)));
+    assert_eq!(
+        app.item_assign_input_cursor_position(popup),
+        Some((popup.x + 2 + 2, popup.y + 5)),
+    );
 }
 
 #[test]
@@ -6104,7 +6266,19 @@ fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
     app.set_input("wor".to_string());
 
     app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
-        .expect("enter should create new category for ambiguous match");
+        .expect("first enter should arm the create confirm");
+    assert!(
+        app.status
+            .contains("Enter again to create category \"wor\""),
+        "first enter should arm, not create: {}",
+        app.status
+    );
+    assert!(
+        !app.categories.iter().any(|category| category.name == "wor"),
+        "no category should exist after the arming enter"
+    );
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter should create new category for ambiguous match");
 
     let created = app
         .categories
@@ -6220,7 +6394,18 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
     app.set_input("wor".to_string());
 
     app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
-        .expect("enter should create category from filter text and close");
+        .expect("first enter should arm the create confirm");
+    assert_eq!(
+        app.mode,
+        Mode::ItemAssignInput,
+        "armed confirm should keep the input focused"
+    );
+    assert!(
+        !app.categories.iter().any(|category| category.name == "wor"),
+        "no category should exist after the arming enter"
+    );
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter should create category and assign");
 
     let created = app
         .categories
@@ -6230,7 +6415,11 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
         .expect("new category should be created");
     let updated = store.get_item(item.id).expect("load updated item");
     assert!(updated.assignments.contains_key(&created.id));
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.mode,
+        Mode::ItemAssignPicker,
+        "confirmed create returns to the picker"
+    );
     assert!(
         app.status.contains("Created and assigned category wor"),
         "status should report create+assign outcome: {}",
@@ -6301,7 +6490,9 @@ fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() 
     app.search_mode = SearchMode::Fuzzy;
     app.set_input("NewTag".to_string());
     app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
-        .expect("enter should create a non-matching category and close");
+        .expect("first enter should arm the create confirm");
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter should create a non-matching category and close");
     assert!(
         app.categories
             .iter()
@@ -10124,7 +10315,9 @@ fn batch_assign_input_creates_category_and_assigns_selected_items() {
         .expect("open typed category entry");
     app.set_input("Sprint".to_string());
     app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
-        .expect("create and assign category");
+        .expect("first enter arms the create confirm");
+    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        .expect("second enter creates and assigns category");
 
     let sprint = app
         .categories
@@ -15393,22 +15586,26 @@ fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
     );
 
     app.handle_search_bar_key(KeyCode::Enter, &aglet)
-        .expect("enter should open top visible result");
-    assert_eq!(app.mode, Mode::InputPanel);
+        .expect("enter should reveal top visible result");
     assert_eq!(
-        app.input_panel
-            .as_ref()
-            .and_then(|panel| panel.item_id)
-            .and_then(|item_id| store.get_item(item_id).ok())
-            .map(|item| item.text),
+        app.mode,
+        Mode::Normal,
+        "enter reveals the match instead of opening the edit panel"
+    );
+    assert!(app.input_panel.is_none(), "no edit panel should open");
+    assert_eq!(
+        app.selected_item().map(|item| item.text.clone()),
         Some("Buy groceries".to_string()),
-        "top visible match should open even without an exact title match"
+        "top visible match should be selected even without an exact title match"
     );
     assert!(
         app.global_search_active(),
         "session remains active until Esc"
     );
 
+    app.handle_normal_key(KeyCode::Char('e'), &aglet)
+        .expect("e should edit the revealed item");
+    assert_eq!(app.mode, Mode::InputPanel, "e edits as everywhere else");
     app.handle_input_panel_key(KeyCode::Esc, &aglet)
         .expect("Esc should close edit panel");
     assert_eq!(app.mode, Mode::Normal);
@@ -21338,7 +21535,7 @@ fn fuzzy_search_preserves_note_category_and_uuid_substring_fallbacks() {
 }
 
 #[test]
-fn search_bar_enter_opens_top_visible_item() {
+fn search_bar_enter_reveals_top_visible_item() {
     let (store, db_path) = make_two_section_store("exact-match");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
@@ -21359,15 +21556,16 @@ fn search_bar_enter_opens_top_visible_item() {
     app.handle_search_bar_key(KeyCode::Enter, &aglet)
         .expect("enter");
 
-    assert_eq!(app.mode, Mode::InputPanel);
-    let panel = app.input_panel.as_ref().expect("edit panel should open");
     assert_eq!(
-        panel
-            .item_id
-            .and_then(|item_id| store.get_item(item_id).ok())
-            .map(|item| item.text),
+        app.mode,
+        Mode::Normal,
+        "enter reveals the match instead of opening the edit panel"
+    );
+    assert!(app.input_panel.is_none(), "no edit panel should open");
+    assert_eq!(
+        app.selected_item().map(|item| item.text.clone()),
         Some("Fix timeout bug".to_string()),
-        "top visible local result should open on Enter"
+        "top visible local result should be selected on Enter"
     );
 
     let _ = std::fs::remove_file(&db_path);

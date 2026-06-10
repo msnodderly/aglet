@@ -938,10 +938,13 @@ In `Mode::Normal`, `g/` now starts a temporary global search session:
 Practical implications:
 - While this session is active, `Esc` returns to the prior view context instead
   of only clearing the current slot filter.
-- `Enter` exact-match resolution searches across all visible slots in `All Items`.
-- Creating from global search (`g/` + query + `Enter`) must keep the session
-  active through add/edit save flows so `Esc` can still return to the original
-  view afterwards.
+- `Enter` reveals (selects) the top visible match across all slots in
+  `All Items` and returns to `Mode::Normal` with the session still active;
+  `e` edits, as everywhere else. Enter does not open the edit panel and does
+  not create items.
+- Editing from global search (`g/` + query + `Enter` + `e`) must keep the
+  session active through add/edit save flows so `Esc` can still return to the
+  original view afterwards.
 - Keep `ga` behavior unchanged; `g` prefix help/status should mention both
   commands (`ga` and `g/`).
 

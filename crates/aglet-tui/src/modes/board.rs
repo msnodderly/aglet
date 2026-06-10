@@ -68,6 +68,12 @@ enum InlineCreateConfirmKeyAction {
     None,
 }
 
+/// Side-effect-free resolution of Enter in the assign-category input.
+enum ItemAssignEnterResolution {
+    Existing(CategoryId, String),
+    WouldCreate(String),
+}
+
 fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyAction {
     match code {
         KeyCode::Char('y') => InlineCreateConfirmKeyAction::Confirm,
@@ -82,10 +88,10 @@ fn inline_create_confirm_key_action(code: KeyCode) -> InlineCreateConfirmKeyActi
 }
 
 impl App {
-    fn resolve_item_assign_category_enter(
-        &mut self,
-        aglet: &Aglet<'_>,
-    ) -> TuiResult<(CategoryId, String, bool)> {
+    /// Resolves the assign-input Enter without side effects: existing exact
+    /// match, unique visible match, or "would create" (the create itself is
+    /// gated behind an armed confirm — UX audit P2-6).
+    fn resolve_item_assign_category_enter(&self) -> TuiResult<ItemAssignEnterResolution> {
         let name = self.input.trimmed().to_string();
         let exact_match = self
             .categories
@@ -114,7 +120,10 @@ impl App {
             None
         };
         if let Some((category_id, category_name)) = exact_match.or(single_visible_match) {
-            return Ok((category_id, category_name, false));
+            return Ok(ItemAssignEnterResolution::Existing(
+                category_id,
+                category_name,
+            ));
         }
         if is_reserved_category_name(&name) {
             return Err(TuiError::App(format!(
@@ -122,11 +131,7 @@ impl App {
                 name
             )));
         }
-        let mut category = Category::new(name.clone());
-        category.enable_implicit_string = true;
-        let category_id = category.id;
-        aglet.store().create_category(&category)?;
-        Ok((category_id, category.name, true))
+        Ok(ItemAssignEnterResolution::WouldCreate(name))
     }
 
     fn apply_item_assign_category_by_name(
@@ -150,16 +155,38 @@ impl App {
             return Ok(false);
         }
 
-        let (category_id, category_name, created_new_category) =
-            match self.resolve_item_assign_category_enter(aglet) {
-                Ok(result) => result,
-                Err(err) => {
-                    self.mode = return_mode;
-                    self.clear_input();
-                    self.status = err.to_string();
+        let resolution = match self.resolve_item_assign_category_enter() {
+            Ok(result) => result,
+            Err(err) => {
+                self.mode = return_mode;
+                self.clear_input();
+                self.status = err.to_string();
+                return Ok(false);
+            }
+        };
+        let (category_id, category_name, created_new_category) = match resolution {
+            ItemAssignEnterResolution::Existing(category_id, category_name) => {
+                self.item_assign_create_confirm = None;
+                (category_id, category_name, false)
+            }
+            ItemAssignEnterResolution::WouldCreate(name) => {
+                // First Enter arms a one-shot confirm; only the second Enter
+                // (with the query unchanged) actually creates the category.
+                if self.item_assign_create_confirm.as_deref() != Some(name.as_str()) {
+                    self.item_assign_create_confirm = Some(name.clone());
+                    self.mode = Mode::ItemAssignInput;
+                    self.status =
+                        format!("No match \u{2014} Enter again to create category \"{name}\"");
                     return Ok(false);
                 }
-            };
+                self.item_assign_create_confirm = None;
+                let mut category = Category::new(name.clone());
+                category.enable_implicit_string = true;
+                let new_id = category.id;
+                aglet.store().create_category(&category)?;
+                (new_id, name, true)
+            }
+        };
 
         let mut assigned = 0usize;
         let mut already_had = 0usize;
@@ -5708,6 +5735,10 @@ impl App {
         code: KeyCode,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        // Any key other than Enter disarms a pending create confirm.
+        if code != KeyCode::Enter {
+            self.item_assign_create_confirm = None;
+        }
         // Route to view/section pane handler when that pane is active.
         if self.item_assign_pane == ItemAssignPane::ViewSection {
             return self.handle_item_assign_view_key(code, aglet);
@@ -5932,7 +5963,11 @@ impl App {
                         Mode::ItemAssignPicker,
                         "Category name entry canceled (empty)",
                     )?;
-                    if self.mode == Mode::ItemAssignPicker {
+                    // An armed create confirm keeps the session open for the
+                    // confirming second Enter.
+                    if self.mode == Mode::ItemAssignPicker
+                        && self.item_assign_create_confirm.is_none()
+                    {
                         self.close_item_assign_session(self.status.clone());
                     }
                     return Ok(false);
@@ -6184,6 +6219,10 @@ impl App {
         code: KeyCode,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        // Any key other than Enter disarms a pending create confirm.
+        if code != KeyCode::Enter {
+            self.item_assign_create_confirm = None;
+        }
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::ItemAssignPicker;
@@ -6285,9 +6324,14 @@ impl App {
                 if query.is_empty() {
                     self.mode = Mode::Normal;
                 } else if let Some((slot_idx, item_idx)) = self.find_first_visible_search_result() {
+                    // Reveal the match instead of opening the edit panel:
+                    // Enter navigates, `e` edits — same as everywhere else
+                    // (UX audit P2-6). The filter and any global-search
+                    // session stay active so Esc still returns to origin.
                     self.slot_index = slot_idx;
                     self.item_index = item_idx;
-                    self.open_input_panel_edit_item();
+                    self.mode = Mode::Normal;
+                    self.status = "Selected first match \u{2014} e:edit  Esc:back".to_string();
                 } else {
                     self.status = format!("No items match '{}'", query);
                 }
