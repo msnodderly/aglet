@@ -5612,7 +5612,15 @@ impl App {
                                 "[ ] "
                             };
 
-                            let indent = "  ".repeat(row.depth);
+                            // Filtered lists render flat with a breadcrumb
+                            // suffix instead of orphaned indentation (P2-5).
+                            let filtered_flat =
+                                !panel.category_filter.text().trim().is_empty();
+                            let indent = if filtered_flat {
+                                String::new()
+                            } else {
+                                "  ".repeat(row.depth)
+                            };
 
                             let base_style = if is_cursor {
                                 Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -5675,14 +5683,21 @@ impl App {
                                 }
                             }
 
-                            if type_suffix.is_empty() {
-                                Line::from(Span::styled(main_prefix, base_style))
-                            } else {
-                                Line::from(vec![
-                                    Span::styled(main_prefix, base_style),
-                                    Span::styled(type_suffix.to_string(), suffix_style),
-                                ])
+                            let mut spans = vec![Span::styled(main_prefix, base_style)];
+                            if !type_suffix.is_empty() {
+                                spans.push(Span::styled(type_suffix.to_string(), suffix_style));
                             }
+                            if filtered_flat {
+                                if let Some(crumb) =
+                                    category_breadcrumb(row.id, &self.categories)
+                                {
+                                    spans.push(Span::styled(
+                                        format!("  \u{2014} {crumb}"),
+                                        suffix_style,
+                                    ));
+                                }
+                            }
+                            Line::from(spans)
                         })
                         .collect()
                 };
@@ -6076,12 +6091,18 @@ impl App {
                         } else {
                             String::new()
                         };
+                    // Filtered lists hide ancestors, so depth indentation is
+                    // relative to nothing: render matches flat with a dimmed
+                    // breadcrumb instead (UX audit P2-5).
+                    let filtered_flat = !self.input.trimmed().is_empty();
+                    let indent = if filtered_flat {
+                        String::new()
+                    } else {
+                        "  ".repeat(row.depth)
+                    };
                     let text = format!(
-                        "{preview_prefix}{checkbox} {}{}{}{}",
-                        "  ".repeat(row.depth),
-                        row.name,
-                        suffix,
-                        assignment_badge
+                        "{preview_prefix}{checkbox} {indent}{}{}{}",
+                        row.name, suffix, assignment_badge
                     );
                     let style = if to_add {
                         Style::default().fg(Color::Green)
@@ -6090,7 +6111,22 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    ListItem::new(Line::styled(text, style))
+                    let breadcrumb = if filtered_flat {
+                        category_breadcrumb(row.id, &self.categories)
+                    } else {
+                        None
+                    };
+                    let line = match breadcrumb {
+                        Some(crumb) => Line::from(vec![
+                            Span::styled(text, style),
+                            Span::styled(
+                                format!("  \u{2014} {crumb}"),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ),
+                        ]),
+                        None => Line::styled(text, style),
+                    };
+                    ListItem::new(line)
                 })
                 .collect()
         };
@@ -7483,7 +7519,14 @@ impl App {
                 .iter()
                 .filter_map(|idx| self.category_rows.get(*idx))
                 .map(|row| {
-                    let mut label = format!("{}{}", "  ".repeat(row.depth), row.name);
+                    // Filtered tree renders flat + breadcrumb (P2-5).
+                    let filtered_flat = !filter_text.trim().is_empty();
+                    let indent = if filtered_flat {
+                        String::new()
+                    } else {
+                        "  ".repeat(row.depth)
+                    };
+                    let mut label = format!("{indent}{}", row.name);
                     label = with_note_marker(label, self.show_note_glyphs && row.has_note);
                     let mut badges: Vec<String> = Vec::new();
                     if row.is_reserved {
@@ -7527,7 +7570,22 @@ impl App {
                     } else {
                         Style::default()
                     };
-                    Row::new(vec![Cell::from(label)]).style(row_style)
+                    let breadcrumb = if filtered_flat {
+                        category_breadcrumb(row.id, &self.categories)
+                    } else {
+                        None
+                    };
+                    let cell = match breadcrumb {
+                        Some(crumb) => Cell::from(Line::from(vec![
+                            Span::raw(label),
+                            Span::styled(
+                                format!("  \u{2014} {crumb}"),
+                                Style::default().fg(MUTED_TEXT_COLOR),
+                            ),
+                        ])),
+                        None => Cell::from(label),
+                    };
+                    Row::new(vec![cell]).style(row_style)
                 })
                 .collect()
         };

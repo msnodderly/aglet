@@ -3710,6 +3710,74 @@ fn view_edit_section_details_warn_when_auto_assign_outside_criteria() {
 }
 
 #[test]
+fn category_breadcrumb_walks_ancestors_and_truncates_deep_paths() {
+    let root = Category::new("Finance".to_string());
+    let mut expenses = Category::new("Expenses".to_string());
+    expenses.parent = Some(root.id);
+    let mut moto = Category::new("Moto".to_string());
+    moto.parent = Some(expenses.id);
+    let mut year = Category::new("2026".to_string());
+    year.parent = Some(moto.id);
+    let mut month = Category::new("June".to_string());
+    month.parent = Some(year.id);
+    let cats = vec![
+        root.clone(),
+        expenses.clone(),
+        moto.clone(),
+        year.clone(),
+        month.clone(),
+    ];
+
+    assert_eq!(super::category_breadcrumb(root.id, &cats), None);
+    assert_eq!(
+        super::category_breadcrumb(moto.id, &cats),
+        Some("Finance \u{25B8} Expenses".to_string())
+    );
+    assert_eq!(
+        super::category_breadcrumb(month.id, &cats),
+        Some("\u{2026} \u{25B8} Expenses \u{25B8} Moto \u{25B8} 2026".to_string()),
+        "deep paths keep the nearest ancestors"
+    );
+}
+
+#[test]
+fn filtered_assign_picker_disambiguates_duplicate_leaf_names() {
+    // Two "2026" leaves under different parents — the audit's ambiguity case.
+    let finance = Category::new("Finance".to_string());
+    let moto = Category::new("Moto".to_string());
+    let mut fin_year = Category::new("2026".to_string());
+    fin_year.parent = Some(finance.id);
+    let mut moto_year = Category::new("2026".to_string());
+    moto_year.parent = Some(moto.id);
+
+    let mut app = App {
+        mode: Mode::ItemAssignInput,
+        categories: vec![finance, moto, fin_year, moto_year],
+        ..App::default()
+    };
+    app.category_rows = build_category_rows(&app.categories);
+    app.input.set("2026".to_string());
+
+    let backend = TestBackend::new(120, 32);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let lines = terminal_buffer_lines(&terminal);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("2026") && line.contains("\u{2014} Finance")),
+        "filtered match should carry its Finance breadcrumb: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("2026") && line.contains("\u{2014} Moto")),
+        "filtered match should carry its Moto breadcrumb: {lines:?}"
+    );
+}
+
+#[test]
 fn item_assign_input_renders_inside_popup_not_footer() {
     let alpha = Category::new("Alpha".to_string());
     let mut app = App {
