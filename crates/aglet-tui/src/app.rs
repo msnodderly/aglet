@@ -1127,27 +1127,97 @@ impl App {
         &self,
         result: &aglet_core::engine::ProcessItemResult,
     ) -> Option<String> {
+        self.assignment_event_status_summary_for_item(result, None)
+    }
+
+    /// Status summary for assignment events. Implicit/derived additions lead
+    /// with an `Auto-assigned:` toast so they no longer land silently (UX
+    /// audit P1-3); `item` enables the `(matched "x" in note)` location note
+    /// when available.
+    pub(crate) fn assignment_event_status_summary_for_item(
+        &self,
+        result: &aglet_core::engine::ProcessItemResult,
+        item: Option<&Item>,
+    ) -> Option<String> {
+        use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
+
         if result.assignment_events.is_empty() {
             return None;
         }
 
-        let mut unique = Vec::new();
-        for event in &result.assignment_events {
-            let summary = event.concise_summary();
-            if !unique.contains(&summary) {
-                unique.push(summary);
+        let is_auto_added = |event: &AssignmentEvent| {
+            event.kind == AssignmentEventKind::Assigned && event.summary != "Assigned manually"
+        };
+        let auto_added: Vec<&AssignmentEvent> = result
+            .assignment_events
+            .iter()
+            .filter(|event| is_auto_added(event))
+            .collect();
+
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(first) = auto_added.first() {
+            let mut toast = format!(
+                "Auto-assigned: {} ({})",
+                first.category_name,
+                Self::normalize_auto_assign_reason(&first.summary, item)
+            );
+            if let Some(second) = auto_added.get(1) {
+                toast.push_str(&format!(", {}", second.category_name));
             }
-        }
-        if unique.is_empty() {
-            return None;
+            if auto_added.len() > 2 {
+                toast.push_str(&format!(" (+{} more)", auto_added.len() - 2));
+            }
+            parts.push(toast);
         }
 
-        let mut message = unique.into_iter().take(3).collect::<Vec<_>>().join("; ");
-        let extra = result.assignment_events.len().saturating_sub(3);
-        if extra > 0 {
-            message.push_str(&format!("; +{extra} more"));
+        let mut other = Vec::new();
+        for event in result
+            .assignment_events
+            .iter()
+            .filter(|event| !is_auto_added(event))
+        {
+            let summary = event.concise_summary();
+            if !other.contains(&summary) {
+                other.push(summary);
+            }
         }
-        Some(message)
+        let extra = other.len().saturating_sub(2);
+        parts.extend(other.into_iter().take(2));
+        if extra > 0 {
+            parts.push(format!("+{extra} more"));
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("; "))
+        }
+    }
+
+    /// Normalizes the implicit-match explanation summaries (`Matched category
+    /// name "x"` / `Matched alias "x"`) to one UX string, appending "in note"
+    /// when the term only occurs in the note body.
+    fn normalize_auto_assign_reason(summary: &str, item: Option<&Item>) -> String {
+        let term = summary
+            .strip_prefix("Matched category name \"")
+            .or_else(|| summary.strip_prefix("Matched alias \""))
+            .and_then(|rest| rest.strip_suffix('"'));
+        let Some(term) = term else {
+            return summary.to_string();
+        };
+        let location = item
+            .and_then(|item| {
+                let needle = term.to_lowercase();
+                let in_text = item.text.to_lowercase().contains(&needle);
+                let in_note = item
+                    .note
+                    .as_deref()
+                    .map(|note| note.to_lowercase().contains(&needle))
+                    .unwrap_or(false);
+                (!in_text && in_note).then_some(" in note")
+            })
+            .unwrap_or("");
+        format!("matched \"{term}\"{location}")
     }
 
     /// Filters provider missing-API-key warnings that were already reported
@@ -1206,7 +1276,8 @@ impl App {
             ));
         }
 
-        if let Some(message) = self.assignment_event_status_summary(result) {
+        let saved_item = self.all_items.iter().find(|item| item.id == item_id);
+        if let Some(message) = self.assignment_event_status_summary_for_item(result, saved_item) {
             return Some((message, false));
         }
 
@@ -1318,12 +1389,47 @@ impl App {
         }
     }
 
-    pub(crate) fn selected_item_assignment_badge(
-        &self,
-        category_id: CategoryId,
-    ) -> Option<&'static str> {
+    /// Short "(via …)" source label for a derived (non-manual) assignment on
+    /// the selected item, e.g. `via Sheffield Financial` for subsumption or
+    /// `via "maybe"` for an implicit text match (UX audit P2-4).
+    pub(crate) fn selected_item_assignment_via(&self, category_id: CategoryId) -> Option<String> {
         let assignment = self.selected_item_assignment(category_id)?;
-        Self::assignment_badge_from_assignment(assignment)
+        match assignment.explanation.as_ref()? {
+            AssignmentExplanation::Subsumption {
+                via_child_category_name,
+                ..
+            } => Some(format!("via {via_child_category_name}")),
+            AssignmentExplanation::ImplicitMatch { matched_term, .. } => {
+                Some(format!("via \"{matched_term}\""))
+            }
+            AssignmentExplanation::Action {
+                trigger_category_name,
+                ..
+            } => Some(format!("via {trigger_category_name}")),
+            AssignmentExplanation::ProfileCondition {
+                owner_category_name,
+                ..
+            }
+            | AssignmentExplanation::DateCondition {
+                owner_category_name,
+                ..
+            }
+            | AssignmentExplanation::ConditionGroup {
+                owner_category_name,
+                ..
+            } => Some(format!("via {owner_category_name} rule")),
+            AssignmentExplanation::AutoClassified { provider_id, .. }
+                if provider_id == PROVIDER_ID_IMPLICIT_STRING =>
+            {
+                // Normalized with ImplicitMatch to one UX string (AGENTS.md).
+                Some("via text match".to_string())
+            }
+            AssignmentExplanation::AutoClassified { provider_id, .. } => {
+                Some(format!("via {provider_id}"))
+            }
+            AssignmentExplanation::SuggestionAccepted { .. } => Some("via suggestion".to_string()),
+            AssignmentExplanation::Manual { .. } => None,
+        }
     }
 
     pub(crate) fn selected_item_has_actionable_assignment(&self) -> bool {

@@ -4632,14 +4632,14 @@ fn input_panel_edit_tab_switches_to_note_and_saves() {
         app.handle_input_panel_key(KeyCode::Char(c), &aglet)
             .expect("type note");
     }
-    // Tab -> Actions, then S to save
+    // Tab -> Categories, then S to save
     app.handle_input_panel_key(KeyCode::Tab, &aglet)
-        .expect("focus actions");
+        .expect("focus categories");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
-        input_panel::InputPanelFocus::Actions
+        input_panel::InputPanelFocus::Categories
     );
-    // Capital S saves from Actions focus
+    // Capital S saves from Categories focus
     app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
         .expect("save item edit");
     assert_eq!(app.mode, Mode::Normal);
@@ -5208,6 +5208,101 @@ fn manual_classify_selected_items_reports_semantic_mode_off() {
 
     assert_eq!(app.status, "Background semantic classification is off");
     assert!(app.classification.in_flight_classifications.is_empty());
+}
+
+#[test]
+fn assignment_summary_leads_with_auto_assigned_toast() {
+    use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
+    let app = App::default();
+    let event = |name: &str, summary: &str| AssignmentEvent {
+        kind: AssignmentEventKind::Assigned,
+        category_id: CategoryId::new_v4(),
+        category_name: name.to_string(),
+        summary: summary.to_string(),
+    };
+    let result = ProcessItemResult {
+        assignment_events: vec![
+            event("Someday/Maybe", "Matched category name \"maybe\""),
+            event("Home", "Matched alias \"house\""),
+            event("Bills", "Matched category name \"bill\""),
+        ],
+        ..ProcessItemResult::default()
+    };
+    let mut item = Item::new("pay the bill".to_string());
+    item.note = Some("maybe only works during biz hours?".to_string());
+
+    let message = app
+        .assignment_event_status_summary_for_item(&result, Some(&item))
+        .expect("summary");
+    assert_eq!(
+        message, "Auto-assigned: Someday/Maybe (matched \"maybe\" in note), Home (+1 more)",
+        "toast should name auto-assignments, locate the first match, and cap the list"
+    );
+}
+
+#[test]
+fn assignment_summary_keeps_manual_events_out_of_the_toast() {
+    use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
+    let app = App::default();
+    let result = ProcessItemResult {
+        assignment_events: vec![AssignmentEvent {
+            kind: AssignmentEventKind::Assigned,
+            category_id: CategoryId::new_v4(),
+            category_name: "Work".to_string(),
+            summary: "Assigned manually".to_string(),
+        }],
+        ..ProcessItemResult::default()
+    };
+    let message = app
+        .assignment_event_status_summary_for_item(&result, None)
+        .expect("summary");
+    assert_eq!(message, "Added Work");
+    assert!(
+        !message.contains("Auto-assigned"),
+        "manual additions are not auto-assignments"
+    );
+}
+
+#[test]
+fn assign_picker_pending_add_names_displaced_exclusive_sibling() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut priority = Category::new("Priority".to_string());
+    priority.is_exclusive = true;
+    store.create_category(&priority).expect("priority");
+    let mut low = Category::new("Low".to_string());
+    low.parent = Some(priority.id);
+    store.create_category(&low).expect("low");
+    let mut high = Category::new("High".to_string());
+    high.parent = Some(priority.id);
+    store.create_category(&high).expect("high");
+
+    let item = Item::new("escalate".to_string());
+    store.create_item(&item).expect("item");
+    aglet
+        .assign_item_manual(item.id, low.id, Some("manual:test".to_string()))
+        .expect("assign low");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.set_item_assign_category_selection_by_id(high.id);
+    app.compute_assignment_preview(&aglet);
+
+    let backend = TestBackend::new(120, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("High") && rendered.contains("(replaces: Low)"),
+        "pending add under an exclusive parent should name the displaced sibling: {rendered}"
+    );
 }
 
 #[test]
@@ -10433,8 +10528,8 @@ fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[~] Work"),
-        "mixed batch checkbox should render tri-state marker: {rendered}"
+        rendered.contains("[~\u{2192}x] Work") && rendered.contains("will add"),
+        "mixed batch row should merge tri-state and pending delta in one marker: {rendered}"
     );
 }
 
@@ -10494,8 +10589,10 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         "assign picker header should describe close semantics: {rendered}"
     );
     assert!(
-        rendered.contains("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned"),
-        "assign picker should explain checkbox and preview markers: {rendered}"
+        rendered.contains("[ \u{2192}x] will add")
+            && rendered.contains("[x\u{2192} ] will remove")
+            && rendered.contains("derived"),
+        "assign picker legend should explain the merged markers: {rendered}"
     );
     assert!(
         rendered.contains("Target: Plain  Batch: 2 items"),
@@ -10601,11 +10698,11 @@ fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[ ] Work"),
-        "work row should render: {rendered}"
+        rendered.contains("[ \u{2192}x] Work"),
+        "work row should render with the cursor-row preview marker: {rendered}"
     );
     assert!(
-        !rendered.contains("[ ] Done"),
+        !rendered.contains("] Done"),
         "reserved Done should not render in assign picker: {rendered}"
     );
     assert!(
@@ -10744,7 +10841,7 @@ fn item_assign_picker_shows_and_explains_rule_locked_auto_match_assignment() {
     terminal.draw(|frame| app.draw(frame)).expect("render app");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("[x] TUI [auto-match]"),
+        rendered.contains("[x] TUI") && rendered.contains("(via text match)"),
         "assign picker should show inline provenance for rule-derived rows: {rendered}"
     );
 
@@ -22673,6 +22770,117 @@ fn edit_panel_shows_numeric_buffers_for_assigned_numeric_categories() {
 }
 
 #[test]
+fn edit_panel_inline_category_toggle_applies_diff_on_save() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let work = Category::new("Work".to_string());
+    let home = Category::new("Home".to_string());
+    store.create_category(&work).expect("work");
+    store.create_category(&home).expect("home");
+    let item = Item::new("Refile me".to_string());
+    store.create_item(&item).expect("item");
+    aglet
+        .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+        .expect("assign work");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_key(KeyCode::Char('e'), &aglet)
+        .expect("open edit panel");
+
+    // Inline checklist starts checked from the item's assignments.
+    let panel = app.input_panel.as_ref().expect("panel");
+    assert!(panel.categories.contains(&work.id));
+    assert!(!panel.categories.contains(&home.id));
+
+    // Tab to Categories, toggle Home on and Work off, save.
+    for _ in 0..3 {
+        app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    }
+    let home_row = app
+        .input_panel_visible_category_row_indices()
+        .iter()
+        .position(|idx| app.category_rows[*idx].id == home.id)
+        .expect("home row visible");
+    if let Some(panel) = app.input_panel.as_mut() {
+        panel.category_cursor = home_row;
+    }
+    app.handle_key(KeyCode::Char(' '), &aglet)
+        .expect("toggle home on");
+    let work_row = app
+        .input_panel_visible_category_row_indices()
+        .iter()
+        .position(|idx| app.category_rows[*idx].id == work.id)
+        .expect("work row visible");
+    if let Some(panel) = app.input_panel.as_mut() {
+        panel.category_cursor = work_row;
+    }
+    app.handle_key(KeyCode::Char(' '), &aglet)
+        .expect("toggle work off");
+    app.handle_key(KeyCode::Char('S'), &aglet)
+        .expect("save edit");
+
+    assert_eq!(app.mode, Mode::Normal);
+    let saved = store.get_item(item.id).expect("reload");
+    assert!(
+        saved.assignments.contains_key(&home.id),
+        "checked category should be assigned on save"
+    );
+    assert!(
+        !saved.assignments.contains_key(&work.id),
+        "unchecked category should be unassigned on save"
+    );
+    assert!(
+        app.status.contains("Categories: +1 -1"),
+        "status should summarize the category diff: {}",
+        app.status
+    );
+}
+
+#[test]
+fn edit_panel_renders_inline_categories_pane_not_actions() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let work = Category::new("Work".to_string());
+    store.create_category(&work).expect("work");
+    let item = Item::new("Render me".to_string());
+    store.create_item(&item).expect("item");
+    aglet
+        .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+        .expect("assign work");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_key(KeyCode::Char('e'), &aglet)
+        .expect("open edit panel");
+
+    let backend = TestBackend::new(110, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Categories"),
+        "edit panel should show the inline categories pane: {rendered}"
+    );
+    assert!(
+        rendered.contains("[x] Work"),
+        "assigned category should render checked: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Actions") || !rendered.contains("Assign categories"),
+        "the separate Actions pane should be gone: {rendered}"
+    );
+}
+
+#[test]
 fn edit_panel_actions_open_assign_and_return_to_edit() {
     let (store, classifier, _cost_id, item_id, db_path) = setup_edit_panel_numeric("save");
     let aglet = Aglet::new(&store, &classifier);
@@ -22687,13 +22895,13 @@ fn edit_panel_actions_open_assign_and_return_to_edit() {
     app.handle_key(KeyCode::Char('e'), &aglet)
         .expect("open edit panel");
 
-    // Tab to Actions: Text -> When -> Note -> Actions
+    // Tab to Categories: Text -> When -> Note -> Categories
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
-        input_panel::InputPanelFocus::Actions
+        input_panel::InputPanelFocus::Categories
     );
 
     app.handle_key(KeyCode::Char('a'), &aglet)
@@ -22820,7 +23028,7 @@ fn edit_panel_focus_cycle_actions_always_present() {
     let panel = app.input_panel.as_ref().unwrap();
     assert!(panel.numeric_buffers.is_empty());
 
-    // Tab cycle: Text -> When -> Note -> Actions -> Text
+    // Tab cycle matches Add Item: Text -> When -> Note -> Categories -> Text
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
@@ -22834,9 +23042,9 @@ fn edit_panel_focus_cycle_actions_always_present() {
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
-        input_panel::InputPanelFocus::Actions
+        input_panel::InputPanelFocus::Categories
     );
-    // Tab from Actions wraps back to Text
+    // Tab from Categories wraps back to Text
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
@@ -22877,12 +23085,12 @@ fn edit_panel_actions_support_arrow_selection_and_enter() {
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
 
-    assert_eq!(app.input_panel.as_ref().unwrap().action_cursor, 0);
-    app.handle_key(KeyCode::Down, &aglet)
-        .expect("move to inspect action");
-    assert_eq!(app.input_panel.as_ref().unwrap().action_cursor, 1);
-    app.handle_key(KeyCode::Enter, &aglet)
-        .expect("open details from action menu");
+    assert_eq!(
+        app.input_panel.as_ref().unwrap().focus,
+        input_panel::InputPanelFocus::Categories
+    );
+    app.handle_key(KeyCode::Char('I'), &aglet)
+        .expect("open details with the inspector shortcut");
     assert!(app.input_panel.as_ref().unwrap().details_popup_open);
 }
 
@@ -22937,12 +23145,10 @@ fn edit_panel_suggestions_can_be_toggled_before_actions() {
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet)
-        .expect("tab to suggestions");
-
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
-        input_panel::InputPanelFocus::Suggestions
+        input_panel::InputPanelFocus::Categories,
+        "suggestions render at the top of the categories pane"
     );
 
     assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
@@ -22965,8 +23171,11 @@ fn edit_panel_suggestions_can_be_toggled_before_actions() {
     );
 
     app.handle_key(KeyCode::Down, &aglet)
-        .expect("move within suggestions");
-    assert_eq!(app.input_panel.as_ref().unwrap().category_cursor, 0);
+        .expect("move past suggestions into category rows");
+    assert!(
+        app.input_panel.as_ref().unwrap().category_cursor >= 1,
+        "cursor should continue into the category rows below the suggestions"
+    );
 }
 
 #[test]
@@ -23009,7 +23218,7 @@ fn edit_item_details_popup_opens_and_scrolls() {
     app.handle_key(KeyCode::Tab, &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
-        input_panel::InputPanelFocus::Actions
+        input_panel::InputPanelFocus::Categories
     );
     app.handle_key(KeyCode::Char('I'), &aglet)
         .expect("open details popup");
