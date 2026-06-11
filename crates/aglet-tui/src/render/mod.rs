@@ -5907,8 +5907,10 @@ impl App {
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
         frame.render_widget(
-            Paragraph::new("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned")
-                .style(Style::default().fg(MUTED_TEXT_COLOR)),
+            Paragraph::new(
+                "[x] assigned   [ \u{2192}x] will add   [x\u{2192} ] will remove   dim = derived (via \u{2026})",
+            )
+            .style(Style::default().fg(MUTED_TEXT_COLOR)),
             chunks[1],
         );
 
@@ -6000,8 +6002,12 @@ impl App {
         } else {
             visible_category_indices
                 .iter()
-                .filter_map(|row_index| self.category_rows.get(*row_index))
-                .map(|row| {
+                .filter_map(|row_index| {
+                    self.category_rows
+                        .get(*row_index)
+                        .map(|row| (*row_index, row))
+                })
+                .map(|(row_index, row)| {
                     let mut flags = Vec::new();
                     if row.value_kind == aglet_core::model::CategoryValueKind::Numeric {
                         flags.push("numeric");
@@ -6016,36 +6022,58 @@ impl App {
                     };
                     let (assigned_count, total_count) =
                         self.effective_action_assignment_counts(row.id);
-                    let checkbox = if total_count > 1 {
+                    let assigned_here = self.selected_item_has_assignment(row.id);
+                    let base_state = if total_count > 1 {
                         if assigned_count == 0 {
-                            "[ ]"
+                            ' '
                         } else if assigned_count == total_count {
-                            "[x]"
+                            'x'
                         } else {
-                            "[~]"
+                            '~'
                         }
-                    } else if self.selected_item_has_assignment(row.id) {
-                        "[x]"
+                    } else if assigned_here {
+                        'x'
                     } else {
-                        "[ ]"
+                        ' '
                     };
                     let to_add = self.item_assign_preview.cat_to_add.contains(&row.id);
                     let to_remove = self.item_assign_preview.cat_to_remove.contains(&row.id);
-                    let preview_prefix = if to_add {
-                        "[+] "
+                    // One marker per row encoding state + pending delta
+                    // (UX audit P2-4): [x] assigned, [ \u{2192}x] will add,
+                    // [x\u{2192} ] will remove.
+                    let (marker, delta_label) = if to_add {
+                        (format!("[{base_state}\u{2192}x]"), "  will add")
                     } else if to_remove {
-                        "[-] "
+                        (format!("[{base_state}\u{2192} ]"), "  will remove")
                     } else {
-                        "    "
+                        (format!("[{base_state}]"), "")
                     };
-                    let assignment_badge =
-                        if total_count <= 1 && self.selected_item_has_assignment(row.id) {
-                            self.selected_item_assignment_badge(row.id)
-                                .map(|badge| format!(" [{badge}]"))
-                                .unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
+                    let derived_via = if total_count <= 1 && assigned_here {
+                        self.selected_item_assignment_via(row.id)
+                    } else {
+                        None
+                    };
+                    // Pending add under an exclusive parent: name the sibling
+                    // it will displace before apply.
+                    let displaced = if to_add {
+                        let names: Vec<String> =
+                            modes::board::exclusive_siblings_to_clear(
+                                &self.category_rows,
+                                row_index,
+                            )
+                            .into_iter()
+                            .filter(|sibling| self.selected_item_has_assignment(*sibling))
+                            .filter_map(|sibling| {
+                                self.categories
+                                    .iter()
+                                    .find(|category| category.id == sibling)
+                                    .map(|category| category.name.clone())
+                            })
+                            .collect();
+                        names
+                    } else {
+                        Vec::new()
+                    };
                     // Filtered lists hide ancestors, so depth indentation is
                     // relative to nothing: render matches flat with a dimmed
                     // breadcrumb instead (UX audit P2-5).
@@ -6055,33 +6083,44 @@ impl App {
                     } else {
                         "  ".repeat(row.depth)
                     };
-                    let text = format!(
-                        "{preview_prefix}{checkbox} {indent}{}{}{}",
-                        row.name, suffix, assignment_badge
-                    );
+                    let text = format!("{marker} {indent}{}{}", row.name, suffix);
                     let style = if to_add {
                         Style::default().fg(Color::Green)
                     } else if to_remove {
                         Style::default().fg(Color::Red)
+                    } else if derived_via.is_some() {
+                        // Derived assignments render dimmed.
+                        Style::default()
+                            .fg(MUTED_TEXT_COLOR)
+                            .add_modifier(Modifier::DIM)
                     } else {
                         Style::default()
                     };
-                    let breadcrumb = if filtered_flat {
-                        category_breadcrumb(row.id, &self.categories)
-                    } else {
-                        None
-                    };
-                    let line = match breadcrumb {
-                        Some(crumb) => Line::from(vec![
-                            Span::styled(text, style),
-                            Span::styled(
+                    let mut spans = vec![Span::styled(text, style)];
+                    if !delta_label.is_empty() {
+                        spans.push(Span::styled(delta_label, style));
+                    }
+                    if !displaced.is_empty() {
+                        spans.push(Span::styled(
+                            format!("  (replaces: {})", displaced.join(", ")),
+                            Style::default().fg(Color::Yellow),
+                        ));
+                    }
+                    if let Some(via) = derived_via {
+                        spans.push(Span::styled(
+                            format!("  ({via})"),
+                            Style::default().fg(MUTED_TEXT_COLOR),
+                        ));
+                    }
+                    if filtered_flat {
+                        if let Some(crumb) = category_breadcrumb(row.id, &self.categories) {
+                            spans.push(Span::styled(
                                 format!("  \u{2014} {crumb}"),
                                 Style::default().fg(MUTED_TEXT_COLOR),
-                            ),
-                        ]),
-                        None => Line::styled(text, style),
-                    };
-                    ListItem::new(line)
+                            ));
+                        }
+                    }
+                    ListItem::new(Line::from(spans))
                 })
                 .collect()
         };

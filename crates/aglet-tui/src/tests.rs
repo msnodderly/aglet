@@ -5211,6 +5211,102 @@ fn manual_classify_selected_items_reports_semantic_mode_off() {
 }
 
 #[test]
+fn assignment_summary_leads_with_auto_assigned_toast() {
+    use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
+    let app = App::default();
+    let event = |name: &str, summary: &str| AssignmentEvent {
+        kind: AssignmentEventKind::Assigned,
+        category_id: CategoryId::new_v4(),
+        category_name: name.to_string(),
+        summary: summary.to_string(),
+    };
+    let result = ProcessItemResult {
+        assignment_events: vec![
+            event("Someday/Maybe", "Matched category name \"maybe\""),
+            event("Home", "Matched alias \"house\""),
+            event("Bills", "Matched category name \"bill\""),
+        ],
+        ..ProcessItemResult::default()
+    };
+    let mut item = Item::new("pay the bill".to_string());
+    item.note = Some("maybe only works during biz hours?".to_string());
+
+    let message = app
+        .assignment_event_status_summary_for_item(&result, Some(&item))
+        .expect("summary");
+    assert_eq!(
+        message,
+        "Auto-assigned: Someday/Maybe (matched \"maybe\" in note), Home (+1 more)",
+        "toast should name auto-assignments, locate the first match, and cap the list"
+    );
+}
+
+#[test]
+fn assignment_summary_keeps_manual_events_out_of_the_toast() {
+    use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
+    let app = App::default();
+    let result = ProcessItemResult {
+        assignment_events: vec![AssignmentEvent {
+            kind: AssignmentEventKind::Assigned,
+            category_id: CategoryId::new_v4(),
+            category_name: "Work".to_string(),
+            summary: "Assigned manually".to_string(),
+        }],
+        ..ProcessItemResult::default()
+    };
+    let message = app
+        .assignment_event_status_summary_for_item(&result, None)
+        .expect("summary");
+    assert_eq!(message, "Added Work");
+    assert!(
+        !message.contains("Auto-assigned"),
+        "manual additions are not auto-assignments"
+    );
+}
+
+#[test]
+fn assign_picker_pending_add_names_displaced_exclusive_sibling() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut priority = Category::new("Priority".to_string());
+    priority.is_exclusive = true;
+    store.create_category(&priority).expect("priority");
+    let mut low = Category::new("Low".to_string());
+    low.parent = Some(priority.id);
+    store.create_category(&low).expect("low");
+    let mut high = Category::new("High".to_string());
+    high.parent = Some(priority.id);
+    store.create_category(&high).expect("high");
+
+    let item = Item::new("escalate".to_string());
+    store.create_item(&item).expect("item");
+    aglet
+        .assign_item_manual(item.id, low.id, Some("manual:test".to_string()))
+        .expect("assign low");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.set_item_assign_category_selection_by_id(high.id);
+    app.compute_assignment_preview(&aglet);
+
+    let backend = TestBackend::new(120, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("render");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("High") && rendered.contains("(replaces: Low)"),
+        "pending add under an exclusive parent should name the displaced sibling: {rendered}"
+    );
+}
+
+#[test]
 fn classification_feedback_reports_semantic_duplicates_for_saved_item() {
     let item_id = ItemId::new_v4();
     let mut app = App::default();
@@ -10433,8 +10529,8 @@ fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[~] Work"),
-        "mixed batch checkbox should render tri-state marker: {rendered}"
+        rendered.contains("[~\u{2192}x] Work") && rendered.contains("will add"),
+        "mixed batch row should merge tri-state and pending delta in one marker: {rendered}"
     );
 }
 
@@ -10494,8 +10590,10 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         "assign picker header should describe close semantics: {rendered}"
     );
     assert!(
-        rendered.contains("Legend: [+] add  [-] remove  [x] assigned  [ ] not assigned"),
-        "assign picker should explain checkbox and preview markers: {rendered}"
+        rendered.contains("[ \u{2192}x] will add")
+            && rendered.contains("[x\u{2192} ] will remove")
+            && rendered.contains("derived"),
+        "assign picker legend should explain the merged markers: {rendered}"
     );
     assert!(
         rendered.contains("Target: Plain  Batch: 2 items"),
@@ -10601,11 +10699,11 @@ fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[ ] Work"),
-        "work row should render: {rendered}"
+        rendered.contains("[ \u{2192}x] Work"),
+        "work row should render with the cursor-row preview marker: {rendered}"
     );
     assert!(
-        !rendered.contains("[ ] Done"),
+        !rendered.contains("] Done"),
         "reserved Done should not render in assign picker: {rendered}"
     );
     assert!(
@@ -10744,7 +10842,7 @@ fn item_assign_picker_shows_and_explains_rule_locked_auto_match_assignment() {
     terminal.draw(|frame| app.draw(frame)).expect("render app");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("[x] TUI [auto-match]"),
+        rendered.contains("[x] TUI") && rendered.contains("(via text match)"),
         "assign picker should show inline provenance for rule-derived rows: {rendered}"
     );
 

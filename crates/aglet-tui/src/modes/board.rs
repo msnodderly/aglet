@@ -6433,7 +6433,7 @@ fn toggle_board_display_mode(mode: BoardDisplayMode) -> BoardDisplayMode {
 /// Walks backward from `row_idx` to find the parent row (depth = row.depth - 1).
 /// If the parent has `is_exclusive = true`, returns all direct children of that parent
 /// except the one at `row_idx`.  Returns an empty vec if no exclusivity applies.
-fn exclusive_siblings_to_clear(rows: &[CategoryListRow], row_idx: usize) -> Vec<CategoryId> {
+pub(crate) fn exclusive_siblings_to_clear(rows: &[CategoryListRow], row_idx: usize) -> Vec<CategoryId> {
     let Some(row) = rows.get(row_idx) else {
         return vec![];
     };
