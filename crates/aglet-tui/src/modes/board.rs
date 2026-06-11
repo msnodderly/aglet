@@ -5768,11 +5768,21 @@ impl App {
                     self.compute_assignment_preview(aglet);
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char('/') => {
+            KeyCode::Char('n') => {
                 self.mode = Mode::ItemAssignInput;
                 self.clear_input();
-                self.status = "Type category name: Enter assign/create, Tab autocomplete, Esc back"
-                    .to_string();
+                self.clamp_item_assign_category_index();
+                self.compute_assignment_preview(aglet);
+                self.status =
+                    "Type category name: Enter assign/create, Tab/\u{2193} to list, Esc back"
+                        .to_string();
+            }
+            KeyCode::Char('/') => {
+                // Keep any existing filter text so returning to search refines it.
+                self.mode = Mode::ItemAssignInput;
+                self.status =
+                    "Type category name: Enter assign/create, Tab/\u{2193} to list, Esc back"
+                        .to_string();
             }
             KeyCode::Char(' ') => {
                 let batch_mode = self.has_selected_items();
@@ -6219,11 +6229,36 @@ impl App {
                     "Category name entry canceled (empty)",
                 );
             }
-            _ if self.handle_text_input_key(code) => {}
+            // Tab/arrows hand focus back to the (still narrowed) category
+            // list so the filtered results can be navigated and applied —
+            // the filter text stays active until Esc or apply clears it.
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.leave_item_assign_input_for_list(aglet);
+            }
+            KeyCode::Down | KeyCode::Up => {
+                self.leave_item_assign_input_for_list(aglet);
+                return self.handle_item_assign_category_key(code, aglet);
+            }
+            _ if self.handle_text_input_key(code) => {
+                self.clamp_item_assign_category_index();
+                self.compute_assignment_preview(aglet);
+            }
             _ => {}
         }
 
         Ok(false)
+    }
+
+    fn leave_item_assign_input_for_list(&mut self, aglet: &Aglet<'_>) {
+        self.mode = Mode::ItemAssignPicker;
+        self.clamp_item_assign_category_index();
+        self.compute_assignment_preview(aglet);
+        self.status = if self.input.trimmed().is_empty() {
+            "Item categories: j/k select, Space apply, n or / type category, Enter apply+close, Esc cancel".to_string()
+        } else {
+            "Filtered categories: j/k select, Space apply, / edit filter, Enter apply+close, Esc cancel"
+                .to_string()
+        };
     }
 
     pub(crate) fn handle_inspect_unassign_key(

@@ -6500,6 +6500,187 @@ fn item_assign_picker_filter_limits_rows_and_enter_uses_exact_match() {
 }
 
 #[test]
+fn item_assign_input_tab_returns_to_filtered_list_keeping_filter() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("aglet-tui-assign-input-tab-out-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let work = Category::new("Work".to_string());
+    let workshop = Category::new("Workshop".to_string());
+    let personal = Category::new("Personal".to_string());
+    store.create_category(&work).expect("create Work");
+    store.create_category(&workshop).expect("create Workshop");
+    store.create_category(&personal).expect("create Personal");
+    let item = Item::new("demo item".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_item_selection_by_id(item.id);
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+        .expect("enter filter input");
+    for ch in ['w', 'o', 'r'] {
+        app.handle_item_assign_category_input_key(KeyCode::Char(ch), &aglet)
+            .expect("type filter char");
+    }
+    assert_eq!(
+        app.item_assign_selected_category_row().map(|row| &row.name),
+        Some(&"Work".to_string()),
+        "typing should clamp the selection onto the narrowed list"
+    );
+
+    app.handle_item_assign_category_input_key(KeyCode::Tab, &aglet)
+        .expect("tab should return focus to the category list");
+
+    assert_eq!(app.mode, Mode::ItemAssignPicker);
+    assert_eq!(
+        app.input.trimmed(),
+        "wor",
+        "filter text should survive leaving the input box"
+    );
+    let visible_names: Vec<String> = app
+        .item_assign_visible_category_row_indices()
+        .into_iter()
+        .filter_map(|row_index| app.category_rows.get(row_index))
+        .map(|row| row.name.clone())
+        .collect();
+    assert_eq!(
+        visible_names,
+        vec!["Work".to_string(), "Workshop".to_string()]
+    );
+
+    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+        .expect("space should apply the selected narrowed category");
+    let updated = store.get_item(item.id).expect("load updated item");
+    assert!(
+        updated.assignments.contains_key(&work.id),
+        "selected narrowed category should be assigned"
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn item_assign_input_arrow_moves_into_filtered_list() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("aglet-tui-assign-input-arrow-out-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let work = Category::new("Work".to_string());
+    let workshop = Category::new("Workshop".to_string());
+    let personal = Category::new("Personal".to_string());
+    store.create_category(&work).expect("create Work");
+    store.create_category(&workshop).expect("create Workshop");
+    store.create_category(&personal).expect("create Personal");
+    let item = Item::new("demo item".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_item_selection_by_id(item.id);
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+        .expect("enter filter input");
+    for ch in ['w', 'o', 'r'] {
+        app.handle_item_assign_category_input_key(KeyCode::Char(ch), &aglet)
+            .expect("type filter char");
+    }
+
+    app.handle_item_assign_category_input_key(KeyCode::Down, &aglet)
+        .expect("down should move into the narrowed list");
+
+    assert_eq!(app.mode, Mode::ItemAssignPicker);
+    assert_eq!(app.input.trimmed(), "wor");
+    assert_eq!(
+        app.item_assign_selected_category_row().map(|row| &row.name),
+        Some(&"Workshop".to_string()),
+        "down should step past the first narrowed match"
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
+fn item_assign_picker_slash_keeps_filter_for_refinement() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let db_path =
+        std::env::temp_dir().join(format!("aglet-tui-assign-slash-keeps-filter-{nanos}.ag"));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let work = Category::new("Work".to_string());
+    let workshop = Category::new("Workshop".to_string());
+    store.create_category(&work).expect("create Work");
+    store.create_category(&workshop).expect("create Workshop");
+    let item = Item::new("demo item".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh app");
+    app.set_item_selection_by_id(item.id);
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+        .expect("enter filter input");
+    for ch in ['w', 'o', 'r'] {
+        app.handle_item_assign_category_input_key(KeyCode::Char(ch), &aglet)
+            .expect("type filter char");
+    }
+    app.handle_item_assign_category_input_key(KeyCode::Tab, &aglet)
+        .expect("tab back to list");
+
+    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+        .expect("re-enter filter input");
+
+    assert_eq!(app.mode, Mode::ItemAssignInput);
+    assert_eq!(
+        app.input.trimmed(),
+        "wor",
+        "re-entering the filter should keep the existing text for refinement"
+    );
+
+    app.handle_item_assign_category_input_key(KeyCode::Tab, &aglet)
+        .expect("tab back to list again");
+    app.handle_item_assign_category_key(KeyCode::Char('n'), &aglet)
+        .expect("n starts fresh category entry");
+    assert_eq!(app.mode, Mode::ItemAssignInput);
+    assert!(
+        app.input.trimmed().is_empty(),
+        "n should clear the filter text for fresh category entry"
+    );
+
+    app.handle_item_assign_category_input_key(KeyCode::Esc, &aglet)
+        .expect("esc cancels filter entry");
+    assert_eq!(app.mode, Mode::ItemAssignPicker);
+    assert!(
+        app.input.trimmed().is_empty(),
+        "esc should clear the filter text"
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn item_assign_picker_enter_creates_category_from_filter_text() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
