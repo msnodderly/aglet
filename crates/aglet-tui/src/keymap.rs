@@ -415,8 +415,11 @@ pub(crate) static DISCARD_CONFIRM_HINTS: &[(&str, &str)] = &[
     ("Esc", "keep editing"),
 ];
 
-pub(crate) static ITEM_ASSIGN_INPUT_HINTS: &[(&str, &str)] =
-    &[("Enter", "assign"), ("Esc", "cancel")];
+pub(crate) static ITEM_ASSIGN_INPUT_HINTS: &[(&str, &str)] = &[
+    ("Enter", "assign"),
+    ("Tab/\u{2193}", "to list"),
+    ("Esc", "cancel"),
+];
 
 pub(crate) static LINK_WIZARD_HINTS: &[(&str, &str)] = &[
     ("Tab", "focus"),
