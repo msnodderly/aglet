@@ -80,6 +80,83 @@ pub fn display_category_ids(item: &Item, categories: &[Category]) -> Vec<Categor
     ids
 }
 
+/// Display header for a configured section column: the view's category alias
+/// when set, the category name otherwise, and `(deleted category)` for
+/// dangling headings.
+pub fn section_column_header(
+    view: &View,
+    column: &crate::model::Column,
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    if let Some(alias) = view.category_aliases.get(&column.heading) {
+        return alias.clone();
+    }
+    category_names
+        .get(&column.heading)
+        .cloned()
+        .unwrap_or_else(|| "(deleted category)".to_string())
+}
+
+/// Cell value for a configured section column — one definition shared by the
+/// TUI board and CLI `view show` so the two surfaces render identically.
+///
+/// - `When` columns render the item's when-date humanely (midnight elided).
+/// - Numeric headings render the assignment value via the category's
+///   `numeric_format`.
+/// - Tag headings list the heading's assigned child categories.
+pub fn section_column_cell(
+    item: &Item,
+    column: &crate::model::Column,
+    categories: &[Category],
+    category_names: &HashMap<CategoryId, String>,
+) -> String {
+    use crate::model::ColumnKind;
+
+    match column.kind {
+        ColumnKind::When => item
+            .when_date
+            .map(crate::dates::format_human_datetime)
+            .unwrap_or_else(|| "\u{2013}".to_string()),
+        ColumnKind::Standard => {
+            let heading_category = categories
+                .iter()
+                .find(|category| category.id == column.heading);
+            let is_numeric = heading_category
+                .map(|category| category.value_kind == crate::model::CategoryValueKind::Numeric)
+                .unwrap_or(false);
+            if is_numeric {
+                let value = item
+                    .assignments
+                    .get(&column.heading)
+                    .and_then(|assignment| assignment.numeric_value);
+                crate::numeric_format::format_numeric_cell(
+                    value,
+                    heading_category.and_then(|category| category.numeric_format.as_ref()),
+                )
+            } else {
+                let mut matches: Vec<String> = heading_category
+                    .map(|category| category.children.as_slice())
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|child_id| item.assignments.contains_key(child_id))
+                    .map(|child_id| {
+                        category_names
+                            .get(child_id)
+                            .cloned()
+                            .unwrap_or_else(|| child_id.to_string())
+                    })
+                    .collect();
+                if matches.is_empty() {
+                    "\u{2013}".to_string()
+                } else {
+                    matches.sort_by_key(|name| name.to_ascii_lowercase());
+                    matches.join(", ")
+                }
+            }
+        }
+    }
+}
+
 /// Resolve a `when_date` into its most-specific virtual `WhenBucket` for a given reference date.
 ///
 /// Used for grouping/display where a single bucket label is needed. For *filter matching*

@@ -4218,6 +4218,16 @@ struct JsonItemRow {
     when: Option<String>,
     categories: Vec<String>,
     note: Option<String>,
+    /// Configured section column values (present only when the section
+    /// defines columns).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    column_values: Option<Vec<JsonColumnValueOutput>>,
+}
+
+#[derive(Serialize)]
+struct JsonColumnValueOutput {
+    column: String,
+    value: String,
 }
 
 #[derive(Serialize)]
@@ -4299,6 +4309,7 @@ fn item_row(item: &Item, category_names: &HashMap<CategoryId, String>) -> JsonIt
         when: item.when_date.map(|dt| dt.to_string()),
         categories: item_categories(item, category_names),
         note: item.note.clone(),
+        column_values: None,
     }
 }
 
@@ -4311,6 +4322,50 @@ fn rows_to_json(
     sorted_rows(items, sort_keys, categories)
         .into_iter()
         .map(|item| item_row(item, category_names))
+        .collect()
+}
+
+/// Like `rows_to_json`, attaching configured section column values when the
+/// section defines columns (UX audit P2-CLI-1).
+fn rows_to_json_for_section(
+    view: &View,
+    section_index: usize,
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> Vec<JsonItemRow> {
+    let columns = view
+        .sections
+        .get(section_index)
+        .map(|section| section.columns.as_slice())
+        .unwrap_or(&[]);
+    sorted_rows(items, sort_keys, categories)
+        .into_iter()
+        .map(|item| {
+            let mut row = item_row(item, category_names);
+            if !columns.is_empty() {
+                row.column_values = Some(
+                    columns
+                        .iter()
+                        .map(|column| JsonColumnValueOutput {
+                            column: aglet_core::query::section_column_header(
+                                view,
+                                column,
+                                category_names,
+                            ),
+                            value: aglet_core::query::section_column_cell(
+                                item,
+                                column,
+                                categories,
+                                category_names,
+                            ),
+                        })
+                        .collect(),
+                );
+            }
+            row
+        })
         .collect()
 }
 
@@ -4573,7 +4628,14 @@ fn print_items_for_view(
             if section.subsections.is_empty() {
                 sections.push(JsonViewSectionOutput {
                     title: section.title,
-                    items: rows_to_json(&section.items, category_names, sort_keys, categories),
+                    items: rows_to_json_for_section(
+                        view,
+                        section.section_index,
+                        &section.items,
+                        category_names,
+                        sort_keys,
+                        categories,
+                    ),
                     subsections: Vec::new(),
                     summaries,
                 });
@@ -4591,7 +4653,14 @@ fn print_items_for_view(
                 );
                 subsections.push(JsonViewSubsectionOutput {
                     title: subsection.title,
-                    items: rows_to_json(&subsection.items, category_names, sort_keys, categories),
+                    items: rows_to_json_for_section(
+                        view,
+                        section.section_index,
+                        &subsection.items,
+                        category_names,
+                        sort_keys,
+                        categories,
+                    ),
                     summaries: subsection_summaries,
                 });
             }
@@ -4653,36 +4722,56 @@ fn print_items_for_view(
     for section in result.sections {
         let section_index = section.section_index;
         println!("\n## {}", section.title);
-        if let Some(columns_line) =
-            section_column_definitions_line(view, section.section_index, category_names)
-        {
-            println!("{columns_line}");
-        }
         if section.subsections.is_empty() {
-            print_item_table(&section.items, category_names, sort_keys, categories);
-            if let Some(summary_line) = section_summary_line(
+            if let Some(table) = render_section_column_table(
                 view,
                 section_index,
                 &section.items,
-                categories,
                 category_names,
+                sort_keys,
+                categories,
             ) {
-                println!("{summary_line}");
+                // Configured columns render as real table columns with an
+                // inline TOTAL row; the definitions line and the separate
+                // summary line are redundant here.
+                print!("{table}");
+            } else {
+                print_item_table(&section.items, category_names, sort_keys, categories);
+                if let Some(summary_line) = section_summary_line(
+                    view,
+                    section_index,
+                    &section.items,
+                    categories,
+                    category_names,
+                ) {
+                    println!("{summary_line}");
+                }
             }
             continue;
         }
 
         for subsection in section.subsections {
             println!("\n### {}", subsection.title);
-            print_item_table(&subsection.items, category_names, sort_keys, categories);
-            if let Some(summary_line) = section_summary_line(
+            if let Some(table) = render_section_column_table(
                 view,
                 section_index,
                 &subsection.items,
-                categories,
                 category_names,
+                sort_keys,
+                categories,
             ) {
-                println!("{summary_line}");
+                print!("{table}");
+            } else {
+                print_item_table(&subsection.items, category_names, sort_keys, categories);
+                if let Some(summary_line) = section_summary_line(
+                    view,
+                    section_index,
+                    &subsection.items,
+                    categories,
+                    category_names,
+                ) {
+                    println!("{summary_line}");
+                }
             }
         }
     }
@@ -4707,34 +4796,6 @@ fn print_items_for_view(
         }
     }
     Ok(())
-}
-
-fn section_column_definitions_line(
-    view: &View,
-    section_index: usize,
-    category_names: &HashMap<CategoryId, String>,
-) -> Option<String> {
-    let section = view.sections.get(section_index)?;
-    if section.columns.is_empty() {
-        return None;
-    }
-    let rendered = section
-        .columns
-        .iter()
-        .map(|column| {
-            let heading = category_names
-                .get(&column.heading)
-                .cloned()
-                .unwrap_or_else(|| format!("(deleted:{})", column.heading));
-            let kind = match column.kind {
-                ColumnKind::Standard => "standard",
-                ColumnKind::When => "when",
-            };
-            format!("{heading} [{kind},w={}]", column.width)
-        })
-        .collect::<Vec<_>>()
-        .join(" | ");
-    Some(format!("columns: {rendered}"))
 }
 
 fn section_summary_line(
@@ -4845,6 +4906,159 @@ fn summary_fn_label(summary_fn: SummaryFn) -> &'static str {
         SummaryFn::Max => "max",
         SummaryFn::Count => "count",
     }
+}
+
+/// Renders a section's items as a table with the configured section columns
+/// as real columns (numeric formatting matches the TUI cells) and a TOTAL
+/// row when any column has a summary configured (UX audit P2-CLI-1).
+/// Returns `None` when the section defines no columns (caller falls back to
+/// the generic table).
+fn render_section_column_table(
+    view: &View,
+    section_index: usize,
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> Option<String> {
+    let section = view.sections.get(section_index)?;
+    if section.columns.is_empty() {
+        return None;
+    }
+
+    let rows = sorted_rows(items, sort_keys, categories);
+    let categories_by_id: HashMap<CategoryId, &Category> = categories
+        .iter()
+        .map(|category| (category.id, category))
+        .collect();
+
+    // Cell matrix: ID, STATUS, then section columns with TITLE spliced in at
+    // the section's item column position.
+    let item_column_index = section.item_column_index.min(section.columns.len());
+    let mut headers: Vec<String> = vec!["ID".to_string(), "STATUS".to_string()];
+    for (idx, column) in section.columns.iter().enumerate() {
+        if idx == item_column_index {
+            headers.push("TITLE".to_string());
+        }
+        headers.push(aglet_core::query::section_column_header(
+            view,
+            column,
+            category_names,
+        ));
+    }
+    if item_column_index >= section.columns.len() {
+        headers.push("TITLE".to_string());
+    }
+
+    let mut body: Vec<Vec<String>> = Vec::new();
+    for item in &rows {
+        let mut cells: Vec<String> = vec![
+            item.id.to_string(),
+            if item.is_done { "done" } else { "open" }.to_string(),
+        ];
+        for (idx, column) in section.columns.iter().enumerate() {
+            if idx == item_column_index {
+                cells.push(item.text.clone());
+            }
+            cells.push(aglet_core::query::section_column_cell(
+                item,
+                column,
+                categories,
+                category_names,
+            ));
+        }
+        if item_column_index >= section.columns.len() {
+            cells.push(item.text.clone());
+        }
+        body.push(cells);
+    }
+
+    // TOTAL row when any column has a summary configured.
+    let has_summaries = section
+        .columns
+        .iter()
+        .any(|column| column.summary_fn.unwrap_or(SummaryFn::None) != SummaryFn::None);
+    let mut totals: Option<Vec<String>> = None;
+    if has_summaries {
+        let mut cells: Vec<String> = vec![String::new(), String::new()];
+        for (idx, column) in section.columns.iter().enumerate() {
+            if idx == item_column_index {
+                cells.push("TOTAL".to_string());
+            }
+            let summary_fn = column.summary_fn.unwrap_or(SummaryFn::None);
+            let rendered = if summary_fn == SummaryFn::None {
+                String::new()
+            } else {
+                column_summary_value(summary_fn, column.heading, items, &categories_by_id)
+                    .map(|value| {
+                        let format = categories_by_id
+                            .get(&column.heading)
+                            .and_then(|category| category.numeric_format.as_ref());
+                        format!(
+                            "{} ({})",
+                            aglet_core::numeric_format::format_numeric_cell(Some(value), format),
+                            summary_fn_label(summary_fn)
+                        )
+                    })
+                    .unwrap_or_default()
+            };
+            cells.push(rendered);
+        }
+        if item_column_index >= section.columns.len() {
+            cells.push("TOTAL".to_string());
+        }
+        totals = Some(cells);
+    }
+
+    let mut widths: Vec<usize> = headers.iter().map(|header| header.chars().count()).collect();
+    for row in body.iter().chain(totals.iter()) {
+        for (idx, cell) in row.iter().enumerate() {
+            widths[idx] = widths[idx].max(cell.chars().count());
+        }
+    }
+
+    let render_row = |cells: &[String]| -> String {
+        cells
+            .iter()
+            .enumerate()
+            .map(|(idx, cell)| format!("{:<width$}", cell, width = widths[idx]))
+            .collect::<Vec<_>>()
+            .join("  ")
+            .trim_end()
+            .to_string()
+    };
+
+    let mut out = String::new();
+    out.push_str(&render_row(&headers));
+    out.push('\n');
+    out.push_str(
+        &widths
+            .iter()
+            .map(|width| "-".repeat(*width))
+            .collect::<Vec<_>>()
+            .join("  "),
+    );
+    out.push('\n');
+    if body.is_empty() {
+        out.push_str("(no items)\n");
+    }
+    for row in &body {
+        out.push_str(&render_row(row));
+        out.push('\n');
+    }
+    if let Some(totals) = totals {
+        out.push_str(
+            &widths
+                .iter()
+                .map(|width| "-".repeat(*width))
+                .collect::<Vec<_>>()
+                .join("  "),
+        );
+        out.push('\n');
+        out.push_str(&render_row(&totals));
+        out.push('\n');
+    }
+    Some(out)
 }
 
 fn print_item_table(
@@ -5098,7 +5312,8 @@ mod tests {
         parse_decimal_value, parse_sort_spec, parse_when_datetime_input, parsed_when_feedback_line,
         read_note_from_stdin, reject_items_with_any_categories, retain_items_by_dependency_state,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        retain_items_with_any_categories, section_summary_entries, section_summary_line,
+        category_name_map, render_section_column_table, retain_items_with_any_categories,
+        section_summary_entries, section_summary_line,
         tui_launch_debug, unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
         write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, CategoryCommand, Cli,
         CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
@@ -5110,7 +5325,7 @@ mod tests {
     use aglet_core::matcher::SubstringClassifier;
     use aglet_core::model::ConditionMatchMode;
     use aglet_core::model::{
-        Action, Category, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode,
+        Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode,
         DateCompareOp, DateMatcher, DateSource, Item, NumericFormat, Query, Section, SummaryFn,
         View,
     };
@@ -6432,6 +6647,115 @@ mod tests {
                 "Cost(max)=250".to_string(),
                 "Cost(count)=2".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn render_section_column_table_renders_values_totals_and_aliases() {
+        let mut cost = Category::new("Cost".to_string());
+        cost.value_kind = CategoryValueKind::Numeric;
+        cost.numeric_format = Some(aglet_core::model::NumericFormat {
+            decimal_places: 2,
+            currency_symbol: Some("$".to_string()),
+            use_thousands_separator: true,
+        });
+        let dangling_id = CategoryId::new_v4();
+
+        let mut view = View::new("Finance".to_string());
+        view.category_aliases.insert(cost.id, "Amount".to_string());
+        view.sections.push(Section {
+            title: "Bills".to_string(),
+            criteria: Query::default(),
+            columns: vec![
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: cost.id,
+                    width: 12,
+                    summary_fn: Some(SummaryFn::Sum),
+                },
+                Column {
+                    kind: ColumnKind::Standard,
+                    heading: dangling_id,
+                    width: 8,
+                    summary_fn: None,
+                },
+            ],
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+
+        let mut first = Item::new("Insurance".to_string());
+        first.assignments.insert(
+            cost.id,
+            aglet_core::model::Assignment {
+                source: aglet_core::model::AssignmentSource::Manual,
+                assigned_at: jiff::Timestamp::now(),
+                sticky: true,
+                origin: None,
+                explanation: None,
+                numeric_value: Some(rust_decimal::Decimal::new(123456, 2)),
+            },
+        );
+        let mut second = Item::new("Registration".to_string());
+        second.assignments.insert(
+            cost.id,
+            aglet_core::model::Assignment {
+                source: aglet_core::model::AssignmentSource::Manual,
+                assigned_at: jiff::Timestamp::now(),
+                sticky: true,
+                origin: None,
+                explanation: None,
+                numeric_value: Some(rust_decimal::Decimal::new(50000, 2)),
+            },
+        );
+
+        let categories = vec![cost.clone()];
+        let category_names = category_name_map(&categories);
+        let items = vec![first, second];
+        let table = render_section_column_table(&view, 0, &items, &category_names, &[], &categories)
+            .expect("columns configured");
+
+        assert!(
+            table.contains("Amount"),
+            "alias should be honored in headers: {table}"
+        );
+        assert!(
+            table.contains("(deleted category)"),
+            "dangling heading should print (deleted category), not a UUID: {table}"
+        );
+        assert!(
+            table.contains("$1,234.56") && table.contains("$500.00"),
+            "numeric cells should use the category's currency format: {table}"
+        );
+        assert!(
+            table.contains("TOTAL") && table.contains("$1,734.56 (sum)"),
+            "summary columns should render a formatted TOTAL row: {table}"
+        );
+        assert!(
+            !table.contains(&dangling_id.to_string()),
+            "raw UUIDs should not leak into the table: {table}"
+        );
+    }
+
+    #[test]
+    fn render_section_column_table_falls_back_when_no_columns() {
+        let mut view = View::new("Plain".to_string());
+        view.sections.push(Section {
+            title: "Main".to_string(),
+            criteria: Query::default(),
+            columns: Vec::new(),
+            item_column_index: 0,
+            on_insert_assign: HashSet::new(),
+            on_remove_unassign: HashSet::new(),
+            show_children: false,
+            board_display_mode_override: None,
+        });
+        assert!(
+            render_section_column_table(&view, 0, &[], &HashMap::new(), &[], &[]).is_none(),
+            "sections without columns keep the generic table"
         );
     }
 
