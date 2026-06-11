@@ -56,6 +56,22 @@ Running `aglet list` without arguments shows a default view, which may be
 empty if not configured correctly. Use `aglet view show "All Items"` to
 see all items, or create views that match your data.
 
+### `list`/`search` default output is compact (Migration, 2026-06-10)
+
+`aglet list` and `aglet search` now default to compact one-line rows:
+8-char id prefix, an honest `DONE?` column (`open`/`done` — the workflow
+Status category is separate), a humane date (date-only when midnight), the
+title with a `♪` glyph when a note exists, and the item's direct leaf
+categories in brackets (subsumed parents and reserved plumbing omitted).
+
+Practical implications for scripts/agents parsing CLI output:
+- Pass `--verbose` to get the previous multi-line format (full UUID, STATUS
+  header, `categories:`/`note:` continuation lines) byte-for-byte.
+- Prefer `--format json` for machine consumption; its schema is unchanged.
+- The 8-char id prefix resolves anywhere an item id is accepted (existing
+  hex-prefix matching, e.g. `aglet show fcad5267`).
+- `view show` tables are unchanged by this migration.
+
 `aglet list --category` supports repeated flags with AND semantics.
 For example, `aglet list --category High --category Pending` returns items
 that have both categories.
