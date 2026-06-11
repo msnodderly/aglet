@@ -214,6 +214,9 @@ enum Command {
         /// Include done items (default excludes them).
         #[arg(long)]
         include_done: bool,
+        /// Restore the full multi-line row output (pre-compact format).
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Search item text and note
@@ -232,6 +235,9 @@ enum Command {
         /// Include done items in search results (default excludes them).
         #[arg(long)]
         include_done: bool,
+        /// Restore the full multi-line row output (pre-compact format).
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Export items as Markdown
@@ -363,6 +369,9 @@ enum ItemCommand {
         /// Include done items (default excludes them).
         #[arg(long)]
         include_done: bool,
+        /// Restore the full multi-line row output (pre-compact format).
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Show a single item with its assignments
@@ -787,6 +796,14 @@ enum ViewCommand {
         #[arg(long, value_enum, default_value_t = BrowseStepArg::Window)]
         step: BrowseStepArg,
     },
+}
+
+/// Row rendering for table output: compact one-line rows (default) or the
+/// pre-compact multi-line format (`--verbose`) — UX audit P2-CLI-2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TableStyle {
+    Compact,
+    Verbose,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -1235,6 +1252,7 @@ fn run() -> Result<(), String> {
             sort,
             format,
             include_done,
+            verbose,
         } => cmd_list(
             &store,
             view,
@@ -1250,6 +1268,7 @@ fn run() -> Result<(), String> {
             },
             sort,
             format,
+            table_style_from_verbose(verbose),
         ),
         Command::Search {
             query,
@@ -1257,12 +1276,14 @@ fn run() -> Result<(), String> {
             blocked,
             not_blocked,
             include_done,
+            verbose,
         } => cmd_search(
             &store,
             query,
             format,
             dependency_state_filter_from_flags(blocked, not_blocked),
             include_done,
+            table_style_from_verbose(verbose),
         ),
         Command::Export {
             view,
@@ -1297,6 +1318,7 @@ fn run() -> Result<(), String> {
                 sort,
                 format,
                 include_done,
+                verbose,
             } => cmd_list(
                 &store,
                 view,
@@ -1315,6 +1337,7 @@ fn run() -> Result<(), String> {
                 },
                 sort,
                 format,
+                table_style_from_verbose(verbose),
             ),
             ItemCommand::Show { item_id } => cmd_show(&store, item_id),
             ItemCommand::Edit {
@@ -1855,6 +1878,7 @@ fn cmd_ready(
         &sort_keys,
         output_format,
         &blocked_item_ids,
+        TableStyle::Verbose,
     )
 }
 
@@ -1916,12 +1940,21 @@ struct NumericFilter {
     predicate: NumericPredicate,
 }
 
+fn table_style_from_verbose(verbose: bool) -> TableStyle {
+    if verbose {
+        TableStyle::Verbose
+    } else {
+        TableStyle::Compact
+    }
+}
+
 fn cmd_list(
     store: &Store,
     view_name: Option<String>,
     filters: ListFilters,
     sort_args: Vec<String>,
     output_format: OutputFormatArg,
+    table_style: TableStyle,
 ) -> Result<(), String> {
     let all_items = store.list_items().map_err(|e| e.to_string())?;
     let blocked_item_ids = blocked_item_ids(store, &all_items).map_err(|e| e.to_string())?;
@@ -2001,11 +2034,12 @@ fn cmd_list(
             &sort_keys,
             output_format,
             &blocked_item_ids,
+            table_style,
         )?;
     } else if output_format == OutputFormatArg::Json {
         print_items_json(&items, &category_names, &sort_keys, &categories)?;
     } else {
-        print_item_table(&items, &category_names, &sort_keys, &categories);
+        print_item_table(&items, &category_names, &sort_keys, &categories, table_style);
     }
     Ok(())
 }
@@ -2147,6 +2181,7 @@ fn cmd_search(
     output_format: OutputFormatArg,
     dependency_state_filter: Option<DependencyStateFilter>,
     include_done: bool,
+    table_style: TableStyle,
 ) -> Result<(), String> {
     let mut items = store.list_items().map_err(|e| e.to_string())?;
     if !include_done {
@@ -2175,7 +2210,7 @@ fn cmd_search(
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
     } else {
-        print_item_table(&matched_items, &category_names, &[], &categories);
+        print_item_table(&matched_items, &category_names, &[], &categories, table_style);
     }
     Ok(())
 }
@@ -3111,6 +3146,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                     &sort_keys,
                     format,
                     &blocked_item_ids,
+                    TableStyle::Verbose,
                 )?;
             } else {
                 let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
@@ -3137,6 +3173,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                     &sort_keys,
                     format,
                     &blocked_item_ids,
+                    TableStyle::Verbose,
                 )?;
             }
             Ok(())
@@ -4531,6 +4568,7 @@ fn view_category_alias_rows(
     rows
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_items_for_view(
     view: &View,
     items: &[Item],
@@ -4539,6 +4577,7 @@ fn print_items_for_view(
     sort_keys: &[CliSortKey],
     output_format: OutputFormatArg,
     blocked_item_ids: &HashSet<ItemId>,
+    table_style: TableStyle,
 ) -> Result<(), String> {
     let reference_date = jiff::Zoned::now().date();
     let mut result = resolve_view(view, items, categories, reference_date);
@@ -4659,7 +4698,7 @@ fn print_items_for_view(
             println!("{columns_line}");
         }
         if section.subsections.is_empty() {
-            print_item_table(&section.items, category_names, sort_keys, categories);
+            print_item_table(&section.items, category_names, sort_keys, categories, table_style);
             if let Some(summary_line) = section_summary_line(
                 view,
                 section_index,
@@ -4674,7 +4713,7 @@ fn print_items_for_view(
 
         for subsection in section.subsections {
             println!("\n### {}", subsection.title);
-            print_item_table(&subsection.items, category_names, sort_keys, categories);
+            print_item_table(&subsection.items, category_names, sort_keys, categories, table_style);
             if let Some(summary_line) = section_summary_line(
                 view,
                 section_index,
@@ -4690,7 +4729,7 @@ fn print_items_for_view(
     if let Some(unmatched) = result.unmatched {
         if !unmatched.is_empty() {
             if !has_sections {
-                print_item_table(&unmatched, category_names, sort_keys, categories);
+                print_item_table(&unmatched, category_names, sort_keys, categories, table_style);
                 return Ok(());
             }
 
@@ -4703,7 +4742,7 @@ fn print_items_for_view(
                 heading
             };
             println!("\n## {}", heading);
-            print_item_table(&unmatched, category_names, sort_keys, categories);
+            print_item_table(&unmatched, category_names, sort_keys, categories, table_style);
         }
     }
     Ok(())
@@ -4847,12 +4886,98 @@ fn summary_fn_label(summary_fn: SummaryFn) -> &'static str {
     }
 }
 
+/// Compact one-line rows (UX audit P2-CLI-2): 8-char id, honest DONE?
+/// column, humane date, title (with a note glyph), and direct leaf
+/// categories only. `--verbose` restores the original multi-line format.
+fn render_compact_item_table(
+    items: &[Item],
+    category_names: &HashMap<CategoryId, String>,
+    sort_keys: &[CliSortKey],
+    categories: &[Category],
+) -> String {
+    if items.is_empty() {
+        return "(no items)\n".to_string();
+    }
+
+    let rows = sorted_rows(items, sort_keys, categories);
+    let body: Vec<(String, &str, String, String)> = rows
+        .iter()
+        .map(|item| {
+            let id8: String = item.id.to_string().chars().take(8).collect();
+            let done = if item.is_done { "done" } else { "open" };
+            let when = item
+                .when_date
+                .map(aglet_core::dates::format_human_datetime)
+                .unwrap_or_else(|| "-".to_string());
+            let mut title = item.text.clone();
+            if item.note.as_deref().is_some_and(|note| !note.is_empty()) {
+                title.push_str(" \u{266A}");
+            }
+            let leaf_ids = aglet_core::query::display_category_ids(item, categories);
+            if !leaf_ids.is_empty() {
+                let names: Vec<String> = leaf_ids
+                    .iter()
+                    .map(|category_id| {
+                        category_names
+                            .get(category_id)
+                            .cloned()
+                            .unwrap_or_else(|| category_id.to_string())
+                    })
+                    .collect();
+                title.push_str(&format!("  [{}]", names.join(", ")));
+            }
+            (id8, done, when, title)
+        })
+        .collect();
+
+    let when_width = body
+        .iter()
+        .map(|(_, _, when, _)| when.chars().count())
+        .max()
+        .unwrap_or(4)
+        .max("WHEN".len());
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "{:<8}  {:<5}  {:<when_width$}  TITLE\n",
+        "ID",
+        "DONE?",
+        "WHEN",
+        when_width = when_width
+    ));
+    out.push_str(&format!(
+        "{}  {}  {}  -----\n",
+        "-".repeat(8),
+        "-".repeat(5),
+        "-".repeat(when_width)
+    ));
+    for (id8, done, when, title) in body {
+        out.push_str(&format!(
+            "{:<8}  {:<5}  {:<when_width$}  {}\n",
+            id8,
+            done,
+            when,
+            title,
+            when_width = when_width
+        ));
+    }
+    out
+}
+
 fn print_item_table(
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[CliSortKey],
     categories: &[Category],
+    style: TableStyle,
 ) {
+    if style == TableStyle::Compact {
+        print!(
+            "{}",
+            render_compact_item_table(items, category_names, sort_keys, categories)
+        );
+        return;
+    }
     if items.is_empty() {
         println!("(no items)");
         return;
@@ -5096,14 +5221,16 @@ mod tests {
         compare_items_by_sort_keys, describe_category_action, duplicate_category_create_error,
         indexed_category_action_row, item_link_section_lines, parse_csv_decimals,
         parse_decimal_value, parse_sort_spec, parse_when_datetime_input, parsed_when_feedback_line,
-        read_note_from_stdin, reject_items_with_any_categories, retain_items_by_dependency_state,
+        category_name_map, read_note_from_stdin, reject_items_with_any_categories,
+        render_compact_item_table, retain_items_by_dependency_state,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, section_summary_entries, section_summary_line,
         tui_launch_debug, unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
         write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, CategoryCommand, Cli,
         CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
         ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand, ListFilters,
-        NumericFilter, NumericPredicate, OutputFormatArg, UnlinkCommand, ViewAliasCommand,
+        NumericFilter, NumericPredicate, OutputFormatArg, TableStyle, UnlinkCommand,
+        ViewAliasCommand,
         ViewColumnCommand, ViewCommand, ViewSectionCommand,
     };
     use aglet_core::aglet::Aglet;
@@ -6432,6 +6559,80 @@ mod tests {
                 "Cost(max)=250".to_string(),
                 "Cost(count)=2".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn render_compact_item_table_one_line_rows_with_leaf_categories() {
+        let finance = Category::new("Finance".to_string());
+        let mut bills = Category::new("Bills".to_string());
+        bills.parent = Some(finance.id);
+        let mut finance_with_child = finance.clone();
+        finance_with_child.children = vec![bills.id];
+
+        let mut item = Item::new("Pay insurance".to_string());
+        item.note = Some("policy #123".to_string());
+        item.when_date = Some(date(2026, 6, 12).at(0, 0, 0, 0));
+        item.assignments.insert(
+            bills.id,
+            aglet_core::model::Assignment {
+                source: aglet_core::model::AssignmentSource::Manual,
+                assigned_at: jiff::Timestamp::now(),
+                sticky: true,
+                origin: None,
+                explanation: None,
+                numeric_value: None,
+            },
+        );
+        item.assignments.insert(
+            finance.id,
+            aglet_core::model::Assignment {
+                source: aglet_core::model::AssignmentSource::Subsumption,
+                assigned_at: jiff::Timestamp::now(),
+                sticky: false,
+                origin: None,
+                explanation: None,
+                numeric_value: None,
+            },
+        );
+
+        let categories = vec![finance_with_child, bills.clone()];
+        let category_names = category_name_map(&categories);
+        let items = vec![item.clone()];
+        let table = render_compact_item_table(&items, &category_names, &[], &categories);
+        let lines: Vec<&str> = table.lines().collect();
+
+        assert!(
+            lines[0].contains("DONE?") && !lines[0].contains("STATUS"),
+            "header should use the honest DONE? column: {table}"
+        );
+        assert_eq!(
+            lines.len(),
+            3,
+            "header + separator + one row per item (no continuation lines): {table}"
+        );
+        let row = lines[2];
+        let id8: String = item.id.to_string().chars().take(8).collect();
+        assert!(row.starts_with(&id8), "row should lead with the 8-char id: {row}");
+        assert!(
+            row.contains("2026-06-12") && !row.contains("00:00"),
+            "midnight when renders date-only: {row}"
+        );
+        assert!(
+            row.contains("Pay insurance \u{266A}"),
+            "note presence shows as a glyph: {row}"
+        );
+        assert!(
+            row.contains("[Bills]") && !row.contains("Finance"),
+            "categories list direct leaves only (no subsumed parents): {row}"
+        );
+    }
+
+    #[test]
+    fn render_compact_item_table_empty_prints_no_items() {
+        assert_eq!(
+            render_compact_item_table(&[], &HashMap::new(), &[], &[]),
+            "(no items)\n"
         );
     }
 
@@ -8363,6 +8564,7 @@ mod tests {
             empty_list_filters(),
             vec![],
             OutputFormatArg::Table,
+            TableStyle::Verbose,
         );
         assert!(result.is_ok(), "cmd_list should succeed: {result:?}");
     }
@@ -8387,6 +8589,7 @@ mod tests {
             empty_list_filters(),
             vec![],
             OutputFormatArg::Table,
+            TableStyle::Verbose,
         );
         assert!(
             result.is_ok(),
@@ -8409,6 +8612,7 @@ mod tests {
             empty_list_filters(),
             vec![],
             OutputFormatArg::Table,
+            TableStyle::Verbose,
         );
         assert!(result.is_ok(), "explicit --view should work: {result:?}");
     }
