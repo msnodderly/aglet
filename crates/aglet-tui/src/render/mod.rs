@@ -2207,7 +2207,6 @@ impl App {
                 }
                 None
             }
-            InputPanelFocus::Actions | InputPanelFocus::Suggestions => None,
             InputPanelFocus::When => {
                 let prefix_str = "  When: ";
                 let prefix_len = prefix_str.chars().count().min(u16::MAX as usize) as u16;
@@ -4461,8 +4460,6 @@ impl App {
                                 InputPanelFocus::When => "When",
                                 InputPanelFocus::Note => "Note",
                                 InputPanelFocus::Categories => "Categories",
-                                InputPanelFocus::Actions => "Actions",
-                                InputPanelFocus::Suggestions => "Suggestions",
                                 InputPanelFocus::TypePicker => "Type",
                             }
                         )
@@ -5233,9 +5230,7 @@ impl App {
         // Inline categories list (bordered, scrollable)
         if let Some(cat_rect) = regions.categories {
             let cat_focused = panel.focus == InputPanelFocus::Categories;
-            let actions_focused = panel.focus == InputPanelFocus::Actions;
-            let suggestions_focused = panel.focus == InputPanelFocus::Suggestions;
-            let cat_border_style = if cat_focused || actions_focused || suggestions_focused {
+            let cat_border_style = if cat_focused {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
@@ -5252,199 +5247,7 @@ impl App {
             };
             let inner_width = cat_list_rect.width as usize;
 
-            if panel.kind == InputPanelKind::EditItem {
-                let sidebar = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(4), Constraint::Min(0)])
-                    .split(cat_rect);
-                let actions_rect = sidebar[0];
-                let suggestions_rect = sidebar[1];
-                let suggestion_len = panel.pending_suggestions.len();
-                let suggestion_names = category_name_map(&self.categories);
-
-                let suggestions_border_style = if suggestions_focused {
-                    cat_border_style
-                } else {
-                    Style::default().fg(Color::Cyan)
-                };
-                let actions_border_style = if actions_focused {
-                    cat_border_style
-                } else {
-                    Style::default().fg(Color::Cyan)
-                };
-
-                frame.render_widget(
-                    Block::default()
-                        .title(if actions_focused {
-                            "> Actions"
-                        } else {
-                            "Actions"
-                        })
-                        .borders(Borders::ALL)
-                        .border_style(actions_border_style),
-                    actions_rect,
-                );
-                if suggestion_len == 0 {
-                    frame.render_widget(
-                        Paragraph::new(Line::from(Span::styled(
-                            "No pending suggestions",
-                            Style::default().fg(Color::DarkGray),
-                        ))),
-                        Rect {
-                            x: suggestions_rect.x,
-                            y: suggestions_rect.y.saturating_add(1),
-                            width: suggestions_rect.width,
-                            height: 1,
-                        },
-                    );
-                } else {
-                    frame.render_widget(
-                        Block::default()
-                            .title(if suggestions_focused {
-                                "> Suggestions"
-                            } else {
-                                "Suggestions"
-                            })
-                            .borders(Borders::ALL)
-                            .border_style(suggestions_border_style),
-                        suggestions_rect,
-                    );
-                }
-
-                let actions_inner = Rect {
-                    x: actions_rect.x.saturating_add(1),
-                    y: actions_rect.y.saturating_add(1),
-                    width: actions_rect.width.saturating_sub(2),
-                    height: actions_rect.height.saturating_sub(2),
-                };
-                let suggestions_inner = Rect {
-                    x: suggestions_rect.x.saturating_add(1),
-                    y: suggestions_rect.y.saturating_add(1),
-                    width: suggestions_rect.width.saturating_sub(2),
-                    height: suggestions_rect.height.saturating_sub(2),
-                };
-
-                let action_rows = [("a", "Assign categories"), ("i", "Inspect item details")];
-                let action_lines: Vec<Line<'_>> = action_rows
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, (key, label))| {
-                        let selected = actions_focused && panel.action_cursor == idx;
-                        let line_style = if selected {
-                            Style::default().fg(Color::Black).bg(Color::Cyan)
-                        } else {
-                            Style::default()
-                        };
-                        let key_style = if selected {
-                            line_style
-                        } else {
-                            Style::default().fg(Color::Yellow)
-                        };
-                        Line::from(vec![
-                            Span::styled(if selected { "> " } else { "  " }, line_style),
-                            Span::styled(*key, key_style),
-                            Span::styled("  ", line_style),
-                            Span::styled(*label, line_style),
-                        ])
-                    })
-                    .collect();
-                if actions_inner.width > 0 && actions_inner.height > 0 {
-                    frame.render_widget(Paragraph::new(action_lines), actions_inner);
-                }
-
-                let suggestion_lines: Vec<Line<'_>> = if suggestion_len == 0 {
-                    Vec::new()
-                } else {
-                    panel
-                        .pending_suggestions
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(idx, (suggestion, decision))| {
-                            let selected = suggestions_focused && panel.category_cursor == idx;
-                            let row_style = if selected {
-                                Style::default().fg(Color::Black).bg(Color::Cyan)
-                            } else {
-                                Style::default()
-                            };
-                            let meta_style = if selected {
-                                Style::default().fg(Color::Black).bg(Color::Cyan)
-                            } else {
-                                Style::default().fg(Color::DarkGray)
-                            };
-                            let marker_style = match decision {
-                                SuggestionDecision::Pending => Style::default().fg(Color::Yellow),
-                                SuggestionDecision::Accept => {
-                                    Style::default().fg(Color::LightGreen)
-                                }
-                                SuggestionDecision::Reject => Style::default().fg(Color::LightRed),
-                            };
-                            let marker_style = if selected {
-                                marker_style.bg(Color::Cyan).fg(Color::Black)
-                            } else {
-                                marker_style
-                            };
-                            let label = candidate_assignment_label(
-                                &suggestion.assignment,
-                                &suggestion_names,
-                            );
-                            let provider_label = suggestion
-                                .model
-                                .as_ref()
-                                .map(|model| format!("{}:{model}", suggestion.provider_id))
-                                .unwrap_or_else(|| suggestion.provider_id.clone());
-                            let confidence_label = suggestion
-                                .confidence
-                                .map(|value| format!("{:.0}%", value * 100.0))
-                                .unwrap_or_else(|| "-".to_string());
-                            let rationale = suggestion.rationale.as_deref().unwrap_or("text match");
-                            vec![
-                                Line::from(vec![
-                                    Span::styled(if selected { "> " } else { "  " }, row_style),
-                                    Span::styled(format!("{} ", decision.marker()), marker_style),
-                                    Span::styled(label, row_style),
-                                ]),
-                                Line::from(vec![
-                                    Span::styled("    ", meta_style),
-                                    Span::styled(
-                                        format!(
-                                            "[{provider_label} {confidence_label}] {rationale}"
-                                        ),
-                                        meta_style,
-                                    ),
-                                ]),
-                            ]
-                        })
-                        .collect()
-                };
-                if suggestion_len > 0 && suggestions_inner.width > 0 && suggestions_inner.height > 0
-                {
-                    let rendered_suggestion_lines = if suggestion_len == 0 {
-                        1
-                    } else {
-                        suggestion_len * 2
-                    };
-                    let suggestion_scroll = list_scroll_for_selected_line(
-                        suggestions_inner,
-                        if suggestions_focused {
-                            Some(panel.category_cursor.saturating_mul(2))
-                        } else {
-                            None
-                        },
-                    );
-                    frame.render_widget(
-                        Paragraph::new(suggestion_lines).scroll((suggestion_scroll, 0)),
-                        suggestions_inner,
-                    );
-                    if rendered_suggestion_lines > suggestions_inner.height as usize {
-                        Self::render_vertical_scrollbar(
-                            frame,
-                            suggestions_rect,
-                            rendered_suggestion_lines,
-                            suggestion_scroll as usize,
-                        );
-                    }
-                }
-            } else if panel.category_filter_editing {
+            if panel.category_filter_editing {
                 frame.render_widget(
                     Block::default()
                         .title(if cat_focused {
@@ -5737,17 +5540,10 @@ impl App {
             InputPanelFocus::Categories if panel.category_filter_editing => {
                 "Type filter  Enter:keep  Esc:done  Tab:next"
             }
+            InputPanelFocus::Categories if panel.kind == InputPanelKind::EditItem => {
+                "j/k:move  Space:toggle  /:filter  a:picker  I:inspect  S/Ctrl-S:save  Tab:text  Esc:close"
+            }
             InputPanelFocus::Categories => "j/k:move  Space:toggle  /:filter  S/Ctrl-S:save  Tab:text  Esc:close",
-            InputPanelFocus::Actions => {
-                if panel.pending_suggestions.is_empty() {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:text  Shift-Tab:note  S/Ctrl-S:save  Esc:cancel"
-                } else {
-                    "j/k:move  Enter/Space:select  a/i:shortcut  Tab:suggestions  Shift-Tab:note  S/Ctrl-S:save  Esc:cancel"
-                }
-            }
-            InputPanelFocus::Suggestions => {
-                "j/k:move  Enter/Space:toggle  Tab:text  Shift-Tab:actions  S/Ctrl-S:save  Esc:cancel"
-            }
             InputPanelFocus::TypePicker => "Left/Right/Space toggle type  Ctrl-S:save  Tab:text  Esc:cancel",
             InputPanelFocus::When => {
                 "today, tomorrow, every monday, daily, monthly on the 15th  Enter:recalc  Ctrl-S:save  Tab:next  Esc:cancel"

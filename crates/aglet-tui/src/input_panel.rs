@@ -35,8 +35,6 @@ pub(crate) enum InputPanelFocus {
     When,
     Note,
     Categories,
-    Actions,
-    Suggestions,
     /// Tag/Numeric toggle (CategoryCreate only).
     TypePicker,
 }
@@ -79,8 +77,6 @@ pub(crate) struct InputPanel {
     pub(crate) preview_context: String,
     /// Cursor position within the category list.
     pub(crate) category_cursor: usize,
-    /// Cursor position within the edit-panel actions list.
-    pub(crate) action_cursor: usize,
     /// Inline filter text for narrowing the categories list in add/edit panels.
     pub(crate) category_filter: TextBuffer,
     /// Whether category filter input is actively focused for typing.
@@ -131,7 +127,6 @@ impl InputPanel {
             item_id: None,
             preview_context: format_section_context(section_title, auto_assign_names),
             category_cursor: 0,
-            action_cursor: 0,
             category_filter: TextBuffer::empty(),
             category_filter_editing: false,
             numeric_buffers: HashMap::new(),
@@ -174,7 +169,6 @@ impl InputPanel {
             item_id: Some(item_id),
             preview_context: String::new(),
             category_cursor: 0,
-            action_cursor: 0,
             category_filter: TextBuffer::empty(),
             category_filter_editing: false,
             numeric_buffers,
@@ -205,7 +199,6 @@ impl InputPanel {
             item_id: None,
             preview_context: label.to_string(),
             category_cursor: 0,
-            action_cursor: 0,
             category_filter: TextBuffer::empty(),
             category_filter_editing: false,
             numeric_buffers: HashMap::new(),
@@ -236,7 +229,6 @@ impl InputPanel {
             item_id: None,
             preview_context: label.to_string(),
             category_cursor: 0,
-            action_cursor: 0,
             category_filter: TextBuffer::empty(),
             category_filter_editing: false,
             numeric_buffers: HashMap::new(),
@@ -267,7 +259,6 @@ impl InputPanel {
             item_id: None,
             preview_context: label.to_string(),
             category_cursor: 0,
-            action_cursor: 0,
             category_filter: TextBuffer::empty(),
             category_filter_editing: false,
             numeric_buffers: HashMap::new(),
@@ -298,7 +289,6 @@ impl InputPanel {
             item_id: None,
             preview_context: String::new(),
             category_cursor: 0,
-            action_cursor: 0,
             category_filter: TextBuffer::empty(),
             category_filter_editing: false,
             numeric_buffers: HashMap::new(),
@@ -341,6 +331,43 @@ impl InputPanel {
         false
     }
 
+    /// Category additions/removals relative to the panel's original state
+    /// (Edit Item inline checklist diff, applied on save).
+    pub(crate) fn category_changes(&self) -> (Vec<CategoryId>, Vec<CategoryId>) {
+        let added = self
+            .categories
+            .difference(&self.original_categories)
+            .copied()
+            .collect();
+        let removed = self
+            .original_categories
+            .difference(&self.categories)
+            .copied()
+            .collect();
+        (added, removed)
+    }
+
+    /// Numeric value edits among assigned numeric categories: `(id, value)`
+    /// for buffers whose parsed value differs from the original. Empty or
+    /// unparseable buffers are skipped (no change).
+    pub(crate) fn numeric_value_changes(&self) -> Vec<(CategoryId, Decimal)> {
+        self.numeric_buffers
+            .iter()
+            .filter_map(|(cat_id, buf)| {
+                if !self.categories.contains(cat_id) {
+                    return None;
+                }
+                let trimmed = buf.trimmed().replace(',', "");
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let parsed: Decimal = trimmed.parse().ok()?;
+                let original = self.numeric_originals.get(cat_id).copied().flatten();
+                (Some(parsed) != original).then_some((*cat_id, parsed))
+            })
+            .collect()
+    }
+
     /// Toggles `category_id` in the panel's category set.
     pub(crate) fn toggle_category(&mut self, category_id: CategoryId) {
         if self.categories.contains(&category_id) {
@@ -379,9 +406,6 @@ impl InputPanel {
             InputPanelFocus::Categories => {
                 self.handle_categories_focus(code, current_row_is_assigned_numeric)
             }
-            InputPanelFocus::Actions | InputPanelFocus::Suggestions => {
-                self.handle_edit_sidebar_focus(code)
-            }
             InputPanelFocus::TypePicker => self.handle_type_picker_focus(code),
         }
     }
@@ -407,12 +431,8 @@ impl InputPanel {
                 if !(matches!(
                     self.focus,
                     InputPanelFocus::Text | InputPanelFocus::Note | InputPanelFocus::When
-                ) || matches!(
-                    self.focus,
-                    InputPanelFocus::Categories
-                        | InputPanelFocus::Actions
-                        | InputPanelFocus::Suggestions
-                ) && current_row_is_assigned_numeric) =>
+                ) || self.focus == InputPanelFocus::Categories
+                    && current_row_is_assigned_numeric) =>
             {
                 Some(InputPanelAction::Save)
             }
@@ -466,15 +486,6 @@ impl InputPanel {
         }
     }
 
-    fn handle_edit_sidebar_focus(&mut self, code: KeyCode) -> InputPanelAction {
-        match code {
-            KeyCode::Down | KeyCode::Char('j') => InputPanelAction::MoveCategoryCursor(1),
-            KeyCode::Up | KeyCode::Char('k') => InputPanelAction::MoveCategoryCursor(-1),
-            KeyCode::Char(' ') | KeyCode::Enter => InputPanelAction::ToggleCategory,
-            _ => InputPanelAction::Unhandled,
-        }
-    }
-
     fn handle_type_picker_focus(&mut self, code: KeyCode) -> InputPanelAction {
         match code {
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
@@ -514,18 +525,7 @@ impl InputPanel {
                 InputPanelKind::AddItem | InputPanelKind::EditItem => InputPanelFocus::When,
             },
             InputPanelFocus::When => InputPanelFocus::Note,
-            InputPanelFocus::Note => match self.kind {
-                InputPanelKind::EditItem => InputPanelFocus::Actions,
-                _ => InputPanelFocus::Categories,
-            },
-            InputPanelFocus::Actions => {
-                if self.kind == InputPanelKind::EditItem && !self.pending_suggestions.is_empty() {
-                    InputPanelFocus::Suggestions
-                } else {
-                    InputPanelFocus::Text
-                }
-            }
-            InputPanelFocus::Suggestions => InputPanelFocus::Text,
+            InputPanelFocus::Note => InputPanelFocus::Categories,
             InputPanelFocus::Categories => InputPanelFocus::Text,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
         };
@@ -538,17 +538,11 @@ impl InputPanel {
                 | InputPanelKind::WhenDate
                 | InputPanelKind::NumericValue => InputPanelFocus::Text, // single field, no-op
                 InputPanelKind::CategoryCreate => InputPanelFocus::TypePicker,
-                InputPanelKind::EditItem if !self.pending_suggestions.is_empty() => {
-                    InputPanelFocus::Suggestions
-                }
-                InputPanelKind::EditItem => InputPanelFocus::Actions,
                 _ => InputPanelFocus::Categories,
             },
             InputPanelFocus::When => InputPanelFocus::Text,
             InputPanelFocus::Note => InputPanelFocus::When,
             InputPanelFocus::Categories => InputPanelFocus::Note,
-            InputPanelFocus::Actions => InputPanelFocus::Note,
-            InputPanelFocus::Suggestions => InputPanelFocus::Actions,
             InputPanelFocus::TypePicker => InputPanelFocus::Text,
         };
     }
@@ -930,7 +924,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_item_tab_cycles_directly_to_actions() {
+    fn edit_item_tab_cycle_matches_add_item() {
         let mut p = InputPanel::new_edit_item(
             ItemId::new_v4(),
             "My item".into(),
@@ -941,17 +935,21 @@ mod tests {
             HashMap::new(),
         );
 
+        // UX audit P2-7: Edit Item uses the same inline-categories focus
+        // cycle as Add Item (no separate Actions pane).
         assert_eq!(p.focus, InputPanelFocus::Text);
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::When);
         p.handle_key(KeyCode::Tab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
         p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::Actions);
+        assert_eq!(p.focus, InputPanelFocus::Categories);
+        p.handle_key(KeyCode::Tab, false);
+        assert_eq!(p.focus, InputPanelFocus::Text);
     }
 
     #[test]
-    fn edit_item_backtab_returns_from_actions_to_note() {
+    fn edit_item_backtab_returns_from_categories_to_note() {
         let mut p = InputPanel::new_edit_item(
             ItemId::new_v4(),
             "My item".into(),
@@ -961,13 +959,13 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
         );
-        p.focus = InputPanelFocus::Actions;
+        p.focus = InputPanelFocus::Categories;
         p.handle_key(KeyCode::BackTab, false);
         assert_eq!(p.focus, InputPanelFocus::Note);
     }
 
     #[test]
-    fn edit_item_tab_and_backtab_include_suggestions_when_present() {
+    fn edit_item_cycle_is_stable_with_pending_suggestions() {
         let mut p = InputPanel::new_edit_item(
             ItemId::new_v4(),
             "My item".into(),
@@ -999,11 +997,13 @@ mod tests {
 
         p.focus = InputPanelFocus::Note;
         p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::Actions);
-        p.handle_key(KeyCode::Tab, false);
-        assert_eq!(p.focus, InputPanelFocus::Suggestions);
+        assert_eq!(
+            p.focus,
+            InputPanelFocus::Categories,
+            "suggestions render inside the categories pane; the cycle is unchanged"
+        );
         p.handle_key(KeyCode::BackTab, false);
-        assert_eq!(p.focus, InputPanelFocus::Actions);
+        assert_eq!(p.focus, InputPanelFocus::Note);
     }
 
     #[test]

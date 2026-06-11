@@ -4445,6 +4445,24 @@ impl App {
         }
     }
 
+    /// True when the categories-pane cursor sits on an assigned numeric
+    /// category whose inline value field captures printable keys.
+    fn input_panel_cursor_row_is_assigned_numeric(&self) -> bool {
+        self.input_panel
+            .as_ref()
+            .and_then(|panel| {
+                if panel.focus != input_panel::InputPanelFocus::Categories {
+                    return Some(false);
+                }
+                self.input_panel_selected_category_row().map(|selection| {
+                    let row = &selection.row;
+                    panel.categories.contains(&row.id)
+                        && row.value_kind == aglet_core::model::CategoryValueKind::Numeric
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// Handle a key event while in Mode::InputPanel.
     pub(crate) fn handle_input_panel_key(
         &mut self,
@@ -4554,43 +4572,18 @@ impl App {
             return Ok(false);
         }
 
+        // `a` opens the full assign picker from the EditItem categories pane
+        // (like the `i`/`I` inspector shortcut, it wins over typing a letter
+        // into a numeric value row — letters are never valid there).
         if matches!(code, KeyCode::Char('a'))
             && self.input_panel.as_ref().is_some_and(|panel| {
                 panel.kind == input_panel::InputPanelKind::EditItem
-                    && matches!(
-                        panel.focus,
-                        input_panel::InputPanelFocus::Actions
-                            | input_panel::InputPanelFocus::Suggestions
-                    )
+                    && panel.focus == input_panel::InputPanelFocus::Categories
+                    && !panel.category_filter_editing
                     && !panel.details_popup_open
             })
         {
-            if let Some(panel) = &mut self.input_panel {
-                panel.focus = input_panel::InputPanelFocus::Actions;
-                panel.action_cursor = 0;
-            }
             self.open_item_assign_from_edit_panel(aglet);
-            return Ok(false);
-        }
-
-        if matches!(code, KeyCode::Char('i') | KeyCode::Char('I'))
-            && self.input_panel.as_ref().is_some_and(|panel| {
-                panel.kind == input_panel::InputPanelKind::EditItem
-                    && matches!(
-                        panel.focus,
-                        input_panel::InputPanelFocus::Actions
-                            | input_panel::InputPanelFocus::Suggestions
-                    )
-                    && !panel.details_popup_open
-            })
-        {
-            if let Some(panel) = &mut self.input_panel {
-                panel.focus = input_panel::InputPanelFocus::Actions;
-                panel.action_cursor = 1;
-                panel.details_popup_open = true;
-                panel.details_scroll = 0;
-            }
-            self.status = "Inspect item details: Esc or i closes".to_string();
             return Ok(false);
         }
 
@@ -4635,22 +4628,7 @@ impl App {
             return self.handle_input_panel_discard_confirm_key(code, aglet);
         }
 
-        let current_row_is_assigned_numeric = self
-            .input_panel
-            .as_ref()
-            .and_then(|panel| {
-                if panel.kind == input_panel::InputPanelKind::EditItem
-                    || panel.focus != input_panel::InputPanelFocus::Categories
-                {
-                    return Some(false);
-                }
-                self.input_panel_selected_category_row().map(|selection| {
-                    let row = &selection.row;
-                    panel.categories.contains(&row.id)
-                        && row.value_kind == aglet_core::model::CategoryValueKind::Numeric
-                })
-            })
-            .unwrap_or(false);
+        let current_row_is_assigned_numeric = self.input_panel_cursor_row_is_assigned_numeric();
 
         let input_key = self.text_key_event(code);
         let action = {
@@ -4725,63 +4703,6 @@ impl App {
                 }
             }
             InputPanelAction::ToggleCategory => {
-                if self.input_panel.as_ref().is_some_and(|panel| {
-                    panel.kind == input_panel::InputPanelKind::EditItem
-                        && panel.focus == input_panel::InputPanelFocus::Actions
-                }) {
-                    let action_index = self
-                        .input_panel
-                        .as_ref()
-                        .map(|p| p.action_cursor.min(1))
-                        .unwrap_or(0);
-                    match action_index {
-                        0 => self.open_item_assign_from_edit_panel(aglet),
-                        1 => {
-                            if let Some(panel) = &mut self.input_panel {
-                                panel.details_popup_open = true;
-                                panel.details_scroll = 0;
-                            }
-                            self.status = "Inspect item details: Esc or i closes".to_string();
-                        }
-                        _ => {}
-                    }
-                    return Ok(false);
-                }
-                if self.input_panel.as_ref().is_some_and(|panel| {
-                    panel.kind == input_panel::InputPanelKind::EditItem
-                        && panel.focus == input_panel::InputPanelFocus::Suggestions
-                }) {
-                    let cursor = self
-                        .input_panel
-                        .as_ref()
-                        .map(|p| p.category_cursor)
-                        .unwrap_or(0);
-                    let new_status = if let Some(panel) = &mut self.input_panel {
-                        if let Some(entry) = panel.pending_suggestions.get_mut(cursor) {
-                            entry.1 = entry.1.next();
-                            let cat_names = category_name_map(&self.categories);
-                            let cat_name =
-                                candidate_assignment_label(&entry.0.assignment, &cat_names);
-                            Some(format!(
-                                "Suggestion '{}': {}",
-                                cat_name,
-                                match entry.1 {
-                                    SuggestionDecision::Pending => "pending",
-                                    SuggestionDecision::Accept => "accept",
-                                    SuggestionDecision::Reject => "reject",
-                                }
-                            ))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-                    if let Some(status) = new_status {
-                        self.status = status;
-                    }
-                    return Ok(false);
-                }
                 // Suggestions occupy indices 0..suggestion_len; categories start after
                 let suggestion_len = self
                     .input_panel
@@ -4880,26 +4801,7 @@ impl App {
                     cat_len + suggestion_len
                 });
                 if let Some(panel) = &mut self.input_panel {
-                    if panel.kind == input_panel::InputPanelKind::EditItem {
-                        match panel.focus {
-                            input_panel::InputPanelFocus::Actions => {
-                                let len = 2i64;
-                                let current = panel.action_cursor as i64;
-                                panel.action_cursor =
-                                    ((current + delta as i64).rem_euclid(len)) as usize;
-                            }
-                            input_panel::InputPanelFocus::Suggestions => {
-                                let total_len = panel.pending_suggestions.len();
-                                if total_len > 0 {
-                                    let current = panel.category_cursor as i64;
-                                    let len = total_len as i64;
-                                    panel.category_cursor =
-                                        ((current + delta as i64).rem_euclid(len)) as usize;
-                                }
-                            }
-                            _ => {}
-                        }
-                    } else if add_panel_total_len > 0 {
+                    if add_panel_total_len > 0 {
                         let current = panel.category_cursor as i64;
                         let len = add_panel_total_len as i64;
                         let new = ((current + delta as i64).rem_euclid(len)) as usize;
@@ -5158,8 +5060,17 @@ impl App {
             .iter()
             .any(|(_, d)| *d != SuggestionDecision::Pending);
         let pending_suggestions = panel.pending_suggestions.clone();
+        let (categories_added, categories_removed) = panel.category_changes();
+        let numeric_changes = panel.numeric_value_changes();
 
-        if no_text_change && no_note_change && no_when_change && !has_suggestion_decisions {
+        if no_text_change
+            && no_note_change
+            && no_when_change
+            && !has_suggestion_decisions
+            && categories_added.is_empty()
+            && categories_removed.is_empty()
+            && numeric_changes.is_empty()
+        {
             self.input_panel = None;
             self.mode = Mode::Normal;
             self.status = "Edit canceled: no changes".to_string();
@@ -5235,6 +5146,28 @@ impl App {
             }
         }
 
+        // Apply the inline category checklist diff (same effect as the full
+        // picker: manual assign/unassign; rule-derived removals may be
+        // re-applied by reprocessing, like everywhere else).
+        for category_id in &categories_added {
+            let _ = aglet.assign_item_manual(
+                item_id,
+                *category_id,
+                Some("manual:input_panel.edit".to_string()),
+            );
+        }
+        for category_id in &categories_removed {
+            let _ = aglet.unassign_item_manual(item_id, *category_id);
+        }
+        for (category_id, value) in &numeric_changes {
+            let _ = aglet.assign_item_numeric_manual(
+                item_id,
+                *category_id,
+                *value,
+                Some("manual:input_panel.edit".to_string()),
+            );
+        }
+
         self.push_undo(UndoEntry::ItemEdited {
             item_id,
             old_text: undo_old_text,
@@ -5245,6 +5178,16 @@ impl App {
         self.input_panel = None;
         self.mode = Mode::Normal;
         let mut status = "Item updated".to_string();
+        if !categories_added.is_empty() || !categories_removed.is_empty() {
+            let mut parts = Vec::new();
+            if !categories_added.is_empty() {
+                parts.push(format!("+{}", categories_added.len()));
+            }
+            if !categories_removed.is_empty() {
+                parts.push(format!("-{}", categories_removed.len()));
+            }
+            status.push_str(&format!(" | Categories: {}", parts.join(" ")));
+        }
         if !no_when_change {
             if when_text.is_empty() {
                 status.push_str(" | When cleared");

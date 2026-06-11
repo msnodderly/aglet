@@ -917,7 +917,13 @@ pane in the main edit layout. Instead, `I` opens a separate read-only inspector
 popup from non-text edit focus states.
 
 Practical implications:
-- Edit-item tab cycle is back to `Text -> When -> Note -> Categories -> Save -> Cancel`
+- Edit Item uses the same inline Categories checklist and focus cycle as Add
+  Item (`Text -> When -> Note -> Categories -> Text`); there is no separate
+  Actions pane. `a` opens the full assign picker and `I` the inspector from
+  the categories pane; pending suggestions render at the top of the same pane.
+- The inline checklist diff (checkbox toggles + numeric value edits) is
+  applied on save via `InputPanel::category_changes` /
+  `numeric_value_changes` — the same manual assign/unassign the picker does.
 - The inspector popup omits note text and note preview; keep note editing in the
   main edit panel and reserve the popup for metadata, links, and assignment
   provenance
