@@ -2039,7 +2039,13 @@ fn cmd_list(
     } else if output_format == OutputFormatArg::Json {
         print_items_json(&items, &category_names, &sort_keys, &categories)?;
     } else {
-        print_item_table(&items, &category_names, &sort_keys, &categories, table_style);
+        print_item_table(
+            &items,
+            &category_names,
+            &sort_keys,
+            &categories,
+            table_style,
+        );
     }
     Ok(())
 }
@@ -2210,7 +2216,13 @@ fn cmd_search(
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
     } else {
-        print_item_table(&matched_items, &category_names, &[], &categories, table_style);
+        print_item_table(
+            &matched_items,
+            &category_names,
+            &[],
+            &categories,
+            table_style,
+        );
     }
     Ok(())
 }
@@ -4698,7 +4710,13 @@ fn print_items_for_view(
             println!("{columns_line}");
         }
         if section.subsections.is_empty() {
-            print_item_table(&section.items, category_names, sort_keys, categories, table_style);
+            print_item_table(
+                &section.items,
+                category_names,
+                sort_keys,
+                categories,
+                table_style,
+            );
             if let Some(summary_line) = section_summary_line(
                 view,
                 section_index,
@@ -4713,7 +4731,13 @@ fn print_items_for_view(
 
         for subsection in section.subsections {
             println!("\n### {}", subsection.title);
-            print_item_table(&subsection.items, category_names, sort_keys, categories, table_style);
+            print_item_table(
+                &subsection.items,
+                category_names,
+                sort_keys,
+                categories,
+                table_style,
+            );
             if let Some(summary_line) = section_summary_line(
                 view,
                 section_index,
@@ -4729,7 +4753,13 @@ fn print_items_for_view(
     if let Some(unmatched) = result.unmatched {
         if !unmatched.is_empty() {
             if !has_sections {
-                print_item_table(&unmatched, category_names, sort_keys, categories, table_style);
+                print_item_table(
+                    &unmatched,
+                    category_names,
+                    sort_keys,
+                    categories,
+                    table_style,
+                );
                 return Ok(());
             }
 
@@ -4742,7 +4772,13 @@ fn print_items_for_view(
                 heading
             };
             println!("\n## {}", heading);
-            print_item_table(&unmatched, category_names, sort_keys, categories, table_style);
+            print_item_table(
+                &unmatched,
+                category_names,
+                sort_keys,
+                categories,
+                table_style,
+            );
         }
     }
     Ok(())
@@ -5216,12 +5252,12 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_add, cmd_category,
-        cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, describe_category_action, duplicate_category_create_error,
-        indexed_category_action_row, item_link_section_lines, parse_csv_decimals,
-        parse_decimal_value, parse_sort_spec, parse_when_datetime_input, parsed_when_feedback_line,
-        category_name_map, read_note_from_stdin, reject_items_with_any_categories,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, category_name_map, cmd_add,
+        cmd_category, cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink,
+        cmd_view, compare_items_by_sort_keys, describe_category_action,
+        duplicate_category_create_error, indexed_category_action_row, item_link_section_lines,
+        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
+        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
         render_compact_item_table, retain_items_by_dependency_state,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
         retain_items_with_any_categories, section_summary_entries, section_summary_line,
@@ -5230,8 +5266,7 @@ mod tests {
         CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
         ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand, ListFilters,
         NumericFilter, NumericPredicate, OutputFormatArg, TableStyle, UnlinkCommand,
-        ViewAliasCommand,
-        ViewColumnCommand, ViewCommand, ViewSectionCommand,
+        ViewAliasCommand, ViewColumnCommand, ViewCommand, ViewSectionCommand,
     };
     use aglet_core::aglet::Aglet;
     use aglet_core::matcher::SubstringClassifier;
@@ -6613,7 +6648,10 @@ mod tests {
         );
         let row = lines[2];
         let id8: String = item.id.to_string().chars().take(8).collect();
-        assert!(row.starts_with(&id8), "row should lead with the 8-char id: {row}");
+        assert!(
+            row.starts_with(&id8),
+            "row should lead with the 8-char id: {row}"
+        );
         assert!(
             row.contains("2026-06-12") && !row.contains("00:00"),
             "midnight when renders date-only: {row}"
