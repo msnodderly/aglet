@@ -5235,8 +5235,7 @@ fn assignment_summary_leads_with_auto_assigned_toast() {
         .assignment_event_status_summary_for_item(&result, Some(&item))
         .expect("summary");
     assert_eq!(
-        message,
-        "Auto-assigned: Someday/Maybe (matched \"maybe\" in note), Home (+1 more)",
+        message, "Auto-assigned: Someday/Maybe (matched \"maybe\" in note), Home (+1 more)",
         "toast should name auto-assignments, locate the first match, and cap the list"
     );
 }

@@ -5852,20 +5852,19 @@ impl App {
                     // Pending add under an exclusive parent: name the sibling
                     // it will displace before apply.
                     let displaced = if to_add {
-                        let names: Vec<String> =
-                            modes::board::exclusive_siblings_to_clear(
-                                &self.category_rows,
-                                row_index,
-                            )
-                            .into_iter()
-                            .filter(|sibling| self.selected_item_has_assignment(*sibling))
-                            .filter_map(|sibling| {
-                                self.categories
-                                    .iter()
-                                    .find(|category| category.id == sibling)
-                                    .map(|category| category.name.clone())
-                            })
-                            .collect();
+                        let names: Vec<String> = modes::board::exclusive_siblings_to_clear(
+                            &self.category_rows,
+                            row_index,
+                        )
+                        .into_iter()
+                        .filter(|sibling| self.selected_item_has_assignment(*sibling))
+                        .filter_map(|sibling| {
+                            self.categories
+                                .iter()
+                                .find(|category| category.id == sibling)
+                                .map(|category| category.name.clone())
+                        })
+                        .collect();
                         names
                     } else {
                         Vec::new()

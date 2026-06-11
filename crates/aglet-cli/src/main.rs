@@ -5010,7 +5010,10 @@ fn render_section_column_table(
         totals = Some(cells);
     }
 
-    let mut widths: Vec<usize> = headers.iter().map(|header| header.chars().count()).collect();
+    let mut widths: Vec<usize> = headers
+        .iter()
+        .map(|header| header.chars().count())
+        .collect();
     for row in body.iter().chain(totals.iter()) {
         for (idx, cell) in row.iter().enumerate() {
             widths[idx] = widths[idx].max(cell.chars().count());
@@ -5305,15 +5308,15 @@ fn print_category_subtree(
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_item_ids, build_markdown_export, build_numeric_filters, cmd_add, cmd_category,
-        cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink, cmd_view,
-        compare_items_by_sort_keys, describe_category_action, duplicate_category_create_error,
-        indexed_category_action_row, item_link_section_lines, parse_csv_decimals,
-        parse_decimal_value, parse_sort_spec, parse_when_datetime_input, parsed_when_feedback_line,
-        read_note_from_stdin, reject_items_with_any_categories, retain_items_by_dependency_state,
+        blocked_item_ids, build_markdown_export, build_numeric_filters, category_name_map, cmd_add,
+        cmd_category, cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink,
+        cmd_view, compare_items_by_sort_keys, describe_category_action,
+        duplicate_category_create_error, indexed_category_action_row, item_link_section_lines,
+        parse_csv_decimals, parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
+        parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
+        render_section_column_table, retain_items_by_dependency_state,
         retain_items_matching_numeric_filters, retain_items_with_all_categories,
-        category_name_map, render_section_column_table, retain_items_with_any_categories,
-        section_summary_entries, section_summary_line,
+        retain_items_with_any_categories, section_summary_entries, section_summary_line,
         tui_launch_debug, unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
         write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, CategoryCommand, Cli,
         CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
@@ -5325,9 +5328,9 @@ mod tests {
     use aglet_core::matcher::SubstringClassifier;
     use aglet_core::model::ConditionMatchMode;
     use aglet_core::model::{
-        Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition, CriterionMode,
-        DateCompareOp, DateMatcher, DateSource, Item, NumericFormat, Query, Section, SummaryFn,
-        View,
+        Action, Category, CategoryId, CategoryValueKind, Column, ColumnKind, Condition,
+        CriterionMode, DateCompareOp, DateMatcher, DateSource, Item, NumericFormat, Query, Section,
+        SummaryFn, View,
     };
     use aglet_core::store::Store;
     use clap::{CommandFactory, Parser};
@@ -6715,8 +6718,9 @@ mod tests {
         let categories = vec![cost.clone()];
         let category_names = category_name_map(&categories);
         let items = vec![first, second];
-        let table = render_section_column_table(&view, 0, &items, &category_names, &[], &categories)
-            .expect("columns configured");
+        let table =
+            render_section_column_table(&view, 0, &items, &category_names, &[], &categories)
+                .expect("columns configured");
 
         assert!(
             table.contains("Amount"),
