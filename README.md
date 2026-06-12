@@ -84,7 +84,8 @@ any time to open the full in-app help panel.
 2. Type an item, such as `Review Work budget Friday`.
 3. Use `Tab` to move through the editor fields. Add a note if you want longer
    context.
-4. Press `ctrl-s` to save, or `Esc` to cancel.
+4. Press `Ctrl-S` to save from any editor field. `Enter` also saves from the
+   title field; `Esc` cancels.
 5. Repeat for a few more items, such as `Buy groceries` or `Schedule motorcycle
    maintenance next week`.
 
@@ -105,11 +106,14 @@ when the category name appears in an item's text or note.
 3. Enter names like `Work`, `Personal`, and `Urgent`.
 4. Use the details pane to adjust category settings such as exclusivity,
    implicit matching, and notes.
-5. Press `S` to save category edits, then `Esc` to return to the main view.
+5. Press `S` or `Ctrl-S` to save category edits, then `Esc` to return to the
+   main view.
 
 To assign a category manually, return to the main view, select an item, press
-`a`, choose a category, and press `Space` to toggle the assignment. Press
-`Enter` to close the picker.
+`a`, choose a category, and press `Space` to toggle the assignment without
+closing. Press `Enter` to apply the current result and close the picker. Press
+`/` to filter categories; from the filter box, `Tab`, `Shift-Tab`, `Up`, or
+`Down` returns focus to the narrowed list.
 
 Category manager:
 ![Aglet Category Manager with a category tree, category flags, matching rules, actions, and notes](docs/images/aglet-category-manager.png)
@@ -125,7 +129,7 @@ category, hide completed items, and group matching items into sections.
 4. Add criteria such as include `Work` and exclude `Done`.
 5. Add sections if you want grouped lanes, such as an `Urgent` section that
    includes the `Urgent` category.
-6. Press `S` to save the view.
+6. Press `S` or `Ctrl-S` to save the view.
 
 Include criteria are AND-based, so a view with both `Work` and `Urgent`
 includes only items that have both categories. Use OR criteria when any one of
