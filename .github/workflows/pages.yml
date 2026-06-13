@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
     paths:
+      - 'docs/index.htm'
       - 'docs/aglet-manual.htm'
+      - 'docs/aglet-tui.htm'
+      - 'docs/aglet-cli.htm'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -28,9 +31,10 @@ jobs:
       - name: Stage site
         run: |
           mkdir -p _site
-          cp docs/aglet-manual.htm _site/index.html
+          cp docs/index.htm        _site/index.html
           cp docs/aglet-manual.htm _site/aglet-manual.htm
-          cp docs/aglet-manual.md _site/aglet-manual.md
+          cp docs/aglet-tui.htm    _site/aglet-tui.htm
+          cp docs/aglet-cli.htm    _site/aglet-cli.htm
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
