@@ -18,7 +18,43 @@ proposals).
 | `demos/` | Executable demos |
 | `agents/handoff/` | Session handoff logs (`YYYY-MM-DD-NNN-feature.md`) |
 | `backlog/` | Feature requests |
-| `images/` | Screenshot assets referenced by the root README and docs |
+| `src/` | **Source** of the published user manual (semantic `.htm`) + `manual.css` |
+| `templates/` | Pandoc PDF template assets (`metadata.yaml`, `header.tex`) |
+| `images/` | Screenshot assets referenced by the root README, docs, and the manual |
+
+## User Manual (Concepts / TUI / CLI)
+
+The published user manual has **one source of truth: the semantic HTML under
+`docs/src/`** (`index`, `aglet-manual` = Concepts, `aglet-tui`, `aglet-cli`).
+The Markdown and the typeset PDF are **generated** from it — never hand-edit
+`docs/*.md` or `docs/aglet-manual.pdf`.
+
+```
+docs/src/*.htm   ──make──►   docs/*.md      (GitHub-flavored Markdown, committed)
+                 ──make──►   aglet-manual.pdf (typeset book, git-ignored artifact)
+                 ──make──►   _site/         (flat HTML site for GitHub Pages)
+```
+
+Build from `docs/`:
+
+| Command | Result |
+|---|---|
+| `make md` | Regenerate `docs/*.md` from `src/` (pandoc → gfm) |
+| `make pdf` | Build `aglet-manual.pdf` (the 3 content docs as one book, via xelatex) |
+| `make html` | Stage `_site/` (htm + css + images + pdf) for preview / Pages |
+| `make all` | All of the above |
+| `make check` | Fail if committed `.md` drift from `src/` (run in CI) |
+
+Notes:
+- **Authoring**: edit `src/*.htm` only. Use semantic markup — `<dl>` for
+  PURPOSE/USES blocks, real `<table>` for keybinding/command charts, `<pre>`
+  only for commands/keys/diagrams, kebab-case `id=` anchors. Reference-chart
+  sections put tables at top level (not inside `<dl>`) so the PDF's longtable
+  does not misnest.
+- **Fonts**: `MAINFONT`/`MONOFONT` Make vars default to Palatino + IBM Plex
+  Mono locally; CI (`.github/workflows/pages.yml`) substitutes TeX Gyre Pagella.
+- **Publishing**: pushing changes under `docs/src|images|templates` or the
+  Makefile triggers Pages to rebuild and publish the site **and** the PDF.
 
 ## Frontmatter Conventions
 

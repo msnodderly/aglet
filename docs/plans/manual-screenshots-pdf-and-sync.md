@@ -1,8 +1,19 @@
 ---
 title: Manual — Screenshots, Typeset PDF, and 3-Format Sync Pipeline
-status: draft
+status: shipped
 created: 2026-06-13
+shipped: 2026-06-13
 ---
+
+> **Shipped.** HTML is the single source of truth (`docs/src/`); `make` generates
+> the committed Markdown and the typeset PDF; 10 screenshots are placed; CI
+> publishes the site + PDF and guards Markdown drift. See `docs/README.md` →
+> "User Manual" for the build. Notable decisions made during the build: kept
+> "HTML as source" via a semantic refactor (ASCII-`<pre>` → `<dl>`/`<table>`);
+> reference-chart tables live at top level (not inside `<dl>`) to avoid
+> longtable misnesting in the PDF; the PDF is a git-ignored CI artifact
+> (binary/font-dependent), so only the Markdown is drift-guarded; fonts are
+> parameterized (Palatino locally, TeX Gyre Pagella in CI).
 
 # Manual: Screenshots, Typeset PDF, and Sync Pipeline
 
