@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aglet TUI Guide</title>
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+
+<h1 id="tui-guide">Aglet TUI Guide</h1>
+<p class="nav">
+  <a href="index.htm">&#xAB; Home</a> &nbsp;|&nbsp;
+  <a href="aglet-manual.htm">Concepts</a> &nbsp;|&nbsp;
+  <a href="aglet-cli.htm">CLI Reference</a>
+</p>
+
+<h2>How to Use This Manual</h2>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Complete guide to the aglet terminal interface: keybindings, interactive
+      workflows, and the view/category editors. For scripting and batch use see
+      the <a href="aglet-cli.htm">CLI Reference</a>. Core concepts are in the
+      <a href="aglet-manual.htm">Concepts Reference</a>.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp; <a href="index.htm">Home</a></p>
+
+
+<h2 id="keys-and-commands">Keys and Commands</h2>
+
+<h3 id="tui-normal-mode-keys">TUI: Normal Mode Keys</h3>
+<p class="lead"><strong>Purpose</strong> Normal mode is the main board where items are displayed. These keys work while the highlight is on an item or column.</p>
+<p class="group"><strong>Items</strong></p>
+<table><tbody>
+      <tr><td><code>n</code></td><td>Add a new item to the focused section</td></tr>
+      <tr><td><code>e</code> / <code>Enter</code></td><td>Edit selected item (Enter adds when empty)</td></tr>
+      <tr><td><code>a</code></td><td>Assign categories to current item or selection</td></tr>
+      <tr><td><code>d</code> / <code>D</code></td><td>Toggle done on selected item(s)</td></tr>
+      <tr><td><code>r</code> / <code>x</code></td><td>Remove from view / delete selected item(s)</td></tr>
+      <tr><td><code>b</code> / <code>B</code></td><td>Open dependency link wizard (blocked-by/blocks)</td></tr>
+      <tr><td><code>=</code></td><td>Classify selected item(s) now</td></tr>
+      <tr><td><code>p</code> / <code>i</code> / <code>o</code></td><td>Toggle preview sidebar / cycle preview mode</td></tr>
+    </tbody></table>
+<p class="group"><strong>Selection</strong></p>
+<table><tbody>
+      <tr><td><code>Space</code></td><td>Toggle selection on current item</td></tr>
+      <tr><td><code>a</code> / <code>d</code> / <code>x</code> / <code>=</code></td><td>Batch assign, done, delete, or classify</td></tr>
+      <tr><td><code>b</code> / <code>B</code></td><td>Link selected items with a dependency</td></tr>
+      <tr><td><code>Esc</code></td><td>Clear selection</td></tr>
+    </tbody></table>
+<p class="group"><strong>Navigation</strong></p>
+<table><tbody>
+      <tr><td><code>Up</code>/<code>k</code> <code>Down</code>/<code>j</code></td><td>Move between items; scroll preview when focused</td></tr>
+      <tr><td><code>Left</code>/<code>h</code> <code>Right</code>/<code>l</code></td><td>Move between sections or columns</td></tr>
+      <tr><td><code>Tab</code> / <code>S-Tab</code></td><td>Next / previous section (J/K jump section)</td></tr>
+      <tr><td><code>[</code> / <code>]</code></td><td>Move item to previous / next section (or S-Up/S-Down)</td></tr>
+      <tr><td><code>m</code> / <code>z</code></td><td>Cycle lane layout / card size</td></tr>
+    </tbody></table>
+<p class="group"><strong>Search</strong></p>
+<table><tbody>
+      <tr><td><code>/</code></td><td>Search the focused section</td></tr>
+      <tr><td><code>g/</code></td><td>Search all sections</td></tr>
+      <tr><td><code>Esc</code></td><td>Clear the active section filter</td></tr>
+    </tbody></table>
+<p class="group"><strong>Columns</strong></p>
+<table><tbody>
+      <tr><td><code>Enter</code></td><td>Edit column value (on a column cell)</td></tr>
+      <tr><td><code>+</code> / <code>-</code></td><td>Add / remove a board column</td></tr>
+      <tr><td><code>H</code> / <code>L</code></td><td>Move board column left / right</td></tr>
+      <tr><td><code>f</code></td><td>Cycle numeric column format</td></tr>
+      <tr><td><code>F</code></td><td>Cycle column summary (Sum/Avg/Min/Max)</td></tr>
+      <tr><td><code>s</code> / <code>S</code> or <code>&lt;</code> / <code>&gt;</code></td><td>Sort section by column (ascending/descending)</td></tr>
+    </tbody></table>
+<p class="group"><strong>Views</strong></p>
+<table><tbody>
+      <tr><td><code>v</code> / <code>V</code> / <code>F8</code></td><td>Open the view picker</td></tr>
+      <tr><td><code>,</code> / <code>.</code></td><td>Previous / next view</td></tr>
+      <tr><td><code>ga</code></td><td>Jump to the All Items view</td></tr>
+    </tbody></table>
+<p class="group"><strong>Datebook</strong></p>
+<table><tbody>
+      <tr><td><code>{</code> / <code>}</code></td><td>Step previous / next date bucket</td></tr>
+      <tr><td><code>(</code> / <code>)</code></td><td>Step the browse window</td></tr>
+      <tr><td><code>0</code></td><td>Jump to today</td></tr>
+    </tbody></table>
+<p class="group"><strong>Global</strong></p>
+<table><tbody>
+      <tr><td><code>C</code></td><td>Review pending classification suggestions</td></tr>
+      <tr><td><code>g s</code> / <code>F10</code></td><td>Open Global Settings</td></tr>
+      <tr><td><code>c</code> / <code>F9</code></td><td>Open the category manager</td></tr>
+      <tr><td><code>u</code></td><td>Toggle the hide-dependent-items filter</td></tr>
+      <tr><td><code>Ctrl-L</code></td><td>Reload data from disk</td></tr>
+      <tr><td><code>Ctrl-Z</code></td><td>Undo</td></tr>
+      <tr><td><code>Ctrl-Shift-Z</code></td><td>Redo</td></tr>
+      <tr><td><code>?</code></td><td>Toggle the help panel</td></tr>
+      <tr><td><code>q</code></td><td>Quit</td></tr>
+    </tbody></table>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#tui-category-manager-keys">Category manager keys</a>,
+  <a href="#tui-view-editor-keys">View editor keys</a>,
+  <a href="#select-multiple-items">Select multiple items</a></p>
+
+<h3 id="tui-category-manager-keys">TUI: Category Manager Keys</h3>
+<p class="lead"><strong>Purpose</strong> The category manager is a full-screen mode for working with the category hierarchy. Open it with <code>c</code> or <code>F9</code>; press <code>Esc</code> to return.</p>
+<p class="group"><strong>Navigation</strong></p>
+<table><tbody>
+      <tr><td><code>Up</code>/<code>k</code> <code>Down</code>/<code>j</code></td><td>Move through the category tree</td></tr>
+      <tr><td><code>Tab</code></td><td>Move focus between the tree and the details pane</td></tr>
+    </tbody></table>
+<p class="group"><strong>Edit</strong></p>
+<table><tbody>
+      <tr><td><code>n</code></td><td>Create a sibling at the selected level</td></tr>
+      <tr><td><code>N</code></td><td>Create a child of the selected category</td></tr>
+      <tr><td><code>e</code> / <code>F2</code></td><td>Edit the selected category name</td></tr>
+      <tr><td><code>S</code> / <code>Ctrl-S</code></td><td>Save category edits</td></tr>
+      <tr><td><code>Esc</code></td><td>Return to the main view</td></tr>
+    </tbody></table>
+<p class="group"><strong>Reorder</strong></p>
+<table><tbody>
+      <tr><td><code>H</code> / <code>J</code> / <code>K</code> / <code>L</code></td><td>Reorder the selected category</td></tr>
+      <tr><td><code>&lt;&lt;</code> / <code>&gt;&gt;</code></td><td>Change the category's depth (promote / demote)</td></tr>
+    </tbody></table>
+<p class="lead"><strong>Details</strong> The details pane shows flags (Exclusive, Auto-match, Actionable), the value type (Tag or Numeric), conditions, actions, and a free-form note. Workflow roles (such as the claim category) are set in Global Settings.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#categories">Categories</a>,
+  <a href="#organize-the-hierarchy">Organize the category hierarchy</a>,
+  <a href="aglet-cli.htm#actions">Actions</a></p>
+
+<h3 id="tui-view-editor-keys">TUI: View Editor Keys</h3>
+<p class="lead"><strong>Purpose</strong> The view editor configures a view's filter criteria, sections, columns, layout, and aliases.</p>
+<p class="group"><strong>Navigation</strong></p>
+<table><tbody>
+      <tr><td><code>Tab</code></td><td>Move between the editor regions (such as SECTIONS and DETAILS)</td></tr>
+      <tr><td><code>Up</code>/<code>k</code> <code>Down</code>/<code>j</code></td><td>Move within a region</td></tr>
+    </tbody></table>
+<p class="lead"><strong>Edit</strong> Edit criteria (include / exclude / OR-include), date ranges, display mode (single-line or multi-line), section flow (vertical stacked or horizontal lanes), unmatched-item visibility, and category aliases.</p>
+<p class="group"><strong>Save</strong></p>
+<table><tbody>
+      <tr><td><code>S</code> / <code>Ctrl-S</code></td><td>Save the view</td></tr>
+      <tr><td><code>Esc</code></td><td>Cancel without saving</td></tr>
+    </tbody></table>
+<p class="lead"><strong>Note</strong> Section and per-section filters are reset when you switch views or save the editor.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#views">Views</a>,
+  <a href="#create-a-view">Create a view</a>,
+  <a href="#view-criteria">View criteria</a>,
+  <a href="#view-aliases">View aliases</a></p>
+
+<h3 id="tui-item-editor-keys">TUI: Item Editor Keys</h3>
+<p class="lead"><strong>Purpose</strong> The item editor (opened with <code>n</code> to add or <code>e</code> to edit) is a panel with a title field, a note field, and an inline category list.</p>
+<p class="group"><strong>Fields</strong></p>
+<table><tbody>
+      <tr><td><code>Tab</code> / <code>S-Tab</code></td><td>Cycle focus: Title → Note → Categories → Save → Cancel</td></tr>
+      <tr><td><code>Ctrl-S</code></td><td>Save from any field</td></tr>
+      <tr><td><code>Enter</code></td><td>Save from the title field</td></tr>
+      <tr><td><code>Esc</code></td><td>Cancel</td></tr>
+    </tbody></table>
+<p class="group"><strong>Categories</strong></p>
+Within the inline category list:
+    <table><tbody>
+      <tr><td><code>j</code> / <code>k</code></td><td>Move through categories</td></tr>
+      <tr><td><code>Space</code></td><td>Toggle a tag assignment</td></tr>
+      <tr><td><code>/</code></td><td>Filter the category list</td></tr>
+      <tr><td><code>n</code></td><td>Create a new category inline</td></tr>
+    </tbody></table>
+    (a numeric category shows an inline editable value field)
+<p class="lead"><strong>Notes</strong> <code>Ctrl-G</code> opens <code>$EDITOR</code> to edit the title or note in your external editor.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#add-an-item">Add an item</a>,
+  <a href="#edit-an-item">Edit an item</a>,
+  <a href="#add-a-note-to-an-item">Add a note</a>,
+  <a href="#assign-a-category">Assign a category</a></p>
+
+<h3 id="tui-datebook-keys">TUI: Datebook Keys</h3>
+<p class="lead"><strong>Purpose</strong> A datebook view buckets dated items into calendar ranges. These keys move the visible date window.</p>
+<p class="group"><strong>Keys</strong></p>
+<table><tbody>
+      <tr><td><code>{</code></td><td>Step to the previous date bucket</td></tr>
+      <tr><td><code>}</code></td><td>Step to the next date bucket</td></tr>
+      <tr><td><code>(</code></td><td>Step the browse window backward</td></tr>
+      <tr><td><code>)</code></td><td>Step the browse window forward</td></tr>
+      <tr><td><code>0</code></td><td>Jump to today</td></tr>
+    </tbody></table>
+<p class="lead"><strong>Note</strong> A datebook view groups items by a date source (When, Entry, Done, or a date category) over a period such as day, week, or month.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#datebook-views">Datebook views</a>,
+  <a href="#create-a-datebook-view">Create a datebook view</a>,
+  <a href="#browse-a-datebook-view">Browse a datebook view</a></p>
+
+
+<h2 id="working-with-items">Working with Items</h2>
+
+<h3 id="add-an-item">Add an Item</h3>
+<figure>
+  <img src="images/aglet-add-new-item.png" alt="The item editor: a title, a note, and an inline category checklist.">
+  <figcaption>The item editor: a title, a note, and an inline category checklist.</figcaption>
+</figure>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Add a new item to the database. An item is a single line of free-form text,
+      optionally with a longer note.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Press <code>n</code> to open the new-item editor (the item is added to
+          the focused section).</li>
+      <li>Type the item text, such as "Review Work budget Friday".</li>
+      <li>Press <code>Tab</code> to move to the Note field and the inline category
+          checklist if you want to add detail or assignments.</li>
+      <li>Press <code>Ctrl-S</code> to save from any field. Enter also saves from
+          the title field; Esc cancels.</li>
+    </ol>
+  </dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet add "Review Work budget Friday"
+aglet add "Pay insurance" --note "Renews annually in March"</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>When an item is saved, aglet scans its text and note against category names.
+      Categories whose names appear are assigned automatically (see Automatic
+      assignment), and recognizable dates are parsed into the When date. The CLI
+      prints the new item id and a new_assignments count.</dd>
+  <dt>Note</dt>
+  <dd>Short item-id prefixes returned by <code>aglet add</code> can be used
+      anywhere an item id is accepted. Parse the "created " line for the id; it is
+      not always the last line of output.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#items">Items</a>,
+  <a href="#edit-an-item">Edit an item</a>,
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="#add-a-note-to-an-item">Add a note</a>,
+  <a href="#tui-item-editor-keys">Item editor keys</a></p>
+
+<h3 id="edit-an-item">Edit an Item</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Change an item's text, note, or done state.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Select the item.</li>
+      <li>Press <code>e</code> (or <code>Enter</code>) to open the editor.</li>
+      <li>Edit the text or Tab to the note. Toggle inline category assignments if
+          desired.</li>
+      <li>Press <code>Ctrl-S</code> to save, <code>Esc</code> to cancel.</li>
+    </ol>
+  </dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet edit &lt;ITEM&gt; --text "New title"
+aglet edit &lt;ITEM&gt; --note "Updated note text"
+aglet edit &lt;ITEM&gt; --done            # mark done
+aglet edit &lt;ITEM&gt; --not-done        # reopen</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Editing text re-runs automatic assignment: implicit-string matches may be
+      added or evicted, but manual and accepted-suggestion assignments stay
+      sticky. Press <code>Ctrl-G</code> in the TUI text or note field to open the
+      item in <code>$EDITOR</code>.</dd>
+  <dt>Note</dt>
+  <dd>On an empty section, pressing Enter starts a new item rather than
+      editing.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#add-an-item">Add an item</a>,
+  <a href="#add-a-note-to-an-item">Add a note</a>,
+  <a href="#mark-an-item-done">Mark an item done</a>,
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a></p>
+
+<h3 id="add-a-note-to-an-item">Add a Note to an Item</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Attach a longer body of text to an item. Notes hold detail that does not
+      belong in the one-line title.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Open the item with <code>e</code> (or <code>n</code> for a new item).</li>
+      <li>Press <code>Tab</code> to move from the title to the Note field.</li>
+      <li>Type freely; the note is multi-line.</li>
+      <li>Press <code>Ctrl-G</code> to edit the note in <code>$EDITOR</code> for
+          longer text.</li>
+      <li>Press <code>Ctrl-S</code> to save.</li>
+    </ol>
+  </dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet add "Plan offsite" --note "Book venue, send agenda"
+aglet edit &lt;ITEM&gt; --note "Revised plan"</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Note text participates in automatic assignment: a category name appearing
+      only in the note still triggers an implicit-string match. Inspect
+      <code>aglet show</code> provenance before assuming a visible category was
+      assigned manually.</dd>
+  <dt>Note</dt>
+  <dd>In compact list output an item with a note shows a note marker; use
+      <code>--verbose</code> or <code>aglet show</code> to read the full note.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#notes">Notes</a>,
+  <a href="#edit-an-item">Edit an item</a>,
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a></p>
+
+<h3 id="mark-an-item-done">Mark an Item Done</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Record that an item is complete. Done is a reserved category that also
+      drives recurrence and dependency resolution.</dd>
+  <dt>TUI steps</dt>
+  <dd>Select an item (or several with <code>Space</code>) and press <code>d</code>
+      to toggle done. <code>D</code> toggles done on the whole current
+      selection.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet edit &lt;ITEM&gt; --done
+aglet edit &lt;ITEM&gt; --not-done</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Completing an item assigns the reserved Done category. A done prerequisite
+      no longer blocks items that depend on it. If the item carries a recurrence
+      rule, completing it schedules the next occurrence (see Recurrence).</dd>
+  <dt>Note</dt>
+  <dd>Done items are hidden from most views that exclude Done and from
+      <code>aglet list</code> unless you pass <code>--include-done</code>.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#reserved-categories">Reserved categories</a>,
+  <a href="#recurrence">Recurrence</a>,
+  <a href="aglet-manual.htm#dependencies">Dependencies</a></p>
+
+<h3 id="recurrence">Recurrence</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Make an item repeat on a schedule. When a recurring item is completed, aglet
+      generates the next occurrence automatically.</dd>
+  <dt>How it works</dt>
+  <dd>A recurrence rule is attached to a dated item. Completing the current
+      occurrence (marking it Done) advances the When date to the next scheduled
+      date and reopens the item, so recurring chores, bills, and maintenance
+      reappear without re-entry.</dd>
+  <dt>Examples</dt>
+  <dd>A monthly "Pay insurance" item set to recur reappears with next month's date
+      each time you mark it done.</dd>
+  <dt>Note</dt>
+  <dd>Recurrence works together with the reserved When and Done categories.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#mark-an-item-done">Mark an item done</a>,
+  <a href="aglet-manual.htm#reserved-categories">Reserved categories</a>,
+  <a href="aglet-manual.htm#datebook-views">Datebook views</a></p>
+
+<h3 id="delete-an-item">Delete an Item</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Remove an item from the database. Deletion is logged so the item can be
+      restored.</dd>
+  <dt>TUI steps</dt>
+  <dd>Select the item(s) and press <code>x</code> to delete. (Press <code>r</code>
+      to remove an item from the current view without deleting it from the
+      database.)</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet delete &lt;ITEM&gt;
+aglet deleted              # list deletion-log entries
+aglet restore &lt;LOG_ID&gt;    # restore by log entry id</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Deleting writes a deletion-log entry rather than erasing the item
+      immediately. <code>aglet deleted</code> lists log entries with their ids;
+      <code>aglet restore</code> brings an item back.</dd>
+  <dt>Note</dt>
+  <dd><code>r</code> (remove from view) and <code>x</code> (delete) are different.
+      Remove only changes view membership; delete affects the whole database.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#restore-a-deleted-item">Restore a deleted item</a>,
+  <a href="aglet-manual.htm#items">Items</a>,
+  <a href="aglet-cli.htm#cli-item-commands">CLI item commands</a></p>
+
+<h3 id="restore-a-deleted-item">Restore a Deleted Item</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Bring back an item that was deleted, using the deletion log.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet deleted               # find the log entry id
+aglet restore &lt;LOG_ID&gt;      # restore that entry</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Every delete appends an entry to the deletion log. Restoring recreates the
+      item with its text, note, and recorded state.</dd>
+  <dt>Note</dt>
+  <dd>Restore brings the item back exactly as it was deleted; the deletion log
+      keeps a history you can recover from.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#delete-an-item">Delete an item</a>,
+  <a href="aglet-cli.htm#cli-item-commands">CLI item commands</a></p>
+
+<h3 id="move-an-item-between-sections">Move an Item Between Sections</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Reposition an item into a different section of the current view.</dd>
+  <dt>TUI steps</dt>
+  <dd>Select the item and press <code>[</code> to move it to the previous section
+      or <code>]</code> to move it to the next section. Shift-Up and Shift-Down do
+      the same. Use <code>h</code>/<code>l</code> (or Left/Right) to move between
+      sections or columns, and <code>Tab</code> / <code>Shift-Tab</code> to move
+      focus between sections.</dd>
+  <dt>How it works</dt>
+  <dd>Sections in a standard view are defined by category criteria. Moving an item
+      between sections adjusts its category assignments so it matches the
+      destination section's criteria.</dd>
+  <dt>Note</dt>
+  <dd>In horizontal (kanban) lane layouts, moving an item between lanes is the
+      same operation; aglet remembers the per-lane selection.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#sections">Sections</a>,
+  <a href="#add-a-section">Add a section</a>,
+  <a href="#tui-normal-mode-keys">Normal mode keys</a></p>
+
+<h3 id="search-items">Search Items</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Find items by text in their title or note.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>/</code> to search within the focused section, or <code>g/</code>
+      to search across all sections. Type the query; press <code>Esc</code> to
+      clear the active section filter.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet search "budget"
+aglet search "budget" --not-blocked</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>CLI and TUI search both route through the same matcher over item title and
+      note text. Per-section filters in the TUI are scoped to the focused section
+      and reset on view switch.</dd>
+  <dt>Note</dt>
+  <dd>Search matches note text, so a query can match items whose title does not
+      contain the term.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#items">Items</a>,
+  <a href="#select-multiple-items">Select multiple items</a>,
+  <a href="aglet-cli.htm#cli-filtering">CLI filtering</a></p>
+
+<h3 id="select-multiple-items">Select Multiple Items</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Operate on several items at once — assign, complete, delete, or classify
+      them together.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Press <code>Space</code> to toggle selection on the current item; repeat
+          to build a selection.</li>
+      <li>Apply a batch operation: <code>a</code> (assign categories),
+          <code>d</code> (done), <code>x</code> (delete), <code>=</code> (classify
+          now), or <code>b</code> / <code>B</code> (link with a dependency).</li>
+      <li>Press <code>Esc</code> to clear the selection.</li>
+    </ol>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Selection lets a single command act on many items at once. Batch operations
+      act on every selected item.</dd>
+  <dt>Note</dt>
+  <dd>With no explicit selection, the same keys act on the single item under the
+      cursor.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#assign-a-category">Assign a category</a>,
+  <a href="#mark-an-item-done">Mark an item done</a>,
+  <a href="#create-a-dependency">Create a dependency</a>,
+  <a href="#review-classification-suggestions">Review suggestions</a></p>
+
+
+<h2 id="working-with-categories">Working with Categories</h2>
+
+<h3 id="add-a-category">Add a Category</h3>
+<figure>
+  <img src="images/aglet-category-manager.png" alt="The category manager: hierarchy at left; flags, match rules, and actions at right.">
+  <figcaption>The category manager: hierarchy at left; flags, match rules, and actions at right.</figcaption>
+</figure>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Create a new category — the basic filing unit. Categories can be top-level
+      or nested under a parent.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Press <code>c</code> or <code>F9</code> to open the category manager.</li>
+      <li>Press <code>n</code> to create a category at the selected level, or
+          <code>N</code> to create a child of the selected category.</li>
+      <li>Type the name (Work, Personal, Urgent, ...).</li>
+      <li>Adjust flags such as exclusive, implicit matching, and notes in the
+          details pane.</li>
+      <li>Press <code>Ctrl-S</code> to save, <code>Esc</code> to return.</li>
+    </ol>
+  </dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet category create "Work"
+aglet category create "High" --parent Priority
+aglet category create "Priority" --exclusive
+aglet category create "Cost" --type numeric</code></pre>
+  </dd>
+  <dt>Note</dt>
+  <dd>The reserved names Done, When, and Entry cannot be used. For a workflow
+      child under an exclusive Status parent, use names such as Complete or
+      Completed, not Done.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#categories">Categories</a>,
+  <a href="aglet-manual.htm#tag-categories">Tag categories</a>,
+  <a href="aglet-manual.htm#numeric-categories">Numeric categories</a>,
+  <a href="aglet-manual.htm#exclusive-categories">Exclusive categories</a>,
+  <a href="#organize-the-hierarchy">Organize the hierarchy</a></p>
+
+<h3 id="assign-a-category">Assign a Category to an Item</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Manually file an item under a category.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Select the item (or several with <code>Space</code>).</li>
+      <li>Press <code>a</code> to open the inline category picker.</li>
+      <li>Press <code>Space</code> to toggle a category's assignment without
+          closing, or <code>Enter</code> to apply the current result and close.</li>
+      <li>Press <code>/</code> to filter; from the filter box Tab, Shift-Tab, Up,
+          or Down returns focus to the narrowed list.</li>
+    </ol>
+  </dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet category assign &lt;ITEM&gt; Work
+aglet category assign &lt;ITEM&gt; High</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Manual assignments are durable user choices: they stay sticky even when text
+      changes. Assigning a child also displays its parent (assigning High also
+      shows Priority). For exclusive parents, only one child can be assigned.</dd>
+  <dt>Note</dt>
+  <dd>Use the inline checklist in the item editor to assign categories while
+      adding or editing an item.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#unassign-a-category">Unassign a category</a>,
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="aglet-manual.htm#exclusive-categories">Exclusive categories</a>,
+  <a href="#set-a-numeric-value">Set a numeric value</a></p>
+
+<h3 id="unassign-a-category">Unassign a Category</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Remove a category from an item.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>a</code> on the item, then <code>Space</code> on the assigned
+      category to toggle it off; <code>Enter</code> applies and closes.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet category unassign &lt;ITEM&gt; Work</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Unassigning removes the explicit assignment row and reprocesses the item. If
+      the category still matches by implicit string or profile condition, a live
+      (non-sticky) assignment may reappear; sticky manual/action/accepted-suggestion
+      assignments do not.</dd>
+  <dt>Note</dt>
+  <dd>To stop a category from auto-matching entirely, turn off its implicit-string
+      matching rather than repeatedly unassigning.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#assign-a-category">Assign a category</a>,
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="#discard-a-category">Discard a category</a></p>
+
+<h3 id="review-classification-suggestions">Review Classification Suggestions</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Accept or reject category suggestions, including experimental LLM-based
+      ones, before they are applied.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>=</code> to classify the selected item(s) now. Press
+      <code>C</code> to review pending classification suggestions in the
+      suggestion-review mode, where you can accept or dismiss each one.</dd>
+  <dt>How it works</dt>
+  <dd>Classification proposes categories for an item from its text and rules.
+      Accepting a suggestion creates a sticky assignment; dismissing it does not.
+      It runs aglet's rule-based and LLM-based suggestions on demand for
+      review.</dd>
+  <dt>Note</dt>
+  <dd>aglet has experimental support for LLM-based categorization in addition to
+      implicit-string and profile-condition matching.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="aglet-cli.htm#profile-conditions">Profile conditions</a>,
+  <a href="#assign-a-category">Assign a category</a></p>
+
+<h3 id="set-a-numeric-value">Set a Numeric Value</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Give an item a number under a numeric category — a cost, quantity, mileage,
+      or effort estimate.</dd>
+  <dt>TUI steps</dt>
+  <dd>On a numeric column cell, press <code>Enter</code> to edit the value inline.
+      In the item editor's inline category list, an assigned numeric category
+      shows <code>- [N]</code> with an editable value field.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet category set-value &lt;ITEM&gt; Cost 450.00</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>The value is stored on the assignment edge between the item and the numeric
+      category. A numeric column then displays the value and can be summarized per
+      section (sum, average, min, max).</dd>
+  <dt>Note</dt>
+  <dd>Editing a numeric column cell is the primary way to assign a value to an
+      item for the first time.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#numeric-categories">Numeric categories</a>,
+  <a href="#format-a-numeric-column">Format a numeric column</a>,
+  <a href="#column-summaries">Column summaries</a>,
+  <a href="#add-a-column">Add a column</a></p>
+
+<h3 id="format-a-numeric-column">Format a Numeric Column</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Control how a numeric category's values are displayed — decimal places,
+      currency, and thousands separators.</dd>
+  <dt>TUI steps</dt>
+  <dd>On a numeric column, press <code>f</code> to cycle the column's display
+      format.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet category format &lt;CATEGORY&gt; ...</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Formatting is a display property of the numeric category; it does not change
+      the stored value. The same value can appear as 1450, 1,450.00, or
+      $1,450.00 depending on format.</dd>
+  <dt>Note</dt>
+  <dd>Use <code>F</code> (capital) to cycle the column's summary function;
+      <code>f</code> sets the value format. See Column summaries.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#numeric-categories">Numeric categories</a>,
+  <a href="#set-a-numeric-value">Set a numeric value</a>,
+  <a href="#column-summaries">Column summaries</a></p>
+
+<h3 id="organize-the-hierarchy">Organize the Category Hierarchy</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Rearrange categories — reparent, promote, demote, and reorder siblings.</dd>
+  <dt>TUI steps</dt>
+  <dd>In the category manager, use <code>H/J/K/L</code> to reorder and move
+      categories, and <code>&lt;&lt;</code> / <code>&gt;&gt;</code> to change a
+      category's depth level.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet category reparent &lt;CATEGORY&gt; --parent &lt;NEW_PARENT&gt;
+aglet category reparent &lt;CATEGORY&gt; --root      # make top-level
+aglet category rename &lt;CATEGORY&gt; "New Name"</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Child order matters for exclusive parents: when several derived siblings
+      match, the earlier child in parent order wins. Manual and accepted-suggestion
+      assignments remain durable regardless of order.</dd>
+  <dt>Note</dt>
+  <dd>Workflow roles (which categories mean Ready, claim-target, etc.) are set in
+      Global Settings, not by hierarchy position.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#the-category-hierarchy">The category hierarchy</a>,
+  <a href="aglet-manual.htm#exclusive-categories">Exclusive categories</a>,
+  <a href="aglet-manual.htm#subsumption">Subsumption</a>,
+  <a href="#global-settings">Global settings</a></p>
+
+<h3 id="discard-a-category">Discard a Category</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Delete a category you no longer need.</dd>
+  <dt>TUI steps</dt>
+  <dd>In the category manager, select the category and delete it.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet category delete "Old Category"</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Deleting a category removes it and its assignments. Reserved categories
+      (Done, When, Entry) cannot be deleted.</dd>
+  <dt>Note</dt>
+  <dd>Consider turning off implicit matching instead of deleting if you only want
+      to stop auto-assignment but keep past filings.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#add-a-category">Add a category</a>,
+  <a href="#unassign-a-category">Unassign a category</a>,
+  <a href="aglet-manual.htm#reserved-categories">Reserved categories</a></p>
+
+
+<h2 id="working-with-views">Working with Views</h2>
+
+<h3 id="create-a-view">Create a View</h3>
+<figure>
+  <img src="images/aglet-projects-dashboard.png" alt="A saved view grouping items by project, with an Effort column and per-section totals.">
+  <figcaption>A saved view grouping items by project, with an Effort column and per-section totals.</figcaption>
+</figure>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Save a lens over the item database — a filtered, sectioned, and columned
+      presentation you can return to.</dd>
+  <dt>TUI steps</dt>
+  <dd>
+    <ol>
+      <li>Press <code>v</code>, <code>V</code>, or <code>F8</code> to open the
+          view picker.</li>
+      <li>Press <code>n</code> to create a new view and name it (Work Queue).</li>
+      <li>Add include/exclude criteria and any sections.</li>
+      <li>Press <code>Ctrl-S</code> (or <code>S</code>) to save.</li>
+    </ol>
+  </dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet view create "Work Queue" --include Work --exclude Done
+aglet view list
+aglet view show "Work Queue"</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>A view stores its criteria, sections, columns, layout, and aliases. It
+      updates automatically as items are added or reassigned.</dd>
+  <dt>Note</dt>
+  <dd>Include criteria are AND-based: <code>--include Work --include Urgent</code>
+      matches only items with both categories.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#views">Views</a>,
+  <a href="#view-criteria">View criteria</a>,
+  <a href="#add-a-section">Add a section</a>,
+  <a href="#the-view-editor">The view editor</a>,
+  <a href="#clone-a-view">Clone a view</a></p>
+
+<h3 id="view-criteria">View Criteria</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Control which items a view includes.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet view create "My View" --include High --include Pending
+aglet view edit &lt;VIEW&gt; ...</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Include filters are AND-based — every included category must be present. Do
+      not use repeated includes for mutually exclusive siblings such as Pending
+      and In Progress; use separate sections or views instead. Views also persist
+      hide_dependent_items, which hides items that are blocked dependents.</dd>
+  <dt>Note</dt>
+  <dd>Toggle the hide-dependent-items filter in the TUI with <code>u</code>.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-view">Create a view</a>,
+  <a href="aglet-cli.htm#cli-filtering">CLI filtering</a>,
+  <a href="#filter-blocked-items">Filter blocked items</a>,
+  <a href="#add-a-section">Add a section</a></p>
+
+<h3 id="add-a-section">Add a Section to a View</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Group a view's items into labelled lanes by category criteria.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet view section add &lt;VIEW&gt; ...
+aglet view section update &lt;VIEW&gt; ...
+aglet view section remove &lt;VIEW&gt; ...</code></pre>
+  </dd>
+  <dt>TUI steps</dt>
+  <dd>Open the view editor (from the view picker), focus the SECTIONS pane, and
+      add or edit sections there.</dd>
+  <dt>How it works</dt>
+  <dd>Each section has its own include criteria. Items that match land in that
+      section; section flow can be vertical (stacked) or horizontal (kanban
+      lanes). Unmatched-item visibility is a view setting.</dd>
+  <dt>Note</dt>
+  <dd>Moving an item between sections adjusts its category assignments to match
+      the destination section.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#sections">Sections</a>,
+  <a href="#add-a-column">Add a column</a>,
+  <a href="#move-an-item-between-sections">Move an item between sections</a>,
+  <a href="#the-view-editor">The view editor</a></p>
+
+<h3 id="add-a-column">Add a Column to a Section</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Show a numeric category's value as a column beside each item, with an
+      optional per-section summary.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>+</code> to add a board column and <code>-</code> to remove one.
+      Use <code>H</code> / <code>L</code> to move a column left or right, and
+      <code>Enter</code> on a column cell to edit a value.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet view column add &lt;VIEW&gt; ...
+aglet view column update &lt;VIEW&gt; ...
+aglet view column remove &lt;VIEW&gt; ...</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Columns display numeric category values. Each column can carry a summary
+      function shown in the section footer.</dd>
+  <dt>Note</dt>
+  <dd>Columns are numeric in aglet; there is no free-text column type.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#columns">Columns</a>,
+  <a href="#column-summaries">Column summaries</a>,
+  <a href="#set-a-numeric-value">Set a numeric value</a>,
+  <a href="#format-a-numeric-column">Format a numeric column</a></p>
+
+<h3 id="column-summaries">Column Summary Functions</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Aggregate a numeric column across a section — a total, average, or
+      extreme.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>F</code> to cycle a numeric column's summary (Sum / Avg / Min /
+      Max). Sort a section by a column with <code>s</code> / <code>S</code> (or
+      <code>&lt;</code> / <code>&gt;</code>).</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet view set-summary &lt;VIEW&gt; ...</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>The summary is computed over the items in the section and shown in the
+      section footer — for example a budget total or average effort.</dd>
+  <dt>Note</dt>
+  <dd><code>f</code> cycles the value display format; <code>F</code> cycles the
+      summary function.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#add-a-column">Add a column</a>,
+  <a href="aglet-manual.htm#numeric-categories">Numeric categories</a>,
+  <a href="#format-a-numeric-column">Format a numeric column</a></p>
+
+<h3 id="create-a-datebook-view">Create a Datebook View</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Build a view that buckets dated items into calendar ranges.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet view create-datebook "Scheduling" ...</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>A datebook view is a distinct view type that groups items by their When date
+      into date-interval buckets (days, weeks, etc.). It is ideal for upcoming
+      work, appointments, renewals, and deadlines.</dd>
+  <dt>Note</dt>
+  <dd>A standard view and a datebook view are different types; one cannot be
+      converted into the other.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#datebook-views">Datebook views</a>,
+  <a href="#browse-a-datebook-view">Browse a datebook view</a>,
+  <a href="aglet-cli.htm#date-conditions">Date conditions</a>,
+  <a href="#tui-datebook-keys">Datebook keys</a></p>
+
+<h3 id="browse-a-datebook-view">Browse a Datebook View</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Move the visible date window of a datebook view forward and back.</dd>
+  <dt>TUI steps</dt>
+  <dd><code>{</code> and <code>}</code> step to the previous / next bucket.
+      <code>(</code> and <code>)</code> step the window. <code>0</code> jumps to
+      today.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet view datebook-browse &lt;VIEW&gt; ...</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Browsing shifts which date interval is shown without changing the view
+      definition.</dd>
+  <dt>Note</dt>
+  <dd><code>0</code> (today) is the quickest way to recenter after browsing.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-datebook-view">Create a datebook view</a>,
+  <a href="aglet-manual.htm#datebook-views">Datebook views</a>,
+  <a href="#tui-datebook-keys">Datebook keys</a></p>
+
+<h3 id="the-view-editor">The View Editor</h3>
+<figure>
+  <img src="images/aglet-view-editor.png" alt="The view editor: filter criteria, the section pane, and a live preview.">
+  <figcaption>The view editor: filter criteria, the section pane, and a live preview.</figcaption>
+</figure>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Configure a view's filters, sections, columns, layout, aliases, and preview
+      behavior in one screen.</dd>
+  <dt>TUI steps</dt>
+  <dd>Open a view in the editor from the view picker. <code>Tab</code> moves
+      between regions (Criteria, Datebook, Sections, Unmatched). <code>Enter</code>
+      operates the focused row or inline input. Save with <code>S</code> or
+      <code>Ctrl-S</code>.</dd>
+  <dt>How it works</dt>
+  <dd>The editor edits mutable view properties: include/exclude criteria, date
+      ranges, display mode (single- or multi-line), section flow (stacked or
+      lanes), unmatched-item visibility, and category aliases. A live preview
+      reflects changes.</dd>
+  <dt>Note</dt>
+  <dd>The All Items view is immutable; clone it first to edit a copy.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-view">Create a view</a>,
+  <a href="#view-criteria">View criteria</a>,
+  <a href="#add-a-section">Add a section</a>,
+  <a href="#view-aliases">View aliases</a>,
+  <a href="#tui-view-editor-keys">View editor keys</a></p>
+
+<h3 id="view-aliases">View Aliases</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Show a category under a different display name inside one view, without
+      changing the category itself.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet view alias set &lt;VIEW&gt; &lt;CATEGORY&gt; "Display Name"
+aglet view alias clear &lt;VIEW&gt; &lt;CATEGORY&gt;</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>An alias is per-view display metadata mapping a category to a label. It
+      affects only how the category is shown in that view.</dd>
+  <dt>Note</dt>
+  <dd>Aliases do not change category identity, filters, section titles, generated
+      subsection labels, or board column headings.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#the-view-editor">The view editor</a>,
+  <a href="aglet-manual.htm#views">Views</a>,
+  <a href="aglet-cli.htm#cli-view-commands">CLI view commands</a></p>
+
+<h3 id="clone-a-view">Clone a View</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Make an editable copy of an existing view, including the immutable All Items
+      view.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet view clone "All Items" "My Items"</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Cloning copies the source view's criteria, sections, columns, and settings
+      into a new, mutable view that you can then customize.</dd>
+  <dt>Note</dt>
+  <dd>Cloning is the way to start from All Items, which cannot itself be
+      edited.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-view">Create a view</a>,
+  <a href="aglet-manual.htm#the-all-items-view">The All Items view</a>,
+  <a href="#discard-a-view">Discard a view</a></p>
+
+<h3 id="discard-a-view">Discard a View</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Delete a view you no longer need.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet view delete "Old View"
+aglet view rename "Old Name" "New Name"</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Deleting a view removes the saved presentation only; the items it showed
+      remain in the database. The All Items view cannot be deleted.</dd>
+  <dt>Note</dt>
+  <dd>Deleting a view never deletes items — it only discards the lens.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-view">Create a view</a>,
+  <a href="#clone-a-view">Clone a view</a>,
+  <a href="aglet-manual.htm#the-all-items-view">The All Items view</a></p>
+
+
+<h2 id="working-with-dependencies">Working with Dependencies</h2>
+
+<h3 id="create-a-dependency">Create a Dependency Link</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Record that one item must wait for another, or relate two items.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>b</code> or <code>B</code> on an item (or selection) to open the
+      dependency link wizard and choose the blocked-by / blocks relationship.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet link depends-on &lt;ITEM&gt; &lt;PREREQUISITE&gt;
+aglet link blocks &lt;BLOCKER&gt; &lt;BLOCKED&gt;
+aglet link related &lt;ITEM_A&gt; &lt;ITEM_B&gt;</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>depends-on and blocks are two vocabularies for the same directed
+      relationship; related is bidirectional. An item with an unresolved
+      depends-on prerequisite is "blocked". Done prerequisites do not block.</dd>
+  <dt>Note</dt>
+  <dd>Do not create synthetic links to mean "someone is working on this" — use
+      claim for that. Links are for real prerequisites.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#dependencies">Dependencies</a>,
+  <a href="#remove-a-link">Remove a link</a>,
+  <a href="#filter-blocked-items">Filter blocked items</a>,
+  <a href="#the-link-wizard">The link wizard</a></p>
+
+<h3 id="remove-a-link">Remove a Link</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Delete a dependency or related link between two items.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet unlink depends-on &lt;ITEM&gt; &lt;PREREQUISITE&gt;
+aglet unlink blocks &lt;BLOCKER&gt; &lt;BLOCKED&gt;
+aglet unlink related &lt;ITEM_A&gt; &lt;ITEM_B&gt;</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Removing the last unresolved depends-on prerequisite unblocks the dependent
+      item, which can make it claimable again.</dd>
+  <dt>Note</dt>
+  <dd>unlink is the canonical entry point; the depends-on and blocks forms remove
+      the same underlying relationship from either direction.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-dependency">Create a dependency</a>,
+  <a href="aglet-manual.htm#dependencies">Dependencies</a>,
+  <a href="#filter-blocked-items">Filter blocked items</a></p>
+
+<h3 id="filter-blocked-items">Filter Blocked / Not-Blocked Items</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Show only items that are waiting on a prerequisite, or only those that are
+      free to start.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>u</code> to toggle the hide-dependent-items filter for the
+      current view.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet list --blocked
+aglet list --not-blocked
+aglet search &lt;query&gt; --blocked
+aglet view show "&lt;name&gt;" --not-blocked</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>blocked means the item has at least one unresolved depends-on prerequisite,
+      computed at query time from the dependency graph. Done dependencies do not
+      count.</dd>
+  <dt>Note</dt>
+  <dd>Dependency-state filters are derived, not assignable categories; you cannot
+      assign "blocked" to an item.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#dependencies">Dependencies</a>,
+  <a href="#create-a-dependency">Create a dependency</a>,
+  <a href="aglet-cli.htm#the-ready-list">The ready list</a>,
+  <a href="aglet-cli.htm#cli-filtering">CLI filtering</a></p>
+
+<h3 id="the-link-wizard">The Link Wizard</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Create dependency links interactively in the TUI.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>b</code> or <code>B</code> on an item or a multi-item selection
+      to open the wizard, then pick the other item and the relationship direction
+      (blocked-by or blocks).</dd>
+  <dt>How it works</dt>
+  <dd>The wizard writes the same depends-on / blocks links as the CLI. With a
+      selection, it can link several items at once.</dd>
+  <dt>Note</dt>
+  <dd>Use the wizard for prerequisites; use claim/release for "who is working on
+      it".</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#create-a-dependency">Create a dependency</a>,
+  <a href="#select-multiple-items">Select multiple items</a>,
+  <a href="aglet-cli.htm#cli-link-commands">CLI link commands</a></p>
+
+
+<h2 id="settings-and-indicators">Settings and Indicators</h2>
+
+<h3 id="global-settings">Global Settings</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Adjust application-wide preferences and workflow roles.</dd>
+  <dt>TUI steps</dt>
+  <dd>Press <code>g s</code> or <code>F10</code> to open Global Settings.</dd>
+  <dt>How it works</dt>
+  <dd>Global Settings control display and behavior preferences such as
+      auto-refresh, section borders, note glyphs, and search mode, and they define
+      workflow roles — which categories act as Ready and as the claim target used
+      by claim/release/ready.</dd>
+  <dt>Note</dt>
+  <dd>Workflow roles live here, not in the category hierarchy; reorder or rename
+      categories without changing which one is "Ready".</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-cli.htm#claim-an-item">Claim an item</a>,
+  <a href="aglet-cli.htm#the-ready-list">The ready list</a>,
+  <a href="#organize-the-hierarchy">Organize the hierarchy</a></p>
+
+<h3 id="status-footer">The Status and Hint Footer</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Read the two-row footer at the bottom of the TUI.</dd>
+  <dt>How it works</dt>
+  <dd>The footer has two rows. The top row shows transient status — the result of
+      your last action or a brief message. The bottom row shows persistent key
+      hints for the current mode, so the available keys change as you move between
+      Normal view, the category manager, the view editor, and the item
+      editor.</dd>
+  <dt>Note</dt>
+  <dd>Press <code>?</code> at any time to open the full in-app help panel, which
+      lists every key for the current context.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#tui-normal-mode-keys">Normal mode keys</a>,
+  <a href="#assignment-profile">Assignment profile</a></p>
+
+<h3 id="assignment-profile">The Item Assignment Profile</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Understand the assignments and provenance shown by <code>aglet show</code>.</dd>
+  <dt>How it works</dt>
+  <dd><code>aglet show</code> prints an item's text, note, status, and its
+      assignments. Displayed category lists include both assigned categories and
+      their parents (assigning High also shows Priority). Provenance distinguishes
+      manual assignments from auto-classified ones (implicit_string or other
+      providers), so you can see why a category is present.</dd>
+  <dt>Note</dt>
+  <dd>Implicit matches scan the note as well as the title, so a category can appear
+      because of text inside the note. Check provenance before assuming a visible
+      category was set by hand.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="#assign-a-category">Assign a category</a>,
+  <a href="aglet-manual.htm#categories">Categories</a>,
+  <a href="aglet-cli.htm#cli-item-commands">CLI item commands</a></p>
+
+</body>
+</html>

@@ -1,0 +1,31 @@
+---
+title: "Aglet Manual"
+subtitle: "Concepts · TUI Guide · CLI Reference"
+author:
+  - "Matthew Snodderly"
+  - "[github.com/msnodderly/aglet](https://github.com/msnodderly/aglet)"
+# date is injected by the Makefile (build date)
+
+# --- Page + type ---
+documentclass: report          # report → \chapter per top-level division
+papersize: letter
+geometry:
+  - margin=1in
+fontsize: 11pt
+linestretch: 1.15
+
+# Fonts (xelatex) are passed via -V mainfont/-V monofont in the Makefile so CI
+# can substitute TeX Live fonts; see MAINFONT/MONOFONT there.
+
+# --- Structure ---
+toc: true
+toc-depth: 2
+numbersections: true
+top-level-division: chapter
+colorlinks: true
+linkcolor: "RoyalBlue"
+urlcolor: "RoyalBlue"
+toccolor: "black"
+# Running headers + booktabs are in templates/header.tex (raw LaTeX, included
+# via --include-in-header in the Makefile so pandoc doesn't reparse it).
+---

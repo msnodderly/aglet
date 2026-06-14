@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/index.htm'
-      - 'docs/aglet-manual.htm'
-      - 'docs/aglet-tui.htm'
-      - 'docs/aglet-cli.htm'
+      - 'docs/src/**'
+      - 'docs/images/**'
+      - 'docs/templates/**'
+      - 'docs/Makefile'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -28,16 +28,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Stage site
+      - name: Install pandoc + TeX (xelatex) + fonts
         run: |
-          mkdir -p _site
-          cp docs/index.htm        _site/index.html
-          cp docs/aglet-manual.htm _site/aglet-manual.htm
-          cp docs/aglet-tui.htm    _site/aglet-tui.htm
-          cp docs/aglet-cli.htm    _site/aglet-cli.htm
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc \
+            texlive-xetex texlive-fonts-recommended texlive-fonts-extra \
+            texlive-latex-extra fonts-ibm-plex
+      - name: Build manual (HTML + Markdown + typeset PDF)
+        # Local authoring uses Palatino; CI substitutes a TeX Live equivalent.
+        run: |
+          make -C docs all \
+            MAINFONT="TeX Gyre Pagella" \
+            MONOFONT="IBM Plex Mono"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: docs/_site
       - id: deployment
         uses: actions/deploy-pages@v4
