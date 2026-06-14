@@ -26,6 +26,37 @@ Screenshot:
 ![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
 
 
+## Installation
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew install msnodderly/tap/aglet
+```
+
+Or tap first, then install:
+
+```bash
+brew tap msnodderly/tap
+brew install aglet
+```
+
+Installs the latest tagged release for your platform (macOS arm64/x86_64, Linux
+x86_64/arm64). Upgrade later with `brew upgrade aglet`.
+
+### Prebuilt binaries
+
+Download the tarball for your platform from the
+[releases page](https://github.com/msnodderly/aglet/releases), extract it, and
+put the `aglet` binary on your `PATH`. Each release ships a `.sha256` checksum.
+
+### From source
+
+```bash
+cargo install --path crates/aglet-cli
+```
+
+
 ## Manual
 
 The user manual is available in three formats:
@@ -223,31 +254,6 @@ appointments, renewals, and deadlines visible together.
 | Global | `?` | Toggle this help panel |
 | Global | `q` | Quit |
 <!-- END GENERATED KEYMAP -->
-
-## Installation
-
-### Homebrew (macOS and Linux)
-
-```bash
-brew install msnodderly/tap/aglet
-```
-
-Or tap first, then install:
-
-```bash
-brew tap msnodderly/tap
-brew install aglet
-```
-
-This installs the latest tagged release for your platform (macOS arm64/x86_64,
-Linux x86_64/arm64). Upgrade later with `brew upgrade aglet`.
-
-### Manual download
-
-Grab the tarball for your platform from
-[GitHub Releases](https://github.com/msnodderly/aglet/releases), extract it, and
-put the `aglet` binary on your `PATH`. Each release also ships a `.sha256`
-checksum file.
 
 ## Standalone Binary Build
 
