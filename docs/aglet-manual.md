@@ -16,8 +16,6 @@ This is a project I've had in my mind for literally 20 years, ever since watchin
 
 Currently I use this software to manage my GTD-style todo list, track basic financial budgets and recurring bills, and track motorcycle maintenance. It also acts as a backing store for my own personal knowledgebase db, inspired by Andrej Karpathy's LLM wiki concept, and Garry Tan's gbrain.
 
-Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda items are all saved perspectives of the same items, organized by categories.
-
 -matt
 
 ## How to Use This Manual

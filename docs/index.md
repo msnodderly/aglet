@@ -2,6 +2,31 @@
 
 # Aglet Help
 
+## Introduction
+
+aglet is a free-form personal information manager (PIM) modeled after Lotus Agenda, re-imagined as a modern TUI.
+
+It allows you to input unstructured notes and to-dos, then categorize them either manually or with automatic rules based on the text (in aglet there is experimental support for LLM-based categorization).
+
+This is a project I've had in my mind for literally 20 years, ever since watching the slow motion Chandler disaster unfold in realtime back in the mid-2000's and learning about the original (ancient, even then) Lotus Agenda that was its inspiration.
+
+Currently I use this software to manage my GTD-style todo list, track basic financial budgets and recurring bills, and track motorcycle maintenance. It also acts as a backing store for my own personal knowledgebase db, inspired by Andrej Karpathy's LLM wiki concept, and Garry Tan's gbrain.
+
+-matt
+
+## Read it in three formats
+
+[HTML](aglet-manual.md)  
+Browse the manual online (this site).
+
+[PDF](aglet-manual.pdf)  
+A typeset book — Concepts, TUI Guide, and CLI Reference in one download.
+
+[Markdown](https://github.com/msnodderly/aglet/blob/main/docs/aglet-manual.md)  
+Read on GitHub ([Concepts](https://github.com/msnodderly/aglet/blob/main/docs/aglet-manual.md),
+[TUI](https://github.com/msnodderly/aglet/blob/main/docs/aglet-tui.md),
+[CLI](https://github.com/msnodderly/aglet/blob/main/docs/aglet-cli.md)).
+
 ## Documentation
 
 [Concepts Reference](aglet-manual.md)  
@@ -15,8 +40,6 @@ interactive workflows, the view/category editors, and indicators.
 [CLI Reference](aglet-cli.md)  
 Every aglet command and flag: item, category, view, link, import, export,
 filtering, sorting, and workflow commands.
-
-[Download the full manual as a typeset PDF](aglet-manual.pdf) (Concepts, TUI, and CLI in one book).
 
 ## Quick Links
 
@@ -44,8 +67,5 @@ CLI
 [Workflow: claim / ready](aglet-cli.md#claim-an-item)
 
 ## About
-
-Aglet is a free-form personal information manager. Items, categories, and views
-are the three core concepts; the rest follows from them.
 
 Source: [github.com/msnodderly/aglet](https://github.com/msnodderly/aglet)

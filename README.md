@@ -26,6 +26,15 @@ Screenshot:
 ![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
 
 
+## Manual
+
+The user manual is available in three formats:
+
+- **HTML** — <https://msnodderly.github.io/aglet/>
+- **PDF** — <https://msnodderly.github.io/aglet/aglet-manual.pdf> (typeset book)
+- **Markdown** — [Concepts](docs/aglet-manual.md) · [TUI Guide](docs/aglet-tui.md) · [CLI Reference](docs/aglet-cli.md)
+
+
 ## What was Lotus Agenda?
 
 1. Kapor et al ACM paper (1990):
