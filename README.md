@@ -224,6 +224,31 @@ appointments, renewals, and deadlines visible together.
 | Global | `q` | Quit |
 <!-- END GENERATED KEYMAP -->
 
+## Installation
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew install msnodderly/tap/aglet
+```
+
+Or tap first, then install:
+
+```bash
+brew tap msnodderly/tap
+brew install aglet
+```
+
+This installs the latest tagged release for your platform (macOS arm64/x86_64,
+Linux x86_64/arm64). Upgrade later with `brew upgrade aglet`.
+
+### Manual download
+
+Grab the tarball for your platform from
+[GitHub Releases](https://github.com/msnodderly/aglet/releases), extract it, and
+put the `aglet` binary on your `PATH`. Each release also ships a `.sha256`
+checksum file.
+
 ## Standalone Binary Build
 
 Build a release-mode standalone package for the current platform:
@@ -234,8 +259,25 @@ scripts/build-standalone-aglet.sh
 
 The package is written to `dist/aglet-<version>-<platform>.tar.gz` with a
 matching SHA-256 checksum file. GitHub Actions runs the same procedure on every
-pull request, and publishes the packaged binaries to the `aglet-latest`
-prerelease when changes land on `main` or `master`.
+pull request, publishes the packaged binaries to the rolling `aglet-latest`
+prerelease when changes land on `main` or `master`, and cuts a versioned release
+(updating the Homebrew tap) when a `v*.*.*` tag is pushed.
+
+### Cutting a release
+
+1. Bump the `version` in `crates/aglet-cli/Cargo.toml` (the release workflow
+   fails if the tag and crate version disagree).
+2. Commit, then tag and push:
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+The workflow builds all platforms, publishes the `v0.1.0` GitHub release, and
+regenerates `Formula/aglet.rb` in `msnodderly/homebrew-tap`. The tap push
+requires a `HOMEBREW_TAP_TOKEN` repository secret — a fine-grained or classic
+personal access token with **Contents: write** on `msnodderly/homebrew-tap`.
 
 ## License
 
