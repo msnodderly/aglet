@@ -26,6 +26,37 @@ Screenshot:
 ![Aglet Areas Dashboard showing categorized work, personal, health, finance, and motorcycle sections with custom columns and totals](docs/images/aglet-areas-dashboard.png)
 
 
+## Installation
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew install msnodderly/tap/aglet
+```
+
+Or tap first, then install:
+
+```bash
+brew tap msnodderly/tap
+brew install aglet
+```
+
+Installs the latest tagged release for your platform (macOS arm64/x86_64, Linux
+x86_64/arm64). Upgrade later with `brew upgrade aglet`.
+
+### Prebuilt binaries
+
+Download the tarball for your platform from the
+[releases page](https://github.com/msnodderly/aglet/releases), extract it, and
+put the `aglet` binary on your `PATH`. Each release ships a `.sha256` checksum.
+
+### From source
+
+```bash
+cargo install --path crates/aglet-cli
+```
+
+
 ## Manual
 
 The user manual is available in three formats:
@@ -234,8 +265,25 @@ scripts/build-standalone-aglet.sh
 
 The package is written to `dist/aglet-<version>-<platform>.tar.gz` with a
 matching SHA-256 checksum file. GitHub Actions runs the same procedure on every
-pull request, and publishes the packaged binaries to the `aglet-latest`
-prerelease when changes land on `main` or `master`.
+pull request, publishes the packaged binaries to the rolling `aglet-latest`
+prerelease when changes land on `main` or `master`, and cuts a versioned release
+(updating the Homebrew tap) when a `v*.*.*` tag is pushed.
+
+### Cutting a release
+
+1. Bump the `version` in `crates/aglet-cli/Cargo.toml` (the release workflow
+   fails if the tag and crate version disagree).
+2. Commit, then tag and push:
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+The workflow builds all platforms, publishes the `v0.1.0` GitHub release, and
+regenerates `Formula/aglet.rb` in `msnodderly/homebrew-tap`. The tap push
+requires a `HOMEBREW_TAP_TOKEN` repository secret — a fine-grained or classic
+personal access token with **Contents: write** on `msnodderly/homebrew-tap`.
 
 ## License
 
