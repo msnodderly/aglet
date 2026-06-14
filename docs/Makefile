@@ -24,8 +24,6 @@ MD          := $(addsuffix .md,$(DOCS))
 PDF         := aglet-manual.pdf
 SITE        := _site
 
-GEN_BANNER  := <!-- GENERATED from docs/src/$*.htm — DO NOT EDIT. Run `make md` in docs/. -->
-
 .PHONY: all html md pdf check clean
 all: md pdf html
 
@@ -33,9 +31,9 @@ all: md pdf html
 md: $(MD)
 %.md: src/%.htm
 	@$(PANDOC) $< -f html -t gfm --wrap=preserve -o $@.tmp
-	@# .htm cross-links -> .md, then prepend the "generated" banner.
+	@# .htm cross-links -> .md, then prepend a "generated" banner ($* = doc name).
 	@sed -e 's/\.htm)/.md)/g' -e 's/\.htm#/.md#/g' $@.tmp > $@.tmp2
-	@printf '%s\n\n' "$(GEN_BANNER)" | cat - $@.tmp2 > $@
+	@{ printf '<!-- GENERATED from docs/src/%s.htm — DO NOT EDIT. Run make md in docs/. -->\n\n' "$*"; cat $@.tmp2; } > $@
 	@rm -f $@.tmp $@.tmp2
 	@echo "  MD   $@"
 

@@ -1,4 +1,4 @@
-<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run   MD   aglet-cli.md in docs/. -->
+<!-- GENERATED from docs/src/aglet-tui.htm — DO NOT EDIT. Run make md in docs/. -->
 
 # Aglet TUI Guide
 

@@ -1,4 +1,4 @@
-<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run   MD   aglet-manual.md in docs/. -->
+<!-- GENERATED from docs/src/index.htm — DO NOT EDIT. Run make md in docs/. -->
 
 # Aglet Help
 
