@@ -10,9 +10,10 @@ PANDOC      ?= pandoc
 PDF_ENGINE  ?= xelatex
 BUILD_DATE  := $(shell date +%Y-%m-%d)
 
-# Fonts are overridable so CI can use TeX Live fonts (e.g. TeX Gyre Pagella)
-# where the local author's system font (Palatino) is unavailable.
-MAINFONT    ?= Palatino
+# Fonts (overridable). IBM Plex Serif/Mono are used by default because they are
+# available both locally and in CI (Debian's fonts-ibm-plex), so the author's
+# preview matches the published PDF.
+MAINFONT    ?= IBM Plex Serif
 MONOFONT    ?= IBM Plex Mono
 
 # Source docs (without extension). index is the home page; the three content
