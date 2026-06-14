@@ -1,4 +1,4 @@
-<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run make[4]: Nothing to be done for `md'. in docs/. -->
+<!-- GENERATED from docs/src/aglet-cli.htm — DO NOT EDIT. Run make md in docs/. -->
 
 # Aglet CLI Reference
 

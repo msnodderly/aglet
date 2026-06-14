@@ -28,13 +28,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install pandoc + TeX (xelatex) + fonts
+      - name: Install pandoc (pinned) + TeX (xelatex) + fonts
         run: |
+          PANDOC_VERSION=3.6.4
+          curl -fsSL "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" -o /tmp/pandoc.deb
+          sudo dpkg -i /tmp/pandoc.deb
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pandoc \
-            texlive-xetex texlive-fonts-recommended texlive-fonts-extra \
-            texlive-latex-extra fonts-ibm-plex
+            texlive-xetex texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended texlive-fonts-extra \
+            lmodern fonts-ibm-plex
       - name: Build manual (HTML + Markdown + typeset PDF)
         # Local authoring uses Palatino; CI substitutes a TeX Live equivalent.
         run: |

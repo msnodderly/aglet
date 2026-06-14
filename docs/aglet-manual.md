@@ -1,4 +1,4 @@
-<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run   MD   aglet-tui.md in docs/. -->
+<!-- GENERATED from docs/src/aglet-manual.htm — DO NOT EDIT. Run make md in docs/. -->
 
 # Aglet Reference — Concepts
 
