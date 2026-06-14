@@ -335,8 +335,8 @@
     EXAMPLES      A monthly "Pay insurance" item set to recur reappears with next
                   month's date each time you mark it done.
 
-    NOTE          Recurrence is an aglet feature with no Lotus Agenda analog. It
-                  works together with the reserved When and Done categories.
+    NOTE          Recurrence works together with the reserved When and Done
+                  categories.
 
 #### SEE ALSO
 
@@ -373,8 +373,8 @@
     HOW IT WORKS  Every delete appends an entry to the deletion log. Restoring
                   recreates the item with its text, note, and recorded state.
 
-    NOTE          Restore is an aglet feature with no Lotus Agenda analog; Agenda's
-                  discard was not reversible in the same way.
+    NOTE          Restore brings the item back exactly as it was deleted; the
+                  deletion log keeps a history you can recover from.
 
 #### SEE ALSO
 
@@ -431,8 +431,8 @@
                      dependency).
                   3. Press Esc to clear the selection.
 
-    HOW IT WORKS  Selection is the aglet analog of Agenda's marked items. Batch
-                  operations act on every selected item.
+    HOW IT WORKS  Selection lets a single command act on many items at once.
+                  Batch operations act on every selected item.
 
     NOTE          With no explicit selection, the same keys act on the single
                   item under the cursor.
@@ -523,8 +523,8 @@
 
     HOW IT WORKS  Classification proposes categories for an item from its text and
                   rules. Accepting a suggestion creates a sticky assignment;
-                  dismissing it does not. This is the aglet analog of Agenda's
-                  "execute conditions" plus modern suggestion review.
+                  dismissing it does not. It runs aglet's rule-based and
+                  LLM-based suggestions on demand for review.
 
     NOTE          aglet has experimental support for LLM-based categorization in
                   addition to implicit-string and profile-condition matching.

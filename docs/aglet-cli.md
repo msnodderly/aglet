@@ -224,8 +224,8 @@
                   item stops matching.
 
     NOTE          In the category manager the left pane shows a readable rule-count
-                  badge such as [2 conditions]. Conditions are the aglet analog of
-                  Agenda's assignment conditions.
+                  badge such as [2 conditions]. Conditions are re-evaluated when an
+                  item's text or dates change.
 
 #### SEE ALSO
 
