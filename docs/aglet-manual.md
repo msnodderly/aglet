@@ -20,6 +20,11 @@ them see the [TUI Guide](aglet-tui.md) or the
 
 ### About Aglet
 
+<figure>
+<img src="images/aglet-areas-dashboard.png" alt="An aglet board: items grouped into sections, with When, Status, Priority, and Cost columns." />
+<figcaption aria-hidden="true">An aglet board: items grouped into sections, with When, Status, Priority, and Cost columns.</figcaption>
+</figure>
+
 Purpose  
 Aglet is a personal information manager that gives you control over tasks,
 notes, facts, numbers, and dates. You capture information as short items,
@@ -204,6 +209,11 @@ cannot be modified, deleted, or used as child category names.
 
 ### Views
 
+<figure>
+<img src="images/aglet-view-palette.png" alt="The view palette lists every saved lens over the same items." />
+<figcaption aria-hidden="true">The view palette lists every saved lens over the same items.</figcaption>
+</figure>
+
 Purpose  
 A view is a saved perspective over the same items. Each view can filter to
 certain categories, hide completed items, group items into sections, and
@@ -228,6 +238,11 @@ lists.
 [Sections](#sections)
 
 ### Sections
+
+<figure>
+<img src="images/aglet-agenda-research-view.png" alt="One view, two sections — each gathers items by its own criteria." />
+<figcaption aria-hidden="true">One view, two sections — each gathers items by its own criteria.</figcaption>
+</figure>
 
 Purpose  
 A section is a group within a view that collects items matching its own
@@ -262,6 +277,11 @@ In Normal mode, `/` scopes a search to the focused section only;
 [Column summaries](aglet-tui.md#column-summaries)
 
 ### Columns
+
+<figure>
+<img src="images/aglet-finance-cost-review.png" alt="A Cost column with a per-section Sum in each section footer." />
+<figcaption aria-hidden="true">A Cost column with a per-section Sum in each section footer.</figcaption>
+</figure>
 
 Purpose  
 A column shows a piece of data next to each item in a section, such as a
@@ -514,6 +534,11 @@ Backend) from the same assignments, without tagging each item twice.
 
 ### Standard Views
 
+<figure>
+<img src="images/aglet-status-by-project-kanban.png" alt="A standard view as a Kanban board: sections shown as horizontal lanes." />
+<figcaption aria-hidden="true">A standard view as a Kanban board: sections shown as horizontal lanes.</figcaption>
+</figure>
+
 Purpose  
 A standard view displays any items and any categories, filtered by criteria
 and optionally grouped into sections. It is the general-purpose view
@@ -536,6 +561,11 @@ vertically or arranged as horizontal lanes for a Kanban board (toggle with
 [Create a view](aglet-tui.md#create-a-view)
 
 ### Datebook Views
+
+<figure>
+<img src="images/aglet-datebook-scheduling-view.png" alt="A datebook view buckets dated items into weekly ranges." />
+<figcaption aria-hidden="true">A datebook view buckets dated items into weekly ranges.</figcaption>
+</figure>
 
 Purpose  
 A datebook view buckets dated items into calendar ranges, so upcoming work,

@@ -4,6 +4,11 @@
 % Map Unicode glyphs the body serif (Palatino) lacks to math equivalents.
 \usepackage{newunicodechar}
 \newunicodechar{→}{\ensuremath{\rightarrow}}
+% Screenshots: scale to text width, never distort.
+\setkeys{Gin}{width=\linewidth,keepaspectratio}
+% Pin figures where they are placed in the source (no floating).
+\usepackage{float}
+\floatplacement{figure}{H}
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\nouppercase{\leftmark}}

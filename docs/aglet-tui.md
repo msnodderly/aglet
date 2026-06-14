@@ -230,6 +230,11 @@ Within the inline category list:
 
 ### Add an Item
 
+<figure>
+<img src="images/aglet-add-new-item.png" alt="The item editor: a title, a note, and an inline category checklist." />
+<figcaption aria-hidden="true">The item editor: a title, a note, and an inline category checklist.</figcaption>
+</figure>
+
 Purpose  
 Add a new item to the database. An item is a single line of free-form text,
 optionally with a longer note.
@@ -522,6 +527,11 @@ cursor.
 
 ### Add a Category
 
+<figure>
+<img src="images/aglet-category-manager.png" alt="The category manager: hierarchy at left; flags, match rules, and actions at right." />
+<figcaption aria-hidden="true">The category manager: hierarchy at left; flags, match rules, and actions at right.</figcaption>
+</figure>
+
 Purpose  
 Create a new category — the basic filing unit. Categories can be top-level
 or nested under a parent.
@@ -752,6 +762,11 @@ to stop auto-assignment but keep past filings.
 
 ### Create a View
 
+<figure>
+<img src="images/aglet-projects-dashboard.png" alt="A saved view grouping items by project, with an Effort column and per-section totals." />
+<figcaption aria-hidden="true">A saved view grouping items by project, with an Effort column and per-section totals.</figcaption>
+</figure>
+
 Purpose  
 Save a lens over the item database — a filtered, sectioned, and columned
 presentation you can return to.
@@ -941,6 +956,11 @@ Note
 [Datebook keys](#tui-datebook-keys)
 
 ### The View Editor
+
+<figure>
+<img src="images/aglet-view-editor.png" alt="The view editor: filter criteria, the section pane, and a live preview." />
+<figcaption aria-hidden="true">The view editor: filter criteria, the section pane, and a live preview.</figcaption>
+</figure>
 
 Purpose  
 Configure a view's filters, sections, columns, layout, aliases, and preview
