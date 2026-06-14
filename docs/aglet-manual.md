@@ -6,6 +6,20 @@
 [TUI Guide](aglet-tui.md)  \| 
 [CLI Reference](aglet-cli.md)
 
+## Introduction
+
+aglet is a free-form personal information manager (PIM) modeled after Lotus Agenda, re-imagined as a modern TUI.
+
+It allows you to input unstructured notes and to-dos, then categorize them either manually or with automatic rules based on the text (in aglet there is experimental support for LLM-based categorization).
+
+This is a project I've had in my mind for literally 20 years, ever since watching the slow motion Chandler disaster unfold in realtime back in the mid-2000's and learning about the original (ancient, even then) Lotus Agenda that was its inspiration.
+
+Currently I use this software to manage my GTD-style todo list, track basic financial budgets and recurring bills, and track motorcycle maintenance. It also acts as a backing store for my own personal knowledgebase db, inspired by Andrej Karpathy's LLM wiki concept, and Garry Tan's gbrain.
+
+Aglet views act as dashboards over the same database: todo lists, project plans, research notes, finance tracking, and agenda items are all saved perspectives of the same items, organized by categories.
+
+-matt
+
 ## How to Use This Manual
 
 Purpose  

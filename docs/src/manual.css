@@ -20,6 +20,7 @@ h4 { margin-bottom: .2em; }
 a { color: #00c; }
 
 p.nav { margin-top: .2em; }
+p.signoff { font-style: italic; margin-top: 1em; }
 p.seealso { margin: .4em 0 1.8em 0; font-size: .95em; }
 p.seealso strong { text-transform: uppercase; letter-spacing: .04em; }
 
