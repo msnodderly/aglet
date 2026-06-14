@@ -45,7 +45,7 @@ The user manual is available in three formats:
 
 ## What is aglet?
 
-aglet is a Rust TUI for managing items, categories, views, and item dependency
+aglet is a terminal UI for managing items, categories, views, and item dependency
 links. It also includes a CLI, primarily for ease of use by LLM coding agents.
 
 It currently implements the basic feature set of Lotus Agenda. aglet's
