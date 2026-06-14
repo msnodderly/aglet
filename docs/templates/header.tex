@@ -1,0 +1,13 @@
+% Raw LaTeX header for the typeset PDF (included verbatim, not via Markdown).
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\nouppercase{\leftmark}}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyfoot[C]{\thepage}%
+  \renewcommand{\headrulewidth}{0pt}%
+}

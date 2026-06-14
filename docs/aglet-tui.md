@@ -1,9 +1,12 @@
+<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run   MD   aglet-cli.md in docs/. -->
+
 # Aglet TUI Guide
 
 [« Home](index.md)  \| 
-[Concepts](aglet-manual.htm)  \|  [CLI Reference](aglet-cli.htm)
+[Concepts](aglet-manual.md)  \|  [CLI Reference](aglet-cli.md)
 
-## How to Use This Manual
+## <span id="how to use this manual">How to Use This Manual</span>
+
     PURPOSE    Complete guide to the aglet terminal interface: keybindings,
                interactive workflows, and the view/category editors. For
                scripting and batch use see the
@@ -15,7 +18,8 @@
 
 > [Home](index.md)
 
-## Index
+## <span id="index">Index</span>
+
     KEYS AND COMMANDS
       TUI: Normal Mode Keys
       TUI: Category Manager Keys
@@ -71,7 +75,8 @@
 
 # Keys and Commands
 
-## TUI: Normal Mode Keys
+## <span id="tui normal mode keys">TUI: Normal Mode Keys</span>
+
     PURPOSE       Normal mode is the main board where items are displayed. These
                   keys work while the highlight is on an item or column.
 
@@ -127,9 +132,10 @@
 
 #### SEE ALSO
 
-> [Category manager keys](#tui-category-manager-keys),   [View editor keys](#tui-view-editor-keys),   [Select multiple items](#select-multiple-items),   [» Index](#index)
+> [Category manager keys](#tui%20category%20manager%20keys),   [View editor keys](#tui%20view%20editor%20keys),   [Select multiple items](#select%20multiple%20items),   [» Index](#index)
 
-## TUI: Category Manager Keys
+## <span id="tui category manager keys">TUI: Category Manager Keys</span>
+
     PURPOSE       The category manager is a full-screen mode for working with the
                   category hierarchy. Open it with c or F9; press Esc to return.
 
@@ -152,9 +158,10 @@
 
 #### SEE ALSO
 
-> [Categories](aglet-manual.md#categories),   [Organize the category hierarchy](#organize-the-category-hierarchy),   [Actions](aglet-cli.md#actions),   [» Index](#index)
+> [Categories](aglet-manual.md#categories),   [Organize the category hierarchy](#organize%20the%20hierarchy),   [Actions](aglet-cli.md#actions),   [» Index](#index)
 
-## TUI: View Editor Keys
+## <span id="tui view editor keys">TUI: View Editor Keys</span>
+
     PURPOSE       The view editor configures a view's filter criteria, sections,
                   columns, layout, and aliases.
 
@@ -175,9 +182,10 @@
 
 #### SEE ALSO
 
-> [Views](aglet-manual.md#views),   [Create a view](#create-a-view),   [View criteria](#view-criteria),   [View aliases](#view-aliases),   [» Index](#index)
+> [Views](aglet-manual.md#views),   [Create a view](#create%20a%20view),   [View criteria](#view%20criteria),   [View aliases](#view%20aliases),   [» Index](#index)
 
-## TUI: Item Editor Keys
+## <span id="tui item editor keys">TUI: Item Editor Keys</span>
+
     PURPOSE       The item editor (opened with n to add or e to edit) is a panel
                   with a title field, a note field, and an inline category list.
 
@@ -199,9 +207,10 @@
 
 #### SEE ALSO
 
-> [Add an item](#add-an-item),   [Edit an item](#edit-an-item),   [Add a note](#add-a-note-to-an-item),   [Assign a category](#assign-a-category-to-an-item),   [» Index](#index)
+> [Add an item](#add%20an%20item),   [Edit an item](#edit%20an%20item),   [Add a note](#add%20a%20note%20to%20an%20item),   [Assign a category](#assign%20a%20category),   [» Index](#index)
 
-## TUI: Datebook Keys
+## <span id="tui datebook keys">TUI: Datebook Keys</span>
+
     PURPOSE       A datebook view buckets dated items into calendar ranges. These
                   keys move the visible date window.
 
@@ -217,11 +226,12 @@
 
 #### SEE ALSO
 
-> [Datebook views](aglet-manual.md#datebook-views),   [Create a datebook view](#create-a-datebook-view),   [Browse a datebook view](#browse-a-datebook-view),   [» Index](#index)
+> [Datebook views](aglet-manual.md#datebook%20views),   [Create a datebook view](#create%20a%20datebook),   [Browse a datebook view](#browse%20a%20datebook),   [» Index](#index)
 
 # Working with Items
 
-## Add an Item
+## <span id="add an item">Add an Item</span>
+
     PURPOSE       Add a new item to the database. An item is a single line of
                   free-form text, optionally with a longer note.
 
@@ -248,9 +258,10 @@
 
 #### SEE ALSO
 
-> [Items](aglet-manual.md#items),   [Edit an item](#edit-an-item),   [Automatic assignment](aglet-manual.md#automatic-assignment),   [Add a note](#add-a-note-to-an-item),   [Item editor keys](#tui-item-editor-keys),   [» Index](#index)
+> [Items](aglet-manual.md#items),   [Edit an item](#edit%20an%20item),   [Automatic assignment](aglet-manual.md#automatic%20assignment),   [Add a note](#add%20a%20note%20to%20an%20item),   [Item editor keys](#tui%20item%20editor%20keys),   [» Index](#index)
 
-## Edit an Item
+## <span id="edit an item">Edit an Item</span>
+
     PURPOSE       Change an item's text, note, or done state.
 
     TUI STEPS     1. Select the item.
@@ -274,9 +285,10 @@
 
 #### SEE ALSO
 
-> [Add an item](#add-an-item),   [Add a note](#add-a-note-to-an-item),   [Mark an item done](#mark-an-item-done),   [Automatic assignment](aglet-manual.md#automatic-assignment),   [» Index](#index)
+> [Add an item](#add%20an%20item),   [Add a note](#add%20a%20note%20to%20an%20item),   [Mark an item done](#mark%20an%20item%20done),   [Automatic assignment](aglet-manual.md#automatic%20assignment),   [» Index](#index)
 
-## Add a Note to an Item
+## <span id="add a note to an item">Add a Note to an Item</span>
+
     PURPOSE       Attach a longer body of text to an item. Notes hold detail that
                   does not belong in the one-line title.
 
@@ -299,9 +311,10 @@
 
 #### SEE ALSO
 
-> [Notes](aglet-manual.md#notes),   [Edit an item](#edit-an-item),   [Automatic assignment](aglet-manual.md#automatic-assignment),   [» Index](#index)
+> [Notes](aglet-manual.md#notes),   [Edit an item](#edit%20an%20item),   [Automatic assignment](aglet-manual.md#automatic%20assignment),   [» Index](#index)
 
-## Mark an Item Done
+## <span id="mark an item done">Mark an Item Done</span>
+
     PURPOSE       Record that an item is complete. Done is a reserved category that
                   also drives recurrence and dependency resolution.
 
@@ -321,9 +334,10 @@
 
 #### SEE ALSO
 
-> [Reserved categories](aglet-manual.md#reserved-categories),   [Recurrence](#recurrence),   [Dependencies](aglet-manual.md#dependencies),   [» Index](#index)
+> [Reserved categories](aglet-manual.md#reserved%20categories),   [Recurrence](#recurrence),   [Dependencies](aglet-manual.md#dependencies),   [» Index](#index)
 
-## Recurrence
+## <span id="recurrence">Recurrence</span>
+
     PURPOSE       Make an item repeat on a schedule. When a recurring item is
                   completed, aglet generates the next occurrence automatically.
 
@@ -340,9 +354,10 @@
 
 #### SEE ALSO
 
-> [Mark an item done](#mark-an-item-done),   [Reserved categories](aglet-manual.md#reserved-categories),   [Datebook views](aglet-manual.md#datebook-views),   [» Index](#index)
+> [Mark an item done](#mark%20an%20item%20done),   [Reserved categories](aglet-manual.md#reserved%20categories),   [Datebook views](aglet-manual.md#datebook%20views),   [» Index](#index)
 
-## Delete an Item
+## <span id="delete an item">Delete an Item</span>
+
     PURPOSE       Remove an item from the database. Deletion is logged so the item
                   can be restored.
 
@@ -362,9 +377,10 @@
 
 #### SEE ALSO
 
-> [Restore a deleted item](#restore-a-deleted-item),   [Items](aglet-manual.md#items),   [CLI item commands](aglet-cli.md#cli-item-commands),   [» Index](#index)
+> [Restore a deleted item](#restore%20a%20deleted%20item),   [Items](aglet-manual.md#items),   [CLI item commands](aglet-cli.md#cli%20item%20commands),   [» Index](#index)
 
-## Restore a Deleted Item
+## <span id="restore a deleted item">Restore a Deleted Item</span>
+
     PURPOSE       Bring back an item that was deleted, using the deletion log.
 
     CLI STEPS     1. aglet deleted               # find the log entry id
@@ -378,9 +394,10 @@
 
 #### SEE ALSO
 
-> [Delete an item](#delete-an-item),   [CLI item commands](aglet-cli.md#cli-item-commands),   [» Index](#index)
+> [Delete an item](#delete%20an%20item),   [CLI item commands](aglet-cli.md#cli%20item%20commands),   [» Index](#index)
 
-## Move an Item Between Sections
+## <span id="move an item between sections">Move an Item Between Sections</span>
+
     PURPOSE       Reposition an item into a different section of the current view.
 
     TUI STEPS     Select the item and press [ to move it to the previous section or
@@ -397,9 +414,10 @@
 
 #### SEE ALSO
 
-> [Sections](aglet-manual.md#sections),   [Add a section](#add-a-section-to-a-view),   [Normal mode keys](#tui-normal-mode-keys),   [» Index](#index)
+> [Sections](aglet-manual.md#sections),   [Add a section](#add%20a%20section),   [Normal mode keys](#tui%20normal%20mode%20keys),   [» Index](#index)
 
-## Search Items
+## <span id="search items">Search Items</span>
+
     PURPOSE       Find items by text in their title or note.
 
     TUI STEPS     Press / to search within the focused section, or g/ to search
@@ -418,9 +436,10 @@
 
 #### SEE ALSO
 
-> [Items](aglet-manual.md#items),   [Select multiple items](#select-multiple-items),   [CLI filtering](aglet-cli.md#cli-filtering),   [» Index](#index)
+> [Items](aglet-manual.md#items),   [Select multiple items](#select%20multiple%20items),   [CLI filtering](aglet-cli.md#cli%20filtering),   [» Index](#index)
 
-## Select Multiple Items
+## <span id="select multiple items">Select Multiple Items</span>
+
     PURPOSE       Operate on several items at once - assign, complete, delete, or
                   classify them together.
 
@@ -439,11 +458,12 @@
 
 #### SEE ALSO
 
-> [Assign a category](#assign-a-category-to-an-item),   [Mark an item done](#mark-an-item-done),   [Create a dependency](#create-a-dependency-link),   [Review suggestions](#review-classification-suggestions),   [» Index](#index)
+> [Assign a category](#assign%20a%20category),   [Mark an item done](#mark%20an%20item%20done),   [Create a dependency](#create%20a%20dependency),   [Review suggestions](#review%20classification%20suggestions),   [» Index](#index)
 
 # Working with Categories
 
-## Add a Category
+## <span id="add a category">Add a Category</span>
+
     PURPOSE       Create a new category - the basic filing unit. Categories can be
                   top-level or nested under a parent.
 
@@ -466,9 +486,10 @@
 
 #### SEE ALSO
 
-> [Categories](aglet-manual.md#categories),   [Tag categories](aglet-manual.md#tag-categories),   [Numeric categories](aglet-manual.md#numeric-categories),   [Exclusive categories](aglet-manual.md#exclusive-categories),   [Organize the hierarchy](#organize-the-category-hierarchy),   [» Index](#index)
+> [Categories](aglet-manual.md#categories),   [Tag categories](aglet-manual.md#tag%20categories),   [Numeric categories](aglet-manual.md#numeric%20categories),   [Exclusive categories](aglet-manual.md#exclusive%20categories),   [Organize the hierarchy](#organize%20the%20hierarchy),   [» Index](#index)
 
-## Assign a Category to an Item
+## <span id="assign a category">Assign a Category to an Item</span>
+
     PURPOSE       Manually file an item under a category.
 
     TUI STEPS     1. Select the item (or several with Space).
@@ -491,9 +512,10 @@
 
 #### SEE ALSO
 
-> [Unassign a category](#unassign-a-category),   [Automatic assignment](aglet-manual.md#automatic-assignment),   [Exclusive categories](aglet-manual.md#exclusive-categories),   [Set a numeric value](#set-a-numeric-value),   [» Index](#index)
+> [Unassign a category](#unassign%20a%20category),   [Automatic assignment](aglet-manual.md#automatic%20assignment),   [Exclusive categories](aglet-manual.md#exclusive%20categories),   [Set a numeric value](#set%20a%20numeric%20value),   [» Index](#index)
 
-## Unassign a Category
+## <span id="unassign a category">Unassign a Category</span>
+
     PURPOSE       Remove a category from an item.
 
     TUI STEPS     Press a on the item, then Space on the assigned category to toggle
@@ -511,9 +533,10 @@
 
 #### SEE ALSO
 
-> [Assign a category](#assign-a-category-to-an-item),   [Automatic assignment](aglet-manual.md#automatic-assignment),   [Discard a category](#discard-a-category),   [» Index](#index)
+> [Assign a category](#assign%20a%20category),   [Automatic assignment](aglet-manual.md#automatic%20assignment),   [Discard a category](#discard%20a%20category),   [» Index](#index)
 
-## Review Classification Suggestions
+## <span id="review classification suggestions">Review Classification Suggestions</span>
+
     PURPOSE       Accept or reject category suggestions, including experimental
                   LLM-based ones, before they are applied.
 
@@ -531,9 +554,10 @@
 
 #### SEE ALSO
 
-> [Automatic assignment](aglet-manual.md#automatic-assignment),   [Profile conditions](aglet-cli.md#profile-conditions),   [Assign a category](#assign-a-category-to-an-item),   [» Index](#index)
+> [Automatic assignment](aglet-manual.md#automatic%20assignment),   [Profile conditions](aglet-cli.md#profile%20conditions),   [Assign a category](#assign%20a%20category),   [» Index](#index)
 
-## Set a Numeric Value
+## <span id="set a numeric value">Set a Numeric Value</span>
+
     PURPOSE       Give an item a number under a numeric category - a cost, quantity,
                   mileage, or effort estimate.
 
@@ -552,9 +576,10 @@
 
 #### SEE ALSO
 
-> [Numeric categories](aglet-manual.md#numeric-categories),   [Format a numeric column](#format-a-numeric-column),   [Column summaries](#column-summary-functions),   [Add a column](#add-a-column-to-a-section),   [» Index](#index)
+> [Numeric categories](aglet-manual.md#numeric%20categories),   [Format a numeric column](#format%20a%20numeric%20column),   [Column summaries](#column%20summaries),   [Add a column](#add%20a%20column),   [» Index](#index)
 
-## Format a Numeric Column
+## <span id="format a numeric column">Format a Numeric Column</span>
+
     PURPOSE       Control how a numeric category's values are displayed - decimal
                   places, currency, and thousands separators.
 
@@ -571,9 +596,10 @@
 
 #### SEE ALSO
 
-> [Numeric categories](aglet-manual.md#numeric-categories),   [Set a numeric value](#set-a-numeric-value),   [Column summaries](#column-summary-functions),   [» Index](#index)
+> [Numeric categories](aglet-manual.md#numeric%20categories),   [Set a numeric value](#set%20a%20numeric%20value),   [Column summaries](#column%20summaries),   [» Index](#index)
 
-## Organize the Category Hierarchy
+## <span id="organize the hierarchy">Organize the Category Hierarchy</span>
+
     PURPOSE       Rearrange categories - reparent, promote, demote, and reorder
                   siblings.
 
@@ -593,9 +619,10 @@
 
 #### SEE ALSO
 
-> [The category hierarchy](aglet-manual.md#the-category-hierarchy),   [Exclusive categories](aglet-manual.md#exclusive-categories),   [Subsumption](aglet-manual.md#subsumption),   [Global settings](#global-settings),   [» Index](#index)
+> [The category hierarchy](aglet-manual.md#the%20category%20hierarchy),   [Exclusive categories](aglet-manual.md#exclusive%20categories),   [Subsumption](aglet-manual.md#subsumption),   [Global settings](#global%20settings),   [» Index](#index)
 
-## Discard a Category
+## <span id="discard a category">Discard a Category</span>
+
     PURPOSE       Delete a category you no longer need.
 
     TUI STEPS     In the category manager, select the category and delete it.
@@ -610,11 +637,12 @@
 
 #### SEE ALSO
 
-> [Add a category](#add-a-category),   [Unassign a category](#unassign-a-category),   [Reserved categories](aglet-manual.md#reserved-categories),   [» Index](#index)
+> [Add a category](#add%20a%20category),   [Unassign a category](#unassign%20a%20category),   [Reserved categories](aglet-manual.md#reserved%20categories),   [» Index](#index)
 
 # Working with Views
 
-## Create a View
+## <span id="create a view">Create a View</span>
+
     PURPOSE       Save a lens over the item database - a filtered, sectioned, and
                   columned presentation you can return to.
 
@@ -636,9 +664,10 @@
 
 #### SEE ALSO
 
-> [Views](aglet-manual.md#views),   [View criteria](#view-criteria),   [Add a section](#add-a-section-to-a-view),   [The view editor](#the-view-editor),   [Clone a view](#clone-a-view),   [» Index](#index)
+> [Views](aglet-manual.md#views),   [View criteria](#view%20criteria),   [Add a section](#add%20a%20section),   [The view editor](#the%20view%20editor),   [Clone a view](#clone%20a%20view),   [» Index](#index)
 
-## View Criteria
+## <span id="view criteria">View Criteria</span>
+
     PURPOSE       Control which items a view includes.
 
     CLI STEPS     aglet view create "My View" --include High --include Pending
@@ -654,9 +683,10 @@
 
 #### SEE ALSO
 
-> [Create a view](#create-a-view),   [CLI filtering](aglet-cli.md#cli-filtering),   [Filter blocked items](#filter-blocked--not-blocked-items),   [Add a section](#add-a-section-to-a-view),   [» Index](#index)
+> [Create a view](#create%20a%20view),   [CLI filtering](aglet-cli.md#cli%20filtering),   [Filter blocked items](#filter%20blocked%20items),   [Add a section](#add%20a%20section),   [» Index](#index)
 
-## Add a Section to a View
+## <span id="add a section">Add a Section to a View</span>
+
     PURPOSE       Group a view's items into labelled lanes by category criteria.
 
     CLI STEPS     aglet view section add  ...
@@ -676,9 +706,10 @@
 
 #### SEE ALSO
 
-> [Sections](aglet-manual.md#sections),   [Add a column](#add-a-column-to-a-section),   [Move an item between sections](#move-an-item-between-sections),   [The view editor](#the-view-editor),   [» Index](#index)
+> [Sections](aglet-manual.md#sections),   [Add a column](#add%20a%20column),   [Move an item between sections](#move%20an%20item%20between%20sections),   [The view editor](#the%20view%20editor),   [» Index](#index)
 
-## Add a Column to a Section
+## <span id="add a column">Add a Column to a Section</span>
+
     PURPOSE       Show a numeric category's value as a column beside each item, with
                   an optional per-section summary.
 
@@ -697,9 +728,10 @@
 
 #### SEE ALSO
 
-> [Columns](aglet-manual.md#columns),   [Column summaries](#column-summary-functions),   [Set a numeric value](#set-a-numeric-value),   [Format a numeric column](#format-a-numeric-column),   [» Index](#index)
+> [Columns](aglet-manual.md#columns),   [Column summaries](#column%20summaries),   [Set a numeric value](#set%20a%20numeric%20value),   [Format a numeric column](#format%20a%20numeric%20column),   [» Index](#index)
 
-## Column Summary Functions
+## <span id="column summaries">Column Summary Functions</span>
+
     PURPOSE       Aggregate a numeric column across a section - a total, average, or
                   extreme.
 
@@ -715,9 +747,10 @@
 
 #### SEE ALSO
 
-> [Add a column](#add-a-column-to-a-section),   [Numeric categories](aglet-manual.md#numeric-categories),   [Format a numeric column](#format-a-numeric-column),   [» Index](#index)
+> [Add a column](#add%20a%20column),   [Numeric categories](aglet-manual.md#numeric%20categories),   [Format a numeric column](#format%20a%20numeric%20column),   [» Index](#index)
 
-## Create a Datebook View
+## <span id="create a datebook">Create a Datebook View</span>
+
     PURPOSE       Build a view that buckets dated items into calendar ranges.
 
     CLI STEPS     aglet view create-datebook "Scheduling" ...
@@ -731,9 +764,10 @@
 
 #### SEE ALSO
 
-> [Datebook views](aglet-manual.md#datebook-views),   [Browse a datebook view](#browse-a-datebook-view),   [Date conditions](aglet-cli.md#date-conditions),   [Datebook keys](#tui-datebook-keys),   [» Index](#index)
+> [Datebook views](aglet-manual.md#datebook%20views),   [Browse a datebook view](#browse%20a%20datebook),   [Date conditions](aglet-cli.md#date%20conditions),   [Datebook keys](#tui%20datebook%20keys),   [» Index](#index)
 
-## Browse a Datebook View
+## <span id="browse a datebook">Browse a Datebook View</span>
+
     PURPOSE       Move the visible date window of a datebook view forward and back.
 
     TUI STEPS     { and } step to the previous / next bucket. ( and ) step the
@@ -748,9 +782,10 @@
 
 #### SEE ALSO
 
-> [Create a datebook view](#create-a-datebook-view),   [Datebook views](aglet-manual.md#datebook-views),   [Datebook keys](#tui-datebook-keys),   [» Index](#index)
+> [Create a datebook view](#create%20a%20datebook),   [Datebook views](aglet-manual.md#datebook%20views),   [Datebook keys](#tui%20datebook%20keys),   [» Index](#index)
 
-## The View Editor
+## <span id="the view editor">The View Editor</span>
+
     PURPOSE       Configure a view's filters, sections, columns, layout, aliases,
                   and preview behavior in one screen.
 
@@ -767,9 +802,10 @@
 
 #### SEE ALSO
 
-> [Create a view](#create-a-view),   [View criteria](#view-criteria),   [Add a section](#add-a-section-to-a-view),   [View aliases](#view-aliases),   [View editor keys](#tui-view-editor-keys),   [» Index](#index)
+> [Create a view](#create%20a%20view),   [View criteria](#view%20criteria),   [Add a section](#add%20a%20section),   [View aliases](#view%20aliases),   [View editor keys](#tui%20view%20editor%20keys),   [» Index](#index)
 
-## View Aliases
+## <span id="view aliases">View Aliases</span>
+
     PURPOSE       Show a category under a different display name inside one view,
                   without changing the category itself.
 
@@ -784,9 +820,10 @@
 
 #### SEE ALSO
 
-> [The view editor](#the-view-editor),   [Views](aglet-manual.md#views),   [CLI view commands](aglet-cli.md#cli-view-commands),   [» Index](#index)
+> [The view editor](#the%20view%20editor),   [Views](aglet-manual.md#views),   [CLI view commands](aglet-cli.md#cli%20view%20commands),   [» Index](#index)
 
-## Clone a View
+## <span id="clone a view">Clone a View</span>
+
     PURPOSE       Make an editable copy of an existing view, including the immutable
                   All Items view.
 
@@ -800,9 +837,10 @@
 
 #### SEE ALSO
 
-> [Create a view](#create-a-view),   [The All Items view](aglet-manual.md#the-all-items-view),   [Discard a view](#discard-a-view),   [» Index](#index)
+> [Create a view](#create%20a%20view),   [The All Items view](aglet-manual.md#the%20all%20items%20view),   [Discard a view](#discard%20a%20view),   [» Index](#index)
 
-## Discard a View
+## <span id="discard a view">Discard a View</span>
+
     PURPOSE       Delete a view you no longer need.
 
     CLI STEPS     aglet view delete "Old View"
@@ -816,11 +854,12 @@
 
 #### SEE ALSO
 
-> [Create a view](#create-a-view),   [Clone a view](#clone-a-view),   [The All Items view](aglet-manual.md#the-all-items-view),   [» Index](#index)
+> [Create a view](#create%20a%20view),   [Clone a view](#clone%20a%20view),   [The All Items view](aglet-manual.md#the%20all%20items%20view),   [» Index](#index)
 
 # Working with Dependencies
 
-## Create a Dependency Link
+## <span id="create a dependency">Create a Dependency Link</span>
+
     PURPOSE       Record that one item must wait for another, or relate two items.
 
     TUI STEPS     Press b or B on an item (or selection) to open the dependency link
@@ -840,9 +879,10 @@
 
 #### SEE ALSO
 
-> [Dependencies](aglet-manual.md#dependencies),   [Remove a link](#remove-a-link),   [Filter blocked items](#filter-blocked--not-blocked-items),   [The link wizard](#the-link-wizard),   [» Index](#index)
+> [Dependencies](aglet-manual.md#dependencies),   [Remove a link](#remove%20a%20link),   [Filter blocked items](#filter%20blocked%20items),   [The link wizard](#the%20link%20wizard),   [» Index](#index)
 
-## Remove a Link
+## <span id="remove a link">Remove a Link</span>
+
     PURPOSE       Delete a dependency or related link between two items.
 
     CLI STEPS     aglet unlink depends-on  
@@ -858,9 +898,10 @@
 
 #### SEE ALSO
 
-> [Create a dependency](#create-a-dependency-link),   [Dependencies](aglet-manual.md#dependencies),   [Filter blocked items](#filter-blocked--not-blocked-items),   [» Index](#index)
+> [Create a dependency](#create%20a%20dependency),   [Dependencies](aglet-manual.md#dependencies),   [Filter blocked items](#filter%20blocked%20items),   [» Index](#index)
 
-## Filter Blocked / Not-Blocked Items
+## <span id="filter blocked items">Filter Blocked / Not-Blocked Items</span>
+
     PURPOSE       Show only items that are waiting on a prerequisite, or only those
                   that are free to start.
 
@@ -881,9 +922,10 @@
 
 #### SEE ALSO
 
-> [Dependencies](aglet-manual.md#dependencies),   [Create a dependency](#create-a-dependency-link),   [The ready list](aglet-cli.md#the-ready-list),   [CLI filtering](aglet-cli.md#cli-filtering),   [» Index](#index)
+> [Dependencies](aglet-manual.md#dependencies),   [Create a dependency](#create%20a%20dependency),   [The ready list](aglet-cli.md#the%20ready%20list),   [CLI filtering](aglet-cli.md#cli%20filtering),   [» Index](#index)
 
-## The Link Wizard
+## <span id="the link wizard">The Link Wizard</span>
+
     PURPOSE       Create dependency links interactively in the TUI.
 
     TUI STEPS     Press b or B on an item or a multi-item selection to open the
@@ -898,11 +940,12 @@
 
 #### SEE ALSO
 
-> [Create a dependency](#create-a-dependency-link),   [Select multiple items](#select-multiple-items),   [CLI link commands](aglet-cli.md#cli-link-commands),   [» Index](#index)
+> [Create a dependency](#create%20a%20dependency),   [Select multiple items](#select%20multiple%20items),   [CLI link commands](aglet-cli.md#cli%20link%20commands),   [» Index](#index)
 
 # Settings and Indicators
 
-## Global Settings
+## <span id="global settings">Global Settings</span>
+
     PURPOSE       Adjust application-wide preferences and workflow roles.
 
     TUI STEPS     Press g s or F10 to open Global Settings.
@@ -917,9 +960,10 @@
 
 #### SEE ALSO
 
-> [Claim an item](aglet-cli.md#claim-an-item),   [The ready list](aglet-cli.md#the-ready-list),   [Organize the hierarchy](#organize-the-category-hierarchy),   [» Index](#index)
+> [Claim an item](aglet-cli.md#claim%20an%20item),   [The ready list](aglet-cli.md#the%20ready%20list),   [Organize the hierarchy](#organize%20the%20hierarchy),   [» Index](#index)
 
-## The Status and Hint Footer
+## <span id="status footer">The Status and Hint Footer</span>
+
     PURPOSE       Read the two-row footer at the bottom of the TUI.
 
     HOW IT WORKS  The footer has two rows. The top row shows transient status - the
@@ -933,9 +977,10 @@
 
 #### SEE ALSO
 
-> [Normal mode keys](#tui-normal-mode-keys),   [Assignment profile](#the-item-assignment-profile),   [» Index](#index)
+> [Normal mode keys](#tui%20normal%20mode%20keys),   [Assignment profile](#assignment%20profile),   [» Index](#index)
 
-## The Item Assignment Profile
+## <span id="assignment profile">The Item Assignment Profile</span>
+
     PURPOSE       Understand the assignments and provenance shown by "aglet show".
 
     HOW IT WORKS  "aglet show" prints an item's text, note, status, and its
@@ -951,4 +996,4 @@
 
 #### SEE ALSO
 
-> [Automatic assignment](aglet-manual.md#automatic-assignment),   [Assign a category](#assign-a-category-to-an-item),   [Categories](aglet-manual.md#categories),   [CLI item commands](aglet-cli.md#cli-item-commands),   [» Index](#index)
+> [Automatic assignment](aglet-manual.md#automatic%20assignment),   [Assign a category](#assign%20a%20category),   [Categories](aglet-manual.md#categories),   [CLI item commands](aglet-cli.md#cli%20item%20commands),   [» Index](#index)

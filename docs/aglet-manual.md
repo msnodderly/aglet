@@ -1,9 +1,12 @@
+<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run   MD   aglet-tui.md in docs/. -->
+
 # Aglet Reference — Concepts
 
 [« Home](index.md)  \| 
-[TUI Guide](aglet-tui.htm)  \|  [CLI Reference](aglet-cli.htm)
+[TUI Guide](aglet-tui.md)  \|  [CLI Reference](aglet-cli.md)
 
-## How to Use This Manual
+## <span id="how to use this manual">How to Use This Manual</span>
+
     PURPOSE    Core concepts in aglet: items, categories, views, and the
                rules that connect them. This document explains what things
                ARE; for how to operate them see the
@@ -14,7 +17,8 @@
 
 > [Home](index.md)
 
-## Index
+## <span id="index">Index</span>
+
     OVERVIEW
       About Aglet
       Starter Workflows
@@ -47,7 +51,8 @@
 
 # Overview
 
-## About Aglet
+## <span id="about aglet">About Aglet</span>
+
     PURPOSE       Aglet is a personal information manager that gives you control
                   over tasks, notes, facts, numbers, and dates. You capture
                   information as short items, then organize them with categories
@@ -75,9 +80,10 @@
 
 #### SEE ALSO
 
-> [Items](#items),   [Categories](#categories),   [Views](#views),   [Quick start](#quick-start),   [» Index](#index)
+> [Items](#items),   [Categories](#categories),   [Views](#views),   [Quick start](#quick%20start),   [» Index](#index)
 
-## Starter Workflows
+## <span id="starter workflows">Starter Workflows</span>
+
     PURPOSE       Aglet has no fixed application templates. Instead, the same
                   items can serve many purposes by organizing them into views.
                   Here are common ways people set aglet up.
@@ -104,9 +110,10 @@
 
 #### SEE ALSO
 
-> [Views](#views),   [Numeric categories](#numeric-categories),   [Datebook views](#datebook-views),   [» Index](#index)
+> [Views](#views),   [Numeric categories](#numeric%20categories),   [Datebook views](#datebook%20views),   [» Index](#index)
 
-## Quick Start
+## <span id="quick start">Quick Start</span>
+
     PURPOSE       Get a working database and add your first items.
 
     THE DATABASE  Aglet keeps everything in one SQLite file with a .ag extension.
@@ -135,7 +142,7 @@
 
 #### SEE ALSO
 
-> [Add an item](aglet-tui.md#add-an-item),   [Add a category](aglet-tui.md#add-a-category),   [Create a view](aglet-tui.md#create-a-view),   [About .ag files](aglet-cli.md#about-ag-files),   [» Index](#index)
+> [Add an item](aglet-tui.md#add%20an%20item),   [Add a category](aglet-tui.md#add%20a%20category),   [Create a view](aglet-tui.md#create%20a%20view),   [About .ag files](aglet-cli.md#about%20ag%20files),   [» Index](#index)
 
 ------------------------------------------------------------------------
 
@@ -143,7 +150,8 @@
 
 # Core Concepts
 
-## Items
+## <span id="items">Items</span>
+
     PURPOSE       An item is a line or two of information that you want to keep
                   track of in aglet. You can assign each item to any number of
                   categories.
@@ -164,9 +172,10 @@
 
 #### SEE ALSO
 
-> [Add an item](aglet-tui.md#add-an-item),   [Notes](#notes),   [Categories](#categories),   [Mark an item done](aglet-tui.md#mark-an-item-done),   [Dependencies](#dependencies),   [» Index](#index)
+> [Add an item](aglet-tui.md#add%20an%20item),   [Notes](#notes),   [Categories](#categories),   [Mark an item done](aglet-tui.md#mark%20an%20item%20done),   [Dependencies](#dependencies),   [» Index](#index)
 
-## Categories
+## <span id="categories">Categories</span>
+
     PURPOSE       Categories are names you use to group related items. An item can
                   be assigned to many categories at once (multifiling).
 
@@ -196,9 +205,10 @@
 
 #### SEE ALSO
 
-> [Tag categories](#tag-categories),   [Numeric categories](#numeric-categories),   [Exclusive categories](#exclusive-categories),   [The hierarchy](#the-category-hierarchy),   [Automatic assignment](#automatic-assignment-implicit-string-matching),   [Reserved categories](#reserved-categories),   [» Index](#index)
+> [Tag categories](#tag%20categories),   [Numeric categories](#numeric%20categories),   [Exclusive categories](#exclusive%20categories),   [The hierarchy](#the%20category%20hierarchy),   [Automatic assignment](#automatic%20assignment),   [Reserved categories](#reserved%20categories),   [» Index](#index)
 
-## Views
+## <span id="views">Views</span>
+
     PURPOSE       A view is a saved perspective over the same items. Each view can
                   filter to certain categories, hide completed items, group items
                   into sections, and show custom columns. A database can hold many
@@ -215,9 +225,10 @@
 
 #### SEE ALSO
 
-> [Standard views](#standard-views),   [Datebook views](#datebook-views),   [The All Items view](#the-all-items-view),   [Create a view](aglet-tui.md#create-a-view),   [Sections](#sections),   [» Index](#index)
+> [Standard views](#standard%20views),   [Datebook views](#datebook%20views),   [The All Items view](#the%20all%20items%20view),   [Create a view](aglet-tui.md#create%20a%20view),   [Sections](#sections),   [» Index](#index)
 
-## Sections
+## <span id="sections">Sections</span>
+
     PURPOSE       A section is a group within a view that collects items matching
                   its own criteria, under a heading. Sections let one view show
                   several lanes of related items.
@@ -242,9 +253,10 @@
 
 #### SEE ALSO
 
-> [Views](#views),   [Add a section](aglet-tui.md#add-a-section),   [Columns](#columns),   [Column summaries](aglet-tui.md#column-summaries),   [» Index](#index)
+> [Views](#views),   [Add a section](aglet-tui.md#add%20a%20section),   [Columns](#columns),   [Column summaries](aglet-tui.md#column%20summaries),   [» Index](#index)
 
-## Columns
+## <span id="columns">Columns</span>
+
     PURPOSE       A column shows a piece of data next to each item in a section,
                   such as a numeric category value or a date.
 
@@ -268,9 +280,10 @@
 
 #### SEE ALSO
 
-> [Add a column](aglet-tui.md#add-a-column),   [Column summaries](aglet-tui.md#column-summaries),   [Numeric categories](#numeric-categories),   [Format a numeric column](aglet-tui.md#format-a-numeric-column),   [» Index](#index)
+> [Add a column](aglet-tui.md#add%20a%20column),   [Column summaries](aglet-tui.md#column%20summaries),   [Numeric categories](#numeric%20categories),   [Format a numeric column](aglet-tui.md#format%20a%20numeric%20column),   [» Index](#index)
 
-## Notes
+## <span id="notes">Notes</span>
+
     PURPOSE       A note lets you add longer information to an item. The title
                   stays short; the note holds the detail.
 
@@ -289,9 +302,10 @@
 
 #### SEE ALSO
 
-> [Add a note to an item](aglet-tui.md#add-a-note-to-an-item),   [Automatic assignment](#automatic-assignment-implicit-string-matching),   [Edit an item](aglet-tui.md#edit-an-item),   [» Index](#index)
+> [Add a note to an item](aglet-tui.md#add%20a%20note%20to%20an%20item),   [Automatic assignment](#automatic%20assignment),   [Edit an item](aglet-tui.md#edit%20an%20item),   [» Index](#index)
 
-## Dependencies
+## <span id="dependencies">Dependencies</span>
+
     PURPOSE       Dependencies are typed links between items. They let aglet track
                   which items are waiting on others.
 
@@ -312,9 +326,10 @@
 
 #### SEE ALSO
 
-> [Create a dependency](aglet-tui.md#create-a-dependency),   [Filter blocked items](aglet-tui.md#filter-blocked-items),   [The link wizard](aglet-tui.md#the-link-wizard),   [Mark an item done](aglet-tui.md#mark-an-item-done),   [» Index](#index)
+> [Create a dependency](aglet-tui.md#create%20a%20dependency),   [Filter blocked items](aglet-tui.md#filter%20blocked%20items),   [The link wizard](aglet-tui.md#the%20link%20wizard),   [Mark an item done](aglet-tui.md#mark%20an%20item%20done),   [» Index](#index)
 
-## Reserved Categories
+## <span id="reserved categories">Reserved Categories</span>
+
     PURPOSE       Every aglet database contains a few built-in categories with
                   special meaning. They are created automatically and cannot be
                   modified, deleted, or reused as child category names.
@@ -332,7 +347,7 @@
 
 #### SEE ALSO
 
-> [Categories](#categories),   [Mark an item done](aglet-tui.md#mark-an-item-done),   [Claim an item](aglet-cli.md#claim-an-item),   [» Index](#index)
+> [Categories](#categories),   [Mark an item done](aglet-tui.md#mark%20an%20item%20done),   [Claim an item](aglet-cli.md#claim%20an%20item),   [» Index](#index)
 
 ------------------------------------------------------------------------
 
@@ -340,7 +355,8 @@
 
 # Category Types
 
-## Tag Categories
+## <span id="tag categories">Tag Categories</span>
+
     PURPOSE       A tag category records boolean membership: an item either has it
                   or does not. This is the default kind of category.
 
@@ -357,9 +373,10 @@
 
 #### SEE ALSO
 
-> [Numeric categories](#numeric-categories),   [Add a category](aglet-tui.md#add-a-category),   [Assign a category](aglet-tui.md#assign-a-category),   [» Index](#index)
+> [Numeric categories](#numeric%20categories),   [Add a category](aglet-tui.md#add%20a%20category),   [Assign a category](aglet-tui.md#assign%20a%20category),   [» Index](#index)
 
-## Numeric Categories
+## <span id="numeric categories">Numeric Categories</span>
+
     PURPOSE       A numeric category carries a decimal value per item, instead of
                   plain membership. The name is up to you: Cost, Miles, Qty,
                   Effort, Amount.
@@ -382,9 +399,10 @@
 
 #### SEE ALSO
 
-> [Set a numeric value](aglet-tui.md#set-a-numeric-value),   [Format a numeric column](aglet-tui.md#format-a-numeric-column),   [Columns](#columns),   [Column summaries](aglet-tui.md#column-summaries),   [» Index](#index)
+> [Set a numeric value](aglet-tui.md#set%20a%20numeric%20value),   [Format a numeric column](aglet-tui.md#format%20a%20numeric%20column),   [Columns](#columns),   [Column summaries](aglet-tui.md#column%20summaries),   [» Index](#index)
 
-## Exclusive Categories
+## <span id="exclusive categories">Exclusive Categories</span>
+
     PURPOSE       An exclusive category allows an item to be assigned to only one
                   of its children at a time. Assigning a second child replaces the
                   first.
@@ -403,9 +421,10 @@
 
 #### SEE ALSO
 
-> [Categories](#categories),   [The hierarchy](#the-category-hierarchy),   [Assign a category](aglet-tui.md#assign-a-category),   [» Index](#index)
+> [Categories](#categories),   [The hierarchy](#the%20category%20hierarchy),   [Assign a category](aglet-tui.md#assign%20a%20category),   [» Index](#index)
 
-## The Category Hierarchy
+## <span id="the category hierarchy">The Category Hierarchy</span>
+
     PURPOSE       Categories form a tree. A category can have a parent and any
                   number of children, and the database can have several root
                   categories. The hierarchy groups related categories so you can
@@ -428,9 +447,10 @@
 
 #### SEE ALSO
 
-> [Organize the hierarchy](aglet-tui.md#organize-the-hierarchy),   [Subsumption](#subsumption),   [Discard a category](aglet-tui.md#discard-a-category),   [» Index](#index)
+> [Organize the hierarchy](aglet-tui.md#organize%20the%20hierarchy),   [Subsumption](#subsumption),   [Discard a category](aglet-tui.md#discard%20a%20category),   [» Index](#index)
 
-## Subsumption
+## <span id="subsumption">Subsumption</span>
+
     PURPOSE       Subsumption is the rule that assigning a child category also
                   implies its parent. If an item is in Backend, it is also treated
                   as being in Backend's parent, Area.
@@ -445,7 +465,7 @@
 
 #### SEE ALSO
 
-> [The hierarchy](#the-category-hierarchy),   [The assignment profile](aglet-tui.md#assignment-profile),   [View criteria](aglet-tui.md#view-criteria),   [» Index](#index)
+> [The hierarchy](#the%20category%20hierarchy),   [The assignment profile](aglet-tui.md#assignment%20profile),   [View criteria](aglet-tui.md#view%20criteria),   [» Index](#index)
 
 ------------------------------------------------------------------------
 
@@ -453,7 +473,8 @@
 
 # View Types
 
-## Standard Views
+## <span id="standard views">Standard Views</span>
+
     PURPOSE       A standard view displays any items and any categories, filtered
                   by criteria and optionally grouped into sections. It is the
                   general-purpose view type.
@@ -468,9 +489,10 @@
 
 #### SEE ALSO
 
-> [Views](#views),   [View criteria](aglet-tui.md#view-criteria),   [Datebook views](#datebook-views),   [Create a view](aglet-tui.md#create-a-view),   [» Index](#index)
+> [Views](#views),   [View criteria](aglet-tui.md#view%20criteria),   [Datebook views](#datebook%20views),   [Create a view](aglet-tui.md#create%20a%20view),   [» Index](#index)
 
-## Datebook Views
+## <span id="datebook views">Datebook Views</span>
+
     PURPOSE       A datebook view buckets dated items into calendar ranges, so
                   upcoming work, appointments, renewals, and deadlines line up by
                   date.
@@ -491,9 +513,10 @@
 
 #### SEE ALSO
 
-> [Create a datebook view](aglet-tui.md#create-a-datebook),   [Browse a datebook view](aglet-tui.md#browse-a-datebook),   [Datebook keys](aglet-tui.md#tui-datebook-keys),   [» Index](#index)
+> [Create a datebook view](aglet-tui.md#create%20a%20datebook),   [Browse a datebook view](aglet-tui.md#browse%20a%20datebook),   [Datebook keys](aglet-tui.md#tui%20datebook%20keys),   [» Index](#index)
 
-## The All Items View
+## <span id="the all items view">The All Items View</span>
+
     PURPOSE       All Items is the built-in view that shows every item in the
                   database with no filtering. It is created automatically and is a
                   system view.
@@ -508,11 +531,12 @@
 
 #### SEE ALSO
 
-> [Views](#views),   [Clone a view](aglet-tui.md#clone-a-view),   [Create a view](aglet-tui.md#create-a-view),   [» Index](#index)
+> [Views](#views),   [Clone a view](aglet-tui.md#clone%20a%20view),   [Create a view](aglet-tui.md#create%20a%20view),   [» Index](#index)
 
 # Auto-Assignment
 
-## Automatic Assignment (Implicit String Matching)
+## <span id="automatic assignment">Automatic Assignment (Implicit String Matching)</span>
+
     PURPOSE       Let aglet file items for you when a category name appears in an
                   item's text or note.
 
@@ -534,4 +558,4 @@
 
 #### SEE ALSO
 
-> [Categories](#categories),   [Assign a category](aglet-tui.md#assign-a-category),   [Profile conditions](aglet-cli.md#profile-conditions),   [Subsumption](#subsumption),   [Review suggestions](aglet-tui.md#review-classification-suggestions),   [» Index](#index)
+> [Categories](#categories),   [Assign a category](aglet-tui.md#assign%20a%20category),   [Profile conditions](aglet-cli.md#profile%20conditions),   [Subsumption](#subsumption),   [Review suggestions](aglet-tui.md#review%20classification%20suggestions),   [» Index](#index)

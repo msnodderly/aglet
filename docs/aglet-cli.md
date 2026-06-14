@@ -1,9 +1,12 @@
+<!-- GENERATED from docs/src/.htm — DO NOT EDIT. Run make[4]: Nothing to be done for `md'. in docs/. -->
+
 # Aglet CLI Reference
 
 [« Home](index.md)  \| 
-[Concepts](aglet-manual.htm)  \|  [TUI Guide](aglet-tui.htm)
+[Concepts](aglet-manual.md)  \|  [TUI Guide](aglet-tui.md)
 
-## How to Use This Manual
+## <span id="how to use this manual">How to Use This Manual</span>
+
     PURPOSE    Complete reference for the aglet command-line interface.
                For interactive use see the
                TUI Guide.
@@ -14,7 +17,8 @@
 
 > [Home](index.md)
 
-## Index
+## <span id="index">Index</span>
+
     OVERVIEW
       About the CLI
       The AGLET_DB Environment Variable
@@ -49,7 +53,8 @@
 
 # Overview
 
-## About the CLI
+## <span id="about the cli">About the CLI</span>
+
     PURPOSE       Drive aglet from the command line - useful for scripting and for
                   LLM coding agents.
 
@@ -70,9 +75,10 @@
 
 #### SEE ALSO
 
-> [CLI command chart](#cli-command-chart),   [CLI item commands](#cli-item-commands),   [CLI category commands](#cli-category-commands),   [CLI view commands](#cli-view-commands),   [The AGLET_DB variable](#the-aglet_db-environment-variable),   [» Index](#index)
+> [CLI command chart](#cli%20command%20chart),   [CLI item commands](#cli%20item%20commands),   [CLI category commands](#cli%20category%20commands),   [CLI view commands](#cli%20view%20commands),   [The AGLET_DB variable](#the%20aglet%20db%20variable),   [» Index](#index)
 
-## The AGLET_DB Environment Variable
+## <span id="the aglet db variable">The AGLET_DB Environment Variable</span>
+
     PURPOSE       Choose which database aglet acts on without repeating --db.
 
     HOW IT WORKS  The CLI reads the database path from --db  or, if that is
@@ -87,9 +93,10 @@
 
 #### SEE ALSO
 
-> [About .ag files](#about-ag-files),   [About the CLI](#about-the-cli),   [» Index](#index)
+> [About .ag files](#about%20ag%20files),   [About the CLI](#about%20the%20cli),   [» Index](#index)
 
-## About .ag Files
+## <span id="about ag files">About .ag Files</span>
+
     PURPOSE       Understand where aglet keeps your data.
 
     HOW IT WORKS  An aglet database is a single SQLite file with the .ag extension.
@@ -105,9 +112,10 @@
 
 #### SEE ALSO
 
-> [The AGLET_DB variable](#the-aglet_db-environment-variable),   [Reserved categories](aglet-manual.md#reserved-categories),   [About the CLI](#about-the-cli),   [» Index](#index)
+> [The AGLET_DB variable](#the%20aglet%20db%20variable),   [Reserved categories](aglet-manual.md#reserved%20categories),   [About the CLI](#about%20the%20cli),   [» Index](#index)
 
-## CLI: Command Chart
+## <span id="cli command chart">CLI: Command Chart</span>
+
     COMMAND       PURPOSE
     ------------  -----------------------------------------------------------
     add           Add a new item
@@ -138,7 +146,7 @@
 
 #### SEE ALSO
 
-> [About the CLI](#about-the-cli),   [Item commands](#cli-item-commands),   [Category commands](#cli-category-commands),   [View commands](#cli-view-commands),   [» Index](#index)
+> [About the CLI](#about%20the%20cli),   [Item commands](#cli%20item%20commands),   [Category commands](#cli%20category%20commands),   [View commands](#cli%20view%20commands),   [» Index](#index)
 
 ------------------------------------------------------------------------
 
@@ -146,7 +154,8 @@
 
 # Item Commands
 
-## CLI Item Commands
+## <span id="cli item commands">CLI Item Commands</span>
+
     PURPOSE       Create, inspect, modify, and remove items from the command line.
 
     COMMANDS      add       Add a new item (--note, returns the created id)
@@ -170,11 +179,12 @@
 
 #### SEE ALSO
 
-> [Add an item](aglet-tui.md#add-an-item),   [Edit an item](aglet-tui.md#edit-an-item),   [Delete an item](aglet-tui.md#delete-an-item),   [CLI filtering](#cli-filtering-and-sorting),   [CLI import and export](#cli-import-and-export),   [» Index](#index)
+> [Add an item](aglet-tui.md#add%20an%20item),   [Edit an item](aglet-tui.md#edit%20an%20item),   [Delete an item](aglet-tui.md#delete%20an%20item),   [CLI filtering](#cli%20filtering),   [CLI import and export](#cli%20import%20export),   [» Index](#index)
 
 # Category Commands
 
-## CLI Category Commands
+## <span id="cli category commands">CLI Category Commands</span>
+
     PURPOSE       Manage categories, assignments, conditions, and actions from the
                   command line.
 
@@ -207,9 +217,10 @@
 
 #### SEE ALSO
 
-> [Add a category](aglet-tui.md#add-a-category),   [Assign a category](aglet-tui.md#assign-a-category),   [Profile conditions](#profile-conditions),   [Actions](#actions),   [Set a numeric value](aglet-tui.md#set-a-numeric-value),   [» Index](#index)
+> [Add a category](aglet-tui.md#add%20a%20category),   [Assign a category](aglet-tui.md#assign%20a%20category),   [Profile conditions](#profile%20conditions),   [Actions](#actions),   [Set a numeric value](aglet-tui.md#set%20a%20numeric%20value),   [» Index](#index)
 
-## Profile Conditions
+## <span id="profile conditions">Profile Conditions</span>
+
     PURPOSE       Assign a category based on structured rules about an item, beyond
                   a plain name match.
 
@@ -229,9 +240,10 @@
 
 #### SEE ALSO
 
-> [Automatic assignment](aglet-manual.md#automatic-assignment),   [Date conditions](#date-conditions),   [Actions](#actions),   [CLI category commands](#cli-category-commands),   [» Index](#index)
+> [Automatic assignment](aglet-manual.md#automatic%20assignment),   [Date conditions](#date%20conditions),   [Actions](#actions),   [CLI category commands](#cli%20category%20commands),   [» Index](#index)
 
-## Date Conditions
+## <span id="date conditions">Date Conditions</span>
+
     PURPOSE       Assign a category based on an item's date - for example, to bucket
                   items by when they are due.
 
@@ -247,9 +259,10 @@
 
 #### SEE ALSO
 
-> [Profile conditions](#profile-conditions),   [Datebook views](aglet-manual.md#datebook-views),   [Reserved categories](aglet-manual.md#reserved-categories),   [» Index](#index)
+> [Profile conditions](#profile%20conditions),   [Datebook views](aglet-manual.md#datebook%20views),   [Reserved categories](aglet-manual.md#reserved%20categories),   [» Index](#index)
 
-## Actions
+## <span id="actions">Actions</span>
+
     PURPOSE       Make assigning one category automatically assign or remove another.
 
     CLI STEPS     aglet category add-action  ...
@@ -266,11 +279,12 @@
 
 #### SEE ALSO
 
-> [Profile conditions](#profile-conditions),   [Automatic assignment](aglet-manual.md#automatic-assignment),   [CLI category commands](#cli-category-commands),   [» Index](#index)
+> [Profile conditions](#profile%20conditions),   [Automatic assignment](aglet-manual.md#automatic%20assignment),   [CLI category commands](#cli%20category%20commands),   [» Index](#index)
 
 # View Commands
 
-## CLI View Commands
+## <span id="cli view commands">CLI View Commands</span>
+
     PURPOSE       Create and edit views, sections, columns, aliases, and datebooks
                   from the command line.
 
@@ -299,11 +313,12 @@
 
 #### SEE ALSO
 
-> [Create a view](aglet-tui.md#create-a-view),   [Add a section](aglet-tui.md#add-a-section),   [Add a column](aglet-tui.md#add-a-column),   [View aliases](aglet-tui.md#view-aliases),   [Create a datebook view](aglet-tui.md#create-a-datebook),   [» Index](#index)
+> [Create a view](aglet-tui.md#create%20a%20view),   [Add a section](aglet-tui.md#add%20a%20section),   [Add a column](aglet-tui.md#add%20a%20column),   [View aliases](aglet-tui.md#view%20aliases),   [Create a datebook view](aglet-tui.md#create%20a%20datebook),   [» Index](#index)
 
 # Link Commands
 
-## CLI Link Commands
+## <span id="cli link commands">CLI Link Commands</span>
+
     PURPOSE       Create and remove item-to-item links from the command line.
 
     COMMANDS      link depends-on   ITEM depends on DEPENDS_ON_ITEM
@@ -321,11 +336,12 @@
 
 #### SEE ALSO
 
-> [Create a dependency](aglet-tui.md#create-a-dependency),   [Remove a link](aglet-tui.md#remove-a-link),   [Dependencies](aglet-manual.md#dependencies),   [» Index](#index)
+> [Create a dependency](aglet-tui.md#create%20a%20dependency),   [Remove a link](aglet-tui.md#remove%20a%20link),   [Dependencies](aglet-manual.md#dependencies),   [» Index](#index)
 
 # Filtering and Sorting
 
-## CLI Filtering and Sorting
+## <span id="cli filtering">CLI Filtering and Sorting</span>
+
     PURPOSE       Narrow and order the output of list, search, and view show.
 
     FLAGS         --category             Repeatable, AND semantics
@@ -350,11 +366,12 @@
 
 #### SEE ALSO
 
-> [View criteria](aglet-tui.md#view-criteria),   [Filter blocked items](aglet-tui.md#filter-blocked-items),   [Search items](aglet-tui.md#search-items),   [CLI item commands](#cli-item-commands),   [» Index](#index)
+> [View criteria](aglet-tui.md#view%20criteria),   [Filter blocked items](aglet-tui.md#filter%20blocked%20items),   [Search items](aglet-tui.md#search%20items),   [CLI item commands](#cli%20item%20commands),   [» Index](#index)
 
 # Import and Export
 
-## CLI Import and Export
+## <span id="cli import export">CLI Import and Export</span>
+
     PURPOSE       Move items into and out of aglet.
 
     COMMANDS      import   Structured import commands (e.g. CSV)
@@ -373,11 +390,12 @@
 
 #### SEE ALSO
 
-> [CLI item commands](#cli-item-commands),   [About the CLI](#about-the-cli),   [About .ag files](#about-ag-files),   [» Index](#index)
+> [CLI item commands](#cli%20item%20commands),   [About the CLI](#about%20the%20cli),   [About .ag files](#about%20ag%20files),   [» Index](#index)
 
 # Workflow Commands
 
-## Claim an Item
+## <span id="claim an item">Claim an Item</span>
+
     PURPOSE       Atomically take an eligible item for active work, marking it as
                   yours.
 
@@ -394,9 +412,10 @@
 
 #### SEE ALSO
 
-> [The ready list](#the-ready-list),   [Release a claim](#release-a-claim),   [Filter blocked items](aglet-tui.md#filter-blocked-items),   [Global settings](aglet-tui.md#global-settings),   [» Index](#index)
+> [The ready list](#the%20ready%20list),   [Release a claim](#release%20a%20claim),   [Filter blocked items](aglet-tui.md#filter%20blocked%20items),   [Global settings](aglet-tui.md#global%20settings),   [» Index](#index)
 
-## Release a Claim
+## <span id="release a claim">Release a Claim</span>
+
     PURPOSE       Give up an item you previously claimed.
 
     CLI STEPS     aglet release 
@@ -410,9 +429,10 @@
 
 #### SEE ALSO
 
-> [Claim an item](#claim-an-item),   [The ready list](#the-ready-list),   [» Index](#index)
+> [Claim an item](#claim%20an%20item),   [The ready list](#the%20ready%20list),   [» Index](#index)
 
-## The Ready List
+## <span id="the ready list">The Ready List</span>
+
     PURPOSE       See the items that are eligible to be claimed right now.
 
     CLI STEPS     aglet ready
@@ -426,4 +446,4 @@
 
 #### SEE ALSO
 
-> [Claim an item](#claim-an-item),   [Release a claim](#release-a-claim),   [Filter blocked items](aglet-tui.md#filter-blocked-items),   [» Index](#index)
+> [Claim an item](#claim%20an%20item),   [Release a claim](#release%20a%20claim),   [Filter blocked items](aglet-tui.md#filter%20blocked%20items),   [» Index](#index)
