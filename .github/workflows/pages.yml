@@ -39,11 +39,8 @@ jobs:
             texlive-fonts-recommended texlive-fonts-extra \
             lmodern fonts-ibm-plex
       - name: Build manual (HTML + Markdown + typeset PDF)
-        # Local authoring uses Palatino; CI substitutes a TeX Live equivalent.
-        run: |
-          make -C docs all \
-            MAINFONT="TeX Gyre Pagella" \
-            MONOFONT="IBM Plex Mono"
+        # Default fonts (IBM Plex Serif/Mono) come from fonts-ibm-plex, installed above.
+        run: make -C docs all
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
