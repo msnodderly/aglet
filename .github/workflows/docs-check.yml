@@ -1,0 +1,30 @@
+name: Check generated docs are in sync
+
+# Fails if the committed Markdown no longer matches the HTML source under
+# docs/src/ — i.e. someone edited a source .htm but did not run `make md`.
+# Markdown only: the PDF is binary/font-dependent and is built by pages.yml.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/src/**'
+      - 'docs/*.md'
+      - 'docs/Makefile'
+      - '.github/workflows/docs-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/src/**'
+      - 'docs/*.md'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc
+      - name: Verify Markdown matches source
+        run: make -C docs check

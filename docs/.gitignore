@@ -2,3 +2,7 @@
 _site/
 *.tmp
 *.tmp2
+
+# Typeset PDF is a generated, font/timestamp-dependent artifact: built locally
+# for preview and by CI (pages.yml) for publishing, not committed.
+aglet-manual.pdf

@@ -16,6 +16,8 @@ interactive workflows, the view/category editors, and indicators.
 Every aglet command and flag: item, category, view, link, import, export,
 filtering, sorting, and workflow commands.
 
+[Download the full manual as a typeset PDF](aglet-manual.pdf) (Concepts, TUI, and CLI in one book).
+
 ## Quick Links
 
 Concepts  

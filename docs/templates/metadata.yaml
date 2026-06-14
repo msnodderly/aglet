@@ -11,11 +11,8 @@ geometry:
 fontsize: 11pt
 linestretch: 1.15
 
-# Fonts (xelatex). Body serif + monospace for code/keybindings.
-mainfont: "Palatino"
-monofont: "IBM Plex Mono"
-mainfontoptions:
-  - Numbers=OldStyle
+# Fonts (xelatex) are passed via -V mainfont/-V monofont in the Makefile so CI
+# can substitute TeX Live fonts; see MAINFONT/MONOFONT there.
 
 # --- Structure ---
 toc: true
