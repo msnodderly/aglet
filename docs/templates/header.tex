@@ -1,6 +1,9 @@
 % Raw LaTeX header for the typeset PDF (included verbatim, not via Markdown).
 \usepackage{fancyhdr}
 \usepackage{booktabs}
+% Map Unicode glyphs the body serif (Palatino) lacks to math equivalents.
+\usepackage{newunicodechar}
+\newunicodechar{→}{\ensuremath{\rightarrow}}
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\nouppercase{\leftmark}}

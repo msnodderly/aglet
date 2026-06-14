@@ -4,452 +4,463 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Aglet CLI Reference</title>
-<style>
-body       { font-family: monospace; max-width: 900px; margin: 2em auto; padding: 0 1em; }
-h1         { border-bottom: 2px solid #000; padding-bottom: .3em; margin-top: 2em; }
-h2         { margin-top: 2em; }
-h4         { margin-bottom: .2em; }
-pre        { white-space: pre-wrap; margin: .5em 0 .5em 1em; line-height: 1.4; }
-blockquote { margin: .2em 0 1.5em 1em; }
-a          { color: #00c; }
-@media (max-width: 600px) {
-  body { margin: 1em auto; }
-  pre  { margin-left: 0; font-size: 0.92em; }
-  blockquote { margin-left: 0; }
-}
-</style>
+<link rel="stylesheet" href="manual.css">
 </head>
 <body>
-<h1>Aglet CLI Reference</h1>
-<p>
+
+<h1 id="cli-reference">Aglet CLI Reference</h1>
+<p class="nav">
   <a href="index.htm">&#xAB; Home</a> &nbsp;|&nbsp;
-  <a href="aglet-manual.htm">Concepts</a> &nbsp;|&nbsp; <a href="aglet-tui.htm">TUI Guide</a>
+  <a href="aglet-manual.htm">Concepts</a> &nbsp;|&nbsp;
+  <a href="aglet-tui.htm">TUI Guide</a>
 </p>
-<h2><a name="how to use this manual">How to Use This Manual</a></h2><pre>
-PURPOSE    Complete reference for the aglet command-line interface.
-           For interactive use see the
-           <a href="aglet-tui.htm">TUI Guide</a>.
-           Core concepts are in the
-           <a href="aglet-manual.htm">Concepts Reference</a>.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="index.htm">Home</a>
-</blockquote>
-
-<h2><a name="index">Index</a></h2><pre>
-OVERVIEW
-  <a href="#about the cli">About the CLI</a>
-  <a href="#the aglet db variable">The AGLET_DB Environment Variable</a>
-  <a href="#about ag files">About .ag Files</a>
-  <a href="#cli command chart">CLI: Command Chart</a>
-
-ITEM COMMANDS
-  <a href="#cli item commands">CLI Item Commands</a>
-
-CATEGORY COMMANDS
-  <a href="#cli category commands">CLI Category Commands</a>
-  <a href="#profile conditions">Profile Conditions</a>
-  <a href="#date conditions">Date Conditions</a>
-  <a href="#actions">Actions</a>
-
-VIEW COMMANDS
-  <a href="#cli view commands">CLI View Commands</a>
-
-LINK COMMANDS
-  <a href="#cli link commands">CLI Link Commands</a>
-
-FILTERING AND SORTING
-  <a href="#cli filtering">CLI Filtering and Sorting</a>
-
-IMPORT AND EXPORT
-  <a href="#cli import export">CLI Import and Export</a>
-
-WORKFLOW COMMANDS
-  <a href="#claim an item">Claim an Item</a>
-  <a href="#release a claim">Release a Claim</a>
-  <a href="#the ready list">The Ready List</a>
-
-</pre>
-
-<h1>Overview</h1>
-
-<h2><a name="about the cli">About the CLI</a></h2><pre>
-PURPOSE       Drive aglet from the command line - useful for scripting and for
-              LLM coding agents.
-
-USAGE         aglet [--db <PATH>] <COMMAND>
-
-HOW IT WORKS  Running aglet with no subcommand opens the TUI; with a subcommand
-              it performs that action and exits. Short item-id prefixes work
-              anywhere an item id is accepted (case-insensitive, hyphens
-              stripped); an ambiguous prefix returns an error listing the
-              matches. list and search default to compact one-line rows; use
-              --verbose for multi-line output and --format json for scripts.
-
-EXAMPLES      aglet --db notes.ag list
-              aglet --db notes.ag add "Buy groceries"
-
-NOTE          aglet list without --view uses All Items when present, then the
-              first stored view.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#cli command chart">CLI command chart</a>,&nbsp;&nbsp; <a href="#cli item commands">CLI item commands</a>,&nbsp;&nbsp; <a href="#cli category commands">CLI category commands</a>,&nbsp;&nbsp; <a href="#cli view commands">CLI view commands</a>,&nbsp;&nbsp; <a href="#the aglet db variable">The AGLET_DB variable</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="the aglet db variable">The AGLET_DB Environment Variable</a></h2><pre>
-PURPOSE       Choose which database aglet acts on without repeating --db.
-
-HOW IT WORKS  The CLI reads the database path from --db <path> or, if that is
-              absent, the AGLET_DB environment variable. Set AGLET_DB once in
-              your shell to run a series of commands against the same file.
-
-EXAMPLES      export AGLET_DB=~/notes.ag
-              aglet list
-              aglet add "Pick up parts"
-
-NOTE          --db on a single command overrides AGLET_DB for that command.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#about ag files">About .ag files</a>,&nbsp;&nbsp; <a href="#about the cli">About the CLI</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote><!-- GROUP 12: THE CLI                                             -->
-
-<h2><a name="about ag files">About .ag Files</a></h2><pre>
-PURPOSE       Understand where aglet keeps your data.
-
-HOW IT WORKS  An aglet database is a single SQLite file with the .ag extension.
-              It holds every item, category, view, link, and the deletion log.
-              A new database is created automatically with the built-in
-              categories (Done, When, Entry) and the All Items view the first
-              time you open it.
-
-EXAMPLES      cargo run --bin aglet -- --db getting-started.ag
-
-NOTE          Because the database is one file, you back it up or move it by
-              copying that file. Schema repair runs idempotently on open.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#the aglet db variable">The AGLET_DB variable</a>,&nbsp;&nbsp; <a href="aglet-manual.htm#reserved categories">Reserved categories</a>,&nbsp;&nbsp; <a href="#about the cli">About the CLI</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="cli command chart">CLI: Command Chart</a></h2><pre>
-COMMAND       PURPOSE
-------------  -----------------------------------------------------------
-add           Add a new item
-edit          Edit an item's text, note, and/or done state
-show          Show a single item with its assignments
-list          List items (optionally filtered)
-search        Search item text and note
-export        Export items as Markdown
-delete        Delete an item (writes a deletion log entry)
-deleted       List deletion log entries
-restore       Restore an item from the deletion log
-claim         Atomically claim an eligible item for active work
-ready         List items eligible to be claimed
-release       Remove the active claim category (alias: unclaim)
-tui           Launch the interactive TUI
-category      Category commands (see CLI: Category commands)
-view          View commands (see CLI: View commands)
-link          Item-to-item link commands
-unlink        Remove item-to-item links
-import        Structured import commands (CSV)
-item          Item commands in alternative noun-verb syntax
-
-OPTIONS       --db <PATH>    SQLite database path (or set AGLET_DB)
-              -h, --help     Print help for any command or subcommand
-
-NOTE          Run "aglet" with no command to launch the TUI. Every command
-              accepts --help for its own options.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#about the cli">About the CLI</a>,&nbsp;&nbsp; <a href="#cli item commands">Item commands</a>,&nbsp;&nbsp; <a href="#cli category commands">Category commands</a>,&nbsp;&nbsp; <a href="#cli view commands">View commands</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<hr>
-<h1>Concepts</h1>
-
-<h1>Item Commands</h1>
-
-<h2><a name="cli item commands">CLI Item Commands</a></h2><pre>
-PURPOSE       Create, inspect, modify, and remove items from the command line.
-
-COMMANDS      add       Add a new item (--note, returns the created id)
-              edit      Edit text, note, and/or done state (--text, --note,
-                        --done, --not-done)
-              show      Show a single item with its assignments
-              list      List items, optionally filtered
-              search    Search item text and note
-              export    Export items as Markdown
-              delete    Delete an item (writes deletion log)
-              deleted   List deletion-log entries
-              restore   Restore an item from the deletion log by log id
-              item      Alternative noun-verb syntax for item commands
-
-EXAMPLES      aglet add "Plan offsite" --note "Book venue"
-              aglet show <ITEM>
-              aglet export > items.md
-
-NOTE          Parse the "created " line from add for the new id; it is not
-              always the last line printed.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="aglet-tui.htm#add an item">Add an item</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#edit an item">Edit an item</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#delete an item">Delete an item</a>,&nbsp;&nbsp; <a href="#cli filtering">CLI filtering</a>,&nbsp;&nbsp; <a href="#cli import export">CLI import and export</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h1>Category Commands</h1>
-
-<h2><a name="cli category commands">CLI Category Commands</a></h2><pre>
-PURPOSE       Manage categories, assignments, conditions, and actions from the
-              command line.
-
-COMMANDS      list                List categories as a tree
-              show                Show details for a category
-              create              Create a category (--parent, --exclusive,
-                                  --type numeric)
-              delete              Delete a category by name
-              rename              Rename a category
-              reparent            Reparent (--root makes it top-level)
-              update              Update category flags
-              assign              Assign an item to a category
-              unassign            Unassign an item from a category
-              set-value           Set a numeric value assignment
-              format              Configure numeric formatting
-              add-condition       Add a profile condition
-              add-date-condition  Add a date condition
-              set-condition-mode  Set how explicit conditions combine
-              remove-condition    Remove a condition by 1-based index
-              add-action          Add an action
-              remove-action       Remove an action by 1-based index
-
-EXAMPLES      aglet category create "Priority" --exclusive
-              aglet category create "High" --parent Priority
-              aglet category assign <ITEM> High
-              aglet category set-value <ITEM> Cost 450.00
-
-NOTE          Done, When, and Entry are reserved and cannot be created, renamed,
-              or deleted.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="aglet-tui.htm#add a category">Add a category</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#assign a category">Assign a category</a>,&nbsp;&nbsp; <a href="#profile conditions">Profile conditions</a>,&nbsp;&nbsp; <a href="#actions">Actions</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#set a numeric value">Set a numeric value</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="profile conditions">Profile Conditions</a></h2><pre>
-PURPOSE       Assign a category based on structured rules about an item, beyond
-              a plain name match.
-
-CLI STEPS     aglet category add-condition <CATEGORY> ...
-              aglet category set-condition-mode <CATEGORY> ...
-              aglet category remove-condition <CATEGORY> <INDEX>
-
-HOW IT WORKS  A category can carry one or more explicit conditions. The
-              condition mode controls how multiple conditions combine. When an
-              item satisfies the conditions, the category is derived
-              automatically. Derived (non-sticky) assignments can break if the
-              item stops matching.
-
-NOTE          In the category manager the left pane shows a readable rule-count
-              badge such as [2 conditions]. Conditions are re-evaluated when an
-              item's text or dates change.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="aglet-manual.htm#automatic assignment">Automatic assignment</a>,&nbsp;&nbsp; <a href="#date conditions">Date conditions</a>,&nbsp;&nbsp; <a href="#actions">Actions</a>,&nbsp;&nbsp; <a href="#cli category commands">CLI category commands</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="date conditions">Date Conditions</a></h2><pre>
-PURPOSE       Assign a category based on an item's date - for example, to bucket
-              items by when they are due.
-
-CLI STEPS     aglet category add-date-condition <CATEGORY> ...
-
-HOW IT WORKS  A date condition tests an item's When date against a range or
-              relative window. When it matches, the category is derived. Date
-              conditions power date-range categories used to build datebook
-              views and date-grouped sections.
-
-NOTE          Direct SQLite writes do not sync the reserved When assignment; use
-              aglet/CLI logic so date conditions see the date.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#profile conditions">Profile conditions</a>,&nbsp;&nbsp; <a href="aglet-manual.htm#datebook views">Datebook views</a>,&nbsp;&nbsp; <a href="aglet-manual.htm#reserved categories">Reserved categories</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="actions">Actions</a></h2><pre>
-PURPOSE       Make assigning one category automatically assign or remove another.
-
-CLI STEPS     aglet category add-action <CATEGORY> ...
-              aglet category remove-action <CATEGORY> <INDEX>
-
-HOW IT WORKS  An action fires when its owning category is assigned to an item.
-              An Assign action adds another category; a Remove action removes
-              one. Actions are event-driven: adding or editing an action does
-              not retroactively fire for items that already have the owning
-              category. Action-applied assignments are sticky.
-
-NOTE          The category manager shows an action badge such as [1 action] in
-              the left pane.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#profile conditions">Profile conditions</a>,&nbsp;&nbsp; <a href="aglet-manual.htm#automatic assignment">Automatic assignment</a>,&nbsp;&nbsp; <a href="#cli category commands">CLI category commands</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h1>View Commands</h1>
-
-<h2><a name="cli view commands">CLI View Commands</a></h2><pre>
-PURPOSE       Create and edit views, sections, columns, aliases, and datebooks
-              from the command line.
-
-COMMANDS      list                  List views
-              show                  Show the contents of a view
-              create                Create a view from include/exclude
-              edit                  Edit mutable view properties
-              clone                 Clone into a new mutable view
-              rename                Rename a view
-              delete                Delete a view by name
-              section add/remove/update    Section authoring
-              column add/remove/update     Column authoring
-              alias set/clear              Per-view category display alias
-              set-summary           Set a column summary function
-              set-item-label        Set or clear the item column label
-              set-remove-from-view  Replace the remove-from-view category set
-              create-datebook       Create a datebook (date-interval) view
-              datebook-browse       Shift a datebook view's window
-
-EXAMPLES      aglet view create "Work Queue" --include Work --exclude Done
-              aglet view show "Work Queue"
-              aglet view clone "All Items" "My Items"
-
-NOTE          --include criteria are AND-based; use sections or separate views
-              for mutually exclusive siblings.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="aglet-tui.htm#create a view">Create a view</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#add a section">Add a section</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#add a column">Add a column</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#view aliases">View aliases</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#create a datebook">Create a datebook view</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h1>Link Commands</h1>
-
-<h2><a name="cli link commands">CLI Link Commands</a></h2><pre>
-PURPOSE       Create and remove item-to-item links from the command line.
-
-COMMANDS      link depends-on   ITEM depends on DEPENDS_ON_ITEM
-              link blocks       BLOCKER blocks BLOCKED
-              link related      Bidirectional related link
-              unlink depends-on / blocks / related   Remove the corresponding
-                                                     link (canonical entry)
-
-EXAMPLES      aglet link depends-on <ITEM> <PREREQUISITE>
-              aglet link related <A> <B>
-              aglet unlink depends-on <ITEM> <PREREQUISITE>
-
-NOTE          depends-on and blocks describe the same directed relationship from
-              opposite ends; related is symmetric.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="aglet-tui.htm#create a dependency">Create a dependency</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#remove a link">Remove a link</a>,&nbsp;&nbsp; <a href="aglet-manual.htm#dependencies">Dependencies</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h1>Filtering and Sorting</h1>
-
-<h2><a name="cli filtering">CLI Filtering and Sorting</a></h2><pre>
-PURPOSE       Narrow and order the output of list, search, and view show.
-
-FLAGS         --category <C>            Repeatable, AND semantics
-              --any-category <C>        Repeatable, OR semantics
-              --exclude-category <C>    Repeatable, NOT semantics
-              --blocked / --not-blocked Dependency-state filters (derived)
-              --value-eq <C> <V>        Numeric value equals
-              --value-in <C> <CSV>      Numeric value in a set
-              --value-max <C> <V>       Numeric value at most
-              --sort <COLUMN[:asc|desc]>  Sort order
-              --view <VIEW>             Use a specific view
-              --include-done            Include done items
-              --format <FORMAT>         Output format (e.g. json)
-              --verbose                 Multi-line human output
-
-EXAMPLES      aglet list --category High --not-blocked
-              aglet list --any-category Work --any-category Personal
-              aglet list --sort Cost:desc --format json
-
-NOTE          Repeated --category is AND; for OR across siblings use
-              --any-category. blocked/not-blocked are derived, not categories.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="aglet-tui.htm#view criteria">View criteria</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#filter blocked items">Filter blocked items</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#search items">Search items</a>,&nbsp;&nbsp; <a href="#cli item commands">CLI item commands</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h1>Import and Export</h1>
-
-<h2><a name="cli import export">CLI Import and Export</a></h2><pre>
-PURPOSE       Move items into and out of aglet.
-
-COMMANDS      import   Structured import commands (e.g. CSV)
-              export   Export items as Markdown
-
-EXAMPLES      aglet export > items.md
-              aglet import ...
-
-HOW IT WORKS  Export writes items as Markdown to standard output. Import brings
-              structured data in. Prefer the CLI/import path over direct SQLite
-              writes so dates and reserved When provenance are handled
-              correctly.
-
-NOTE          Direct SQLite imports must use the store datetime format
-              YYYY-MM-DD HH:MM:SS; ISO strings will not load as dates.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#cli item commands">CLI item commands</a>,&nbsp;&nbsp; <a href="#about the cli">About the CLI</a>,&nbsp;&nbsp; <a href="#about ag files">About .ag files</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote><!-- GROUP 13: INDICATORS                                          -->
-
-<h1>Workflow Commands</h1>
-
-<h2><a name="claim an item">Claim an Item</a></h2><pre>
-PURPOSE       Atomically take an eligible item for active work, marking it as
-              yours.
-
-CLI STEPS     aglet claim <ITEM>
-
-HOW IT WORKS  Claiming applies the configured claim-target category. An item is
-              claimable only if it has the configured Ready category, does not
-              already have the claim-target category, is not done, and is not
-              blocked by an unresolved depends-on prerequisite. Claimability is
-              computed, not a link type.
-
-NOTE          If a claim races and fails because the item is already In
-              Progress, pick another item rather than force-assigning.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#the ready list">The ready list</a>,&nbsp;&nbsp; <a href="#release a claim">Release a claim</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#filter blocked items">Filter blocked items</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#global settings">Global settings</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="release a claim">Release a Claim</a></h2><pre>
-PURPOSE       Give up an item you previously claimed.
-
-CLI STEPS     aglet release <ITEM>
-              aglet unclaim <ITEM>      # alias
-
-HOW IT WORKS  Releasing removes the active claim-target category, returning the
-              item to the pool of claimable work if it still has the Ready
-              category.
-
-NOTE          release and unclaim are the same command.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#claim an item">Claim an item</a>,&nbsp;&nbsp; <a href="#the ready list">The ready list</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote>
-
-<h2><a name="the ready list">The Ready List</a></h2><pre>
-PURPOSE       See the items that are eligible to be claimed right now.
-
-CLI STEPS     aglet ready
-
-HOW IT WORKS  ready lists items that have the Ready category and are not done,
-              not already claimed, and not blocked by unresolved dependencies.
-              It is the recommended way to pick the next piece of work.
-
-NOTE          Because ready already excludes done, claimed, and blocked items,
-              prefer it over scanning a full list when choosing work.
-</pre>
-<h4>SEE ALSO</h4><blockquote>
-<a href="#claim an item">Claim an item</a>,&nbsp;&nbsp; <a href="#release a claim">Release a claim</a>,&nbsp;&nbsp; <a href="aglet-tui.htm#filter blocked items">Filter blocked items</a>,&nbsp;&nbsp; <a href="#index">&raquo; Index</a>
-</blockquote><!-- GROUP 11: SETTINGS AND FILES                                  -->
+
+<h2>How to Use This Manual</h2>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Complete reference for the aglet command-line interface. For interactive
+      use see the <a href="aglet-tui.htm">TUI Guide</a>. Core concepts are in the
+      <a href="aglet-manual.htm">Concepts Reference</a>.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp; <a href="index.htm">Home</a></p>
+
+
+<h2>Overview</h2>
+
+<h3 id="about-the-cli">About the CLI</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Drive aglet from the command line — useful for scripting and for LLM coding
+      agents.</dd>
+  <dt>Usage</dt>
+  <dd><pre><code>aglet [--db &lt;PATH&gt;] &lt;COMMAND&gt;</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Running aglet with no subcommand opens the TUI; with a subcommand it
+      performs that action and exits. Short item-id prefixes work anywhere an
+      item id is accepted (case-insensitive, hyphens stripped); an ambiguous
+      prefix returns an error listing the matches. <code>list</code> and
+      <code>search</code> default to compact one-line rows; use
+      <code>--verbose</code> for multi-line output and <code>--format json</code>
+      for scripts.</dd>
+  <dt>Examples</dt>
+  <dd>
+    <pre><code>aglet --db notes.ag list
+aglet --db notes.ag add "Buy groceries"</code></pre>
+  </dd>
+  <dt>Note</dt>
+  <dd><code>aglet list</code> without <code>--view</code> uses All Items when
+      present, then the first stored view.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#cli-command-chart">CLI command chart</a>,
+  <a href="#cli-item-commands">CLI item commands</a>,
+  <a href="#cli-category-commands">CLI category commands</a>,
+  <a href="#cli-view-commands">CLI view commands</a>,
+  <a href="#the-aglet-db-variable">The AGLET_DB variable</a></p>
+
+<h3 id="the-aglet-db-variable">The AGLET_DB Environment Variable</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Choose which database aglet acts on without repeating <code>--db</code>.</dd>
+  <dt>How it works</dt>
+  <dd>The CLI reads the database path from <code>--db &lt;path&gt;</code> or, if
+      that is absent, the <code>AGLET_DB</code> environment variable. Set
+      <code>AGLET_DB</code> once in your shell to run a series of commands against
+      the same file.</dd>
+  <dt>Examples</dt>
+  <dd>
+    <pre><code>export AGLET_DB=~/notes.ag
+aglet list
+aglet add "Pick up parts"</code></pre>
+  </dd>
+  <dt>Note</dt>
+  <dd><code>--db</code> on a single command overrides <code>AGLET_DB</code> for
+      that command.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#about-ag-files">About .ag files</a>,
+  <a href="#about-the-cli">About the CLI</a></p>
+
+<h3 id="about-ag-files">About .ag Files</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Understand where aglet keeps your data.</dd>
+  <dt>How it works</dt>
+  <dd>An aglet database is a single SQLite file with the <code>.ag</code>
+      extension. It holds every item, category, view, link, and the deletion log.
+      A new database is created automatically with the built-in categories (Done,
+      When, Entry) and the All Items view the first time you open it.</dd>
+  <dt>Examples</dt>
+  <dd><pre><code>cargo run --bin aglet -- --db getting-started.ag</code></pre></dd>
+  <dt>Note</dt>
+  <dd>Because the database is one file, you back it up or move it by copying that
+      file. Schema repair runs idempotently on open.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#the-aglet-db-variable">The AGLET_DB variable</a>,
+  <a href="aglet-manual.htm#reserved-categories">Reserved categories</a>,
+  <a href="#about-the-cli">About the CLI</a></p>
+
+<h3 id="cli-command-chart">CLI: Command Chart</h3>
+<table>
+  <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>add</code></td><td>Add a new item</td></tr>
+    <tr><td><code>edit</code></td><td>Edit an item's text, note, and/or done state</td></tr>
+    <tr><td><code>show</code></td><td>Show a single item with its assignments</td></tr>
+    <tr><td><code>list</code></td><td>List items (optionally filtered)</td></tr>
+    <tr><td><code>search</code></td><td>Search item text and note</td></tr>
+    <tr><td><code>export</code></td><td>Export items as Markdown</td></tr>
+    <tr><td><code>delete</code></td><td>Delete an item (writes a deletion log entry)</td></tr>
+    <tr><td><code>deleted</code></td><td>List deletion log entries</td></tr>
+    <tr><td><code>restore</code></td><td>Restore an item from the deletion log</td></tr>
+    <tr><td><code>claim</code></td><td>Atomically claim an eligible item for active work</td></tr>
+    <tr><td><code>ready</code></td><td>List items eligible to be claimed</td></tr>
+    <tr><td><code>release</code></td><td>Remove the active claim category (alias: unclaim)</td></tr>
+    <tr><td><code>tui</code></td><td>Launch the interactive TUI</td></tr>
+    <tr><td><code>category</code></td><td>Category commands (see CLI: Category commands)</td></tr>
+    <tr><td><code>view</code></td><td>View commands (see CLI: View commands)</td></tr>
+    <tr><td><code>link</code></td><td>Item-to-item link commands</td></tr>
+    <tr><td><code>unlink</code></td><td>Remove item-to-item links</td></tr>
+    <tr><td><code>import</code></td><td>Structured import commands (CSV)</td></tr>
+    <tr><td><code>item</code></td><td>Item commands in alternative noun-verb syntax</td></tr>
+  </tbody>
+</table>
+<p class="group"><strong>Options</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>--db &lt;PATH&gt;</code></td><td>SQLite database path (or set AGLET_DB)</td></tr>
+        <tr><td><code>-h, --help</code></td><td>Print help for any command or subcommand</td></tr>
+      </tbody>
+    </table>
+<p class="lead"><strong>Note</strong> Run <code>aglet</code> with no command to launch the TUI. Every command accepts <code>--help</code> for its own options.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#about-the-cli">About the CLI</a>,
+  <a href="#cli-item-commands">Item commands</a>,
+  <a href="#cli-category-commands">Category commands</a>,
+  <a href="#cli-view-commands">View commands</a></p>
+
+
+<h2 id="item-commands">Item Commands</h2>
+
+<h3 id="cli-item-commands">CLI Item Commands</h3>
+<p class="lead"><strong>Purpose</strong> Create, inspect, modify, and remove items from the command line.</p>
+<p class="group"><strong>Commands</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>add</code></td><td>Add a new item (<code>--note</code>, returns the created id)</td></tr>
+        <tr><td><code>edit</code></td><td>Edit text, note, and/or done state (<code>--text</code>, <code>--note</code>, <code>--done</code>, <code>--not-done</code>)</td></tr>
+        <tr><td><code>show</code></td><td>Show a single item with its assignments</td></tr>
+        <tr><td><code>list</code></td><td>List items, optionally filtered</td></tr>
+        <tr><td><code>search</code></td><td>Search item text and note</td></tr>
+        <tr><td><code>export</code></td><td>Export items as Markdown</td></tr>
+        <tr><td><code>delete</code></td><td>Delete an item (writes deletion log)</td></tr>
+        <tr><td><code>deleted</code></td><td>List deletion-log entries</td></tr>
+        <tr><td><code>restore</code></td><td>Restore an item from the deletion log by log id</td></tr>
+        <tr><td><code>item</code></td><td>Alternative noun-verb syntax for item commands</td></tr>
+      </tbody>
+    </table>
+<p class="group"><strong>Examples</strong></p>
+<pre><code>aglet add "Plan offsite" --note "Book venue"
+aglet show &lt;ITEM&gt;
+aglet export &gt; items.md</code></pre>
+<p class="lead"><strong>Note</strong> Parse the "created " line from <code>add</code> for the new id; it is not always the last line printed.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-tui.htm#add-an-item">Add an item</a>,
+  <a href="aglet-tui.htm#edit-an-item">Edit an item</a>,
+  <a href="aglet-tui.htm#delete-an-item">Delete an item</a>,
+  <a href="#cli-filtering">CLI filtering</a>,
+  <a href="#cli-import-export">CLI import and export</a></p>
+
+
+<h2 id="category-commands">Category Commands</h2>
+
+<h3 id="cli-category-commands">CLI Category Commands</h3>
+<p class="lead"><strong>Purpose</strong> Manage categories, assignments, conditions, and actions from the command line.</p>
+<p class="group"><strong>Commands</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>list</code></td><td>List categories as a tree</td></tr>
+        <tr><td><code>show</code></td><td>Show details for a category</td></tr>
+        <tr><td><code>create</code></td><td>Create a category (<code>--parent</code>, <code>--exclusive</code>, <code>--type numeric</code>)</td></tr>
+        <tr><td><code>delete</code></td><td>Delete a category by name</td></tr>
+        <tr><td><code>rename</code></td><td>Rename a category</td></tr>
+        <tr><td><code>reparent</code></td><td>Reparent (<code>--root</code> makes it top-level)</td></tr>
+        <tr><td><code>update</code></td><td>Update category flags</td></tr>
+        <tr><td><code>assign</code></td><td>Assign an item to a category</td></tr>
+        <tr><td><code>unassign</code></td><td>Unassign an item from a category</td></tr>
+        <tr><td><code>set-value</code></td><td>Set a numeric value assignment</td></tr>
+        <tr><td><code>format</code></td><td>Configure numeric formatting</td></tr>
+        <tr><td><code>add-condition</code></td><td>Add a profile condition</td></tr>
+        <tr><td><code>add-date-condition</code></td><td>Add a date condition</td></tr>
+        <tr><td><code>set-condition-mode</code></td><td>Set how explicit conditions combine</td></tr>
+        <tr><td><code>remove-condition</code></td><td>Remove a condition by 1-based index</td></tr>
+        <tr><td><code>add-action</code></td><td>Add an action</td></tr>
+        <tr><td><code>remove-action</code></td><td>Remove an action by 1-based index</td></tr>
+      </tbody>
+    </table>
+<p class="group"><strong>Examples</strong></p>
+<pre><code>aglet category create "Priority" --exclusive
+aglet category create "High" --parent Priority
+aglet category assign &lt;ITEM&gt; High
+aglet category set-value &lt;ITEM&gt; Cost 450.00</code></pre>
+<p class="lead"><strong>Note</strong> Done, When, and Entry are reserved and cannot be created, renamed, or deleted.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-tui.htm#add-a-category">Add a category</a>,
+  <a href="aglet-tui.htm#assign-a-category">Assign a category</a>,
+  <a href="#profile-conditions">Profile conditions</a>,
+  <a href="#actions">Actions</a>,
+  <a href="aglet-tui.htm#set-a-numeric-value">Set a numeric value</a></p>
+
+<h3 id="profile-conditions">Profile Conditions</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Assign a category based on structured rules about an item, beyond a plain
+      name match.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet category add-condition &lt;CATEGORY&gt; ...
+aglet category set-condition-mode &lt;CATEGORY&gt; ...
+aglet category remove-condition &lt;CATEGORY&gt; &lt;INDEX&gt;</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>A category can carry one or more explicit conditions. The condition mode
+      controls how multiple conditions combine. When an item satisfies the
+      conditions, the category is derived automatically. Derived (non-sticky)
+      assignments can break if the item stops matching.</dd>
+  <dt>Note</dt>
+  <dd>In the category manager the left pane shows a readable rule-count badge such
+      as [2 conditions]. Conditions are re-evaluated when an item's text or dates
+      change.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="#date-conditions">Date conditions</a>,
+  <a href="#actions">Actions</a>,
+  <a href="#cli-category-commands">CLI category commands</a></p>
+
+<h3 id="date-conditions">Date Conditions</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Assign a category based on an item's date — for example, to bucket items by
+      when they are due.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet category add-date-condition &lt;CATEGORY&gt; ...</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>A date condition tests an item's When date against a range or relative
+      window. When it matches, the category is derived. Date conditions power
+      date-range categories used to build datebook views and date-grouped
+      sections.</dd>
+  <dt>Note</dt>
+  <dd>Direct SQLite writes do not sync the reserved When assignment; use
+      aglet/CLI logic so date conditions see the date.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#profile-conditions">Profile conditions</a>,
+  <a href="aglet-manual.htm#datebook-views">Datebook views</a>,
+  <a href="aglet-manual.htm#reserved-categories">Reserved categories</a></p>
+
+<h3 id="actions">Actions</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Make assigning one category automatically assign or remove another.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet category add-action &lt;CATEGORY&gt; ...
+aglet category remove-action &lt;CATEGORY&gt; &lt;INDEX&gt;</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>An action fires when its owning category is assigned to an item. An Assign
+      action adds another category; a Remove action removes one. Actions are
+      event-driven: adding or editing an action does not retroactively fire for
+      items that already have the owning category. Action-applied assignments are
+      sticky.</dd>
+  <dt>Note</dt>
+  <dd>The category manager shows an action badge such as [1 action] in the left
+      pane.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#profile-conditions">Profile conditions</a>,
+  <a href="aglet-manual.htm#automatic-assignment">Automatic assignment</a>,
+  <a href="#cli-category-commands">CLI category commands</a></p>
+
+
+<h2 id="view-commands">View Commands</h2>
+
+<h3 id="cli-view-commands">CLI View Commands</h3>
+<p class="lead"><strong>Purpose</strong> Create and edit views, sections, columns, aliases, and datebooks from the command line.</p>
+<p class="group"><strong>Commands</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>list</code></td><td>List views</td></tr>
+        <tr><td><code>show</code></td><td>Show the contents of a view</td></tr>
+        <tr><td><code>create</code></td><td>Create a view from include/exclude</td></tr>
+        <tr><td><code>edit</code></td><td>Edit mutable view properties</td></tr>
+        <tr><td><code>clone</code></td><td>Clone into a new mutable view</td></tr>
+        <tr><td><code>rename</code></td><td>Rename a view</td></tr>
+        <tr><td><code>delete</code></td><td>Delete a view by name</td></tr>
+        <tr><td><code>section add/remove/update</code></td><td>Section authoring</td></tr>
+        <tr><td><code>column add/remove/update</code></td><td>Column authoring</td></tr>
+        <tr><td><code>alias set/clear</code></td><td>Per-view category display alias</td></tr>
+        <tr><td><code>set-summary</code></td><td>Set a column summary function</td></tr>
+        <tr><td><code>set-item-label</code></td><td>Set or clear the item column label</td></tr>
+        <tr><td><code>set-remove-from-view</code></td><td>Replace the remove-from-view category set</td></tr>
+        <tr><td><code>create-datebook</code></td><td>Create a datebook (date-interval) view</td></tr>
+        <tr><td><code>datebook-browse</code></td><td>Shift a datebook view's window</td></tr>
+      </tbody>
+    </table>
+<p class="group"><strong>Examples</strong></p>
+<pre><code>aglet view create "Work Queue" --include Work --exclude Done
+aglet view show "Work Queue"
+aglet view clone "All Items" "My Items"</code></pre>
+<p class="lead"><strong>Note</strong> <code>--include</code> criteria are AND-based; use sections or separate views for mutually exclusive siblings.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-tui.htm#create-a-view">Create a view</a>,
+  <a href="aglet-tui.htm#add-a-section">Add a section</a>,
+  <a href="aglet-tui.htm#add-a-column">Add a column</a>,
+  <a href="aglet-tui.htm#view-aliases">View aliases</a>,
+  <a href="aglet-tui.htm#create-a-datebook-view">Create a datebook view</a></p>
+
+
+<h2 id="link-commands">Link Commands</h2>
+
+<h3 id="cli-link-commands">CLI Link Commands</h3>
+<p class="lead"><strong>Purpose</strong> Create and remove item-to-item links from the command line.</p>
+<p class="group"><strong>Commands</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>link depends-on</code></td><td>ITEM depends on DEPENDS_ON_ITEM</td></tr>
+        <tr><td><code>link blocks</code></td><td>BLOCKER blocks BLOCKED</td></tr>
+        <tr><td><code>link related</code></td><td>Bidirectional related link</td></tr>
+        <tr><td><code>unlink depends-on / blocks / related</code></td><td>Remove the corresponding link (canonical entry)</td></tr>
+      </tbody>
+    </table>
+<p class="group"><strong>Examples</strong></p>
+<pre><code>aglet link depends-on &lt;ITEM&gt; &lt;PREREQUISITE&gt;
+aglet link related &lt;A&gt; &lt;B&gt;
+aglet unlink depends-on &lt;ITEM&gt; &lt;PREREQUISITE&gt;</code></pre>
+<p class="lead"><strong>Note</strong> depends-on and blocks describe the same directed relationship from opposite ends; related is symmetric.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-tui.htm#create-a-dependency">Create a dependency</a>,
+  <a href="aglet-tui.htm#remove-a-link">Remove a link</a>,
+  <a href="aglet-manual.htm#dependencies">Dependencies</a></p>
+
+
+<h2 id="filtering-and-sorting">Filtering and Sorting</h2>
+
+<h3 id="cli-filtering">CLI Filtering and Sorting</h3>
+<p class="lead"><strong>Purpose</strong> Narrow and order the output of <code>list</code>, <code>search</code>, and <code>view show</code>.</p>
+<p class="group"><strong>Flags</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>--category &lt;C&gt;</code></td><td>Repeatable, AND semantics</td></tr>
+        <tr><td><code>--any-category &lt;C&gt;</code></td><td>Repeatable, OR semantics</td></tr>
+        <tr><td><code>--exclude-category &lt;C&gt;</code></td><td>Repeatable, NOT semantics</td></tr>
+        <tr><td><code>--blocked / --not-blocked</code></td><td>Dependency-state filters (derived)</td></tr>
+        <tr><td><code>--value-eq &lt;C&gt; &lt;V&gt;</code></td><td>Numeric value equals</td></tr>
+        <tr><td><code>--value-in &lt;C&gt; &lt;CSV&gt;</code></td><td>Numeric value in a set</td></tr>
+        <tr><td><code>--value-max &lt;C&gt; &lt;V&gt;</code></td><td>Numeric value at most</td></tr>
+        <tr><td><code>--sort &lt;COLUMN[:asc|desc]&gt;</code></td><td>Sort order</td></tr>
+        <tr><td><code>--view &lt;VIEW&gt;</code></td><td>Use a specific view</td></tr>
+        <tr><td><code>--include-done</code></td><td>Include done items</td></tr>
+        <tr><td><code>--format &lt;FORMAT&gt;</code></td><td>Output format (e.g. json)</td></tr>
+        <tr><td><code>--verbose</code></td><td>Multi-line human output</td></tr>
+      </tbody>
+    </table>
+<p class="group"><strong>Examples</strong></p>
+<pre><code>aglet list --category High --not-blocked
+aglet list --any-category Work --any-category Personal
+aglet list --sort Cost:desc --format json</code></pre>
+<p class="lead"><strong>Note</strong> Repeated <code>--category</code> is AND; for OR across siblings use <code>--any-category</code>. blocked/not-blocked are derived, not categories.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="aglet-tui.htm#view-criteria">View criteria</a>,
+  <a href="aglet-tui.htm#filter-blocked-items">Filter blocked items</a>,
+  <a href="aglet-tui.htm#search-items">Search items</a>,
+  <a href="#cli-item-commands">CLI item commands</a></p>
+
+
+<h2 id="import-and-export">Import and Export</h2>
+
+<h3 id="cli-import-export">CLI Import and Export</h3>
+<p class="lead"><strong>Purpose</strong> Move items into and out of aglet.</p>
+<p class="group"><strong>Commands</strong></p>
+<table>
+      <tbody>
+        <tr><td><code>import</code></td><td>Structured import commands (e.g. CSV)</td></tr>
+        <tr><td><code>export</code></td><td>Export items as Markdown</td></tr>
+      </tbody>
+    </table>
+<p class="group"><strong>Examples</strong></p>
+<pre><code>aglet export &gt; items.md
+aglet import ...</code></pre>
+<p class="lead"><strong>How it works</strong> Export writes items as Markdown to standard output. Import brings structured data in. Prefer the CLI/import path over direct SQLite writes so dates and reserved When provenance are handled correctly.</p>
+<p class="lead"><strong>Note</strong> Direct SQLite imports must use the store datetime format <code>YYYY-MM-DD HH:MM:SS</code>; ISO strings will not load as dates.</p>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#cli-item-commands">CLI item commands</a>,
+  <a href="#about-the-cli">About the CLI</a>,
+  <a href="#about-ag-files">About .ag files</a></p>
+
+
+<h2 id="workflow-commands">Workflow Commands</h2>
+
+<h3 id="claim-an-item">Claim an Item</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Atomically take an eligible item for active work, marking it as yours.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet claim &lt;ITEM&gt;</code></pre></dd>
+  <dt>How it works</dt>
+  <dd>Claiming applies the configured claim-target category. An item is claimable
+      only if it has the configured Ready category, does not already have the
+      claim-target category, is not done, and is not blocked by an unresolved
+      depends-on prerequisite. Claimability is computed, not a link type.</dd>
+  <dt>Note</dt>
+  <dd>If a claim races and fails because the item is already In Progress, pick
+      another item rather than force-assigning.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#the-ready-list">The ready list</a>,
+  <a href="#release-a-claim">Release a claim</a>,
+  <a href="aglet-tui.htm#filter-blocked-items">Filter blocked items</a>,
+  <a href="aglet-tui.htm#global-settings">Global settings</a></p>
+
+<h3 id="release-a-claim">Release a Claim</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>Give up an item you previously claimed.</dd>
+  <dt>CLI steps</dt>
+  <dd>
+    <pre><code>aglet release &lt;ITEM&gt;
+aglet unclaim &lt;ITEM&gt;      # alias</code></pre>
+  </dd>
+  <dt>How it works</dt>
+  <dd>Releasing removes the active claim-target category, returning the item to
+      the pool of claimable work if it still has the Ready category.</dd>
+  <dt>Note</dt>
+  <dd>release and unclaim are the same command.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#claim-an-item">Claim an item</a>,
+  <a href="#the-ready-list">The ready list</a></p>
+
+<h3 id="the-ready-list">The Ready List</h3>
+<dl>
+  <dt>Purpose</dt>
+  <dd>See the items that are eligible to be claimed right now.</dd>
+  <dt>CLI steps</dt>
+  <dd><pre><code>aglet ready</code></pre></dd>
+  <dt>How it works</dt>
+  <dd><code>ready</code> lists items that have the Ready category and are not
+      done, not already claimed, and not blocked by unresolved dependencies. It
+      is the recommended way to pick the next piece of work.</dd>
+  <dt>Note</dt>
+  <dd>Because <code>ready</code> already excludes done, claimed, and blocked
+      items, prefer it over scanning a full list when choosing work.</dd>
+</dl>
+<p class="seealso"><strong>See also</strong> &nbsp;
+  <a href="#claim-an-item">Claim an item</a>,
+  <a href="#release-a-claim">Release a claim</a>,
+  <a href="aglet-tui.htm#filter-blocked-items">Filter blocked items</a></p>
 
 </body>
 </html>

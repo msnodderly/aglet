@@ -19,10 +19,23 @@ h4 { margin-bottom: .2em; }
 
 a { color: #00c; }
 
+p.nav { margin-top: .2em; }
+p.seealso { margin: .4em 0 1.8em 0; font-size: .95em; }
+p.seealso strong { text-transform: uppercase; letter-spacing: .04em; }
+
 /* Definition blocks (PURPOSE / USES / HOW IT WORKS ...) rendered as <dl>. */
 dl { margin: .5em 0 1.5em 0; }
-dt { font-weight: bold; text-transform: uppercase; letter-spacing: .03em; }
+dt { font-weight: bold; text-transform: uppercase; letter-spacing: .03em; margin-top: .6em; }
 dd { margin: .15em 0 .8em 2em; }
+dd ul, dd ol { margin: .3em 0; }
+dd pre { margin-left: 0; }
+
+/* Group label preceding a reference/keybinding table (kept out of <dl> so the
+   PDF's longtable does not misnest inside a definition list). */
+p.group { margin: 1em 0 .2em 0; }
+p.group strong { text-transform: uppercase; letter-spacing: .03em; }
+p.lead { margin: .4em 0; }
+p.lead strong { text-transform: uppercase; letter-spacing: .03em; }
 
 /* Reference / keybinding / command charts rendered as real <table>. */
 table { border-collapse: collapse; margin: .8em 0 1.5em 1em; }
