@@ -83,7 +83,7 @@ then mechanical splits last so they don't pollute the semantic diffs.
       the picker — filed as FR 214fbf23 in aglet-features.ag.
 
 ### Mechanical (last, so diffs above stay readable)
-- [ ] **C5a — Extract inline test modules.** `aglet.rs` (~4.0k) and
+- [x] **C5a — Extract inline test modules.** `aglet.rs` (~4.0k) and
       `store.rs` (~2.4k) test modules move to sibling `*_tests.rs` files (or
       `#[path]` includes); `cli/main.rs` tests move to `main_tests.rs`.
 - [ ] **C5b — Deferred: directory splits.** `tui/tests.rs` (23.7k),
