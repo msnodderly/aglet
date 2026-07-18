@@ -494,6 +494,27 @@ fn evaluate_category_match(
                             });
                         }
                     }
+                    Condition::Numeric {
+                        category_id,
+                        min,
+                        max,
+                        outside,
+                    } => {
+                        if numeric_condition_matches(*category_id, *min, *max, *outside, assignments)
+                        {
+                            return Some(MatchReason {
+                                origin: format!("match:numeric:{}", category.name),
+                                explanation: AssignmentExplanation::NumericCondition {
+                                    owner_category_name: category.name.clone(),
+                                    condition_index,
+                                    rendered_rule: render_condition_rule(
+                                        condition,
+                                        categories_by_id,
+                                    ),
+                                },
+                            });
+                        }
+                    }
                     Condition::ImplicitString => {}
                 }
             }
@@ -584,8 +605,39 @@ fn condition_matches(
         Condition::Date { source, matcher } => {
             item_matches_date_condition(item, *source, matcher, &options.evaluation_context)
         }
+        Condition::Numeric {
+            category_id,
+            min,
+            max,
+            outside,
+        } => numeric_condition_matches(*category_id, *min, *max, *outside, assignments),
         Condition::ImplicitString => false,
     }
+}
+
+/// Agenda's numeric condition. The item must be assigned to the numeric
+/// category; with bounds, its value must fall inside [min, max] (or outside,
+/// when `outside` is set). An assignment without a value only satisfies the
+/// bare "assigned" form (no bounds, not `outside`).
+fn numeric_condition_matches(
+    category_id: CategoryId,
+    min: Option<rust_decimal::Decimal>,
+    max: Option<rust_decimal::Decimal>,
+    outside: bool,
+    assignments: &HashMap<CategoryId, Assignment>,
+) -> bool {
+    let Some(assignment) = assignments.get(&category_id) else {
+        return false;
+    };
+    let Some(value) = assignment.numeric_value else {
+        return min.is_none() && max.is_none() && !outside;
+    };
+    if min.is_none() && max.is_none() {
+        // A plain assignment test; "outside" of an unbounded range is empty.
+        return !outside;
+    }
+    let inside = min.is_none_or(|bound| value >= bound) && max.is_none_or(|bound| value <= bound);
+    inside != outside
 }
 
 fn render_condition_rule(
@@ -600,6 +652,18 @@ fn render_condition_rule(
                 .unwrap_or_else(|| category_id.to_string())
         }),
         Condition::Date { source, matcher } => render_date_condition(*source, matcher),
+        Condition::Numeric {
+            category_id,
+            min,
+            max,
+            outside,
+        } => {
+            let name = categories_by_id
+                .get(category_id)
+                .map(|candidate| candidate.name.clone())
+                .unwrap_or_else(|| category_id.to_string());
+            crate::model::render_numeric_condition(&name, *min, *max, *outside)
+        }
         Condition::ImplicitString => "ImplicitString".to_string(),
     }
 }
@@ -1269,6 +1333,192 @@ mod tests {
             assignments.contains_key(&meetings.id),
             "All mode with no explicit conditions degenerates to the text condition"
         );
+    }
+
+
+    #[test]
+    fn numeric_condition_matches_value_in_range() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = crate::model::CategoryValueKind::Numeric;
+        create_category(&store, &cost);
+
+        let mut big_ticket = category("Big ticket", false);
+        big_ticket.conditions.push(Condition::Numeric {
+            category_id: cost.id,
+            min: Some(rust_decimal::Decimal::new(100, 0)),
+            max: None,
+            outside: false,
+        });
+        create_category(&store, &big_ticket);
+
+        let expensive = create_item(&store, "buy a boat");
+        store
+            .assign_item(
+                expensive.id,
+                cost.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(500, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, expensive.id).unwrap();
+        let assignments = store.get_assignments_for_item(expensive.id).unwrap();
+        assert!(
+            assignments.contains_key(&big_ticket.id),
+            "value 500 >= 100 should assign Big ticket"
+        );
+        let explanation = assignments
+            .get(&big_ticket.id)
+            .unwrap()
+            .explanation
+            .as_ref()
+            .unwrap()
+            .summary();
+        assert!(
+            explanation.contains("Cost >= 100"),
+            "explanation should render the rule: {explanation}"
+        );
+
+        let cheap = create_item(&store, "buy a coffee");
+        store
+            .assign_item(
+                cheap.id,
+                cost.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(5, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, cheap.id).unwrap();
+        let assignments = store.get_assignments_for_item(cheap.id).unwrap();
+        assert!(
+            !assignments.contains_key(&big_ticket.id),
+            "value 5 must not match Cost >= 100"
+        );
+    }
+
+    #[test]
+    fn numeric_condition_outside_range_and_auto_break() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut qty = category("Qty", false);
+        qty.value_kind = crate::model::CategoryValueKind::Numeric;
+        create_category(&store, &qty);
+
+        let mut unusual = category("Unusual", false);
+        unusual.conditions.push(Condition::Numeric {
+            category_id: qty.id,
+            min: Some(rust_decimal::Decimal::new(1, 0)),
+            max: Some(rust_decimal::Decimal::new(10, 0)),
+            outside: true,
+        });
+        create_category(&store, &unusual);
+
+        let item = create_item(&store, "order widgets");
+        store
+            .assign_item(
+                item.id,
+                qty.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(50, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, item.id).unwrap();
+        assert!(store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&unusual.id));
+
+        // Bring the value into range; the derived assignment auto-breaks.
+        store
+            .assign_item(
+                item.id,
+                qty.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(5, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, item.id).unwrap();
+        assert!(
+            !store
+                .get_assignments_for_item(item.id)
+                .unwrap()
+                .contains_key(&unusual.id),
+            "numeric-condition assignments are live: they break when the value moves in range"
+        );
+    }
+
+    #[test]
+    fn numeric_condition_bare_assignment_test() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = crate::model::CategoryValueKind::Numeric;
+        create_category(&store, &cost);
+
+        let mut priced = category("Priced", false);
+        priced.conditions.push(Condition::Numeric {
+            category_id: cost.id,
+            min: None,
+            max: None,
+            outside: false,
+        });
+        create_category(&store, &priced);
+
+        let no_value = create_item(&store, "no cost here");
+        process_item(&store, &classifier, no_value.id).unwrap();
+        assert!(!store
+            .get_assignments_for_item(no_value.id)
+            .unwrap()
+            .contains_key(&priced.id));
+
+        let valued = create_item(&store, "priced thing");
+        store
+            .assign_item(
+                valued.id,
+                cost.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(1, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, valued.id).unwrap();
+        assert!(store
+            .get_assignments_for_item(valued.id)
+            .unwrap()
+            .contains_key(&priced.id));
     }
 
     #[test]

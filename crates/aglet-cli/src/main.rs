@@ -607,6 +607,24 @@ enum CategoryCommand {
         through: Option<String>,
     },
 
+    /// Add a numeric condition: assign when a numeric category's value is in range
+    AddNumericCondition {
+        /// Category name to add the condition to (case-insensitive).
+        name: String,
+        /// Numeric category whose value is tested.
+        #[arg(long = "category", value_name = "NUMERIC_CATEGORY")]
+        numeric_category: String,
+        /// Minimum value (inclusive). Omit for an open lower bound.
+        #[arg(long)]
+        min: Option<String>,
+        /// Maximum value (inclusive). Omit for an open upper bound.
+        #[arg(long)]
+        max: Option<String>,
+        /// Match values OUTSIDE the [min, max] range instead of inside.
+        #[arg(long)]
+        outside: bool,
+    },
+
     /// Set how a category combines its explicit conditions
     SetConditionMode {
         /// Category name (case-insensitive).
@@ -2552,6 +2570,22 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                                 category.name
                             );
                         }
+                        aglet_core::model::Condition::Numeric {
+                            category_id,
+                            min,
+                            max,
+                            outside,
+                        } => {
+                            let target = resolve(*category_id);
+                            println!(
+                                "  {}. [Numeric] {} -> {}",
+                                i + 1,
+                                aglet_core::model::render_numeric_condition(
+                                    &target, *min, *max, *outside
+                                ),
+                                category.name
+                            );
+                        }
                     }
                 }
             }
@@ -3026,6 +3060,65 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             );
             Ok(())
         }
+        CategoryCommand::AddNumericCondition {
+            name,
+            numeric_category,
+            min,
+            max,
+            outside,
+        } => {
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let numeric_category_id = category_id_by_name(&categories, &numeric_category)?;
+            let target = store
+                .get_category(numeric_category_id)
+                .map_err(|e| e.to_string())?;
+            if target.value_kind != aglet_core::model::CategoryValueKind::Numeric {
+                return Err(format!("category '{}' is not Numeric", target.name));
+            }
+
+            let parse_bound = |label: &str, raw: &Option<String>| -> Result<Option<Decimal>, String> {
+                raw.as_deref()
+                    .map(|value| {
+                        value
+                            .parse::<Decimal>()
+                            .map_err(|_| format!("invalid {label} value: {value}"))
+                    })
+                    .transpose()
+            };
+            let min = parse_bound("--min", &min)?;
+            let max = parse_bound("--max", &max)?;
+            if let (Some(low), Some(high)) = (min, max) {
+                if low > high {
+                    return Err(format!("--min {low} is greater than --max {high}"));
+                }
+            }
+            if outside && min.is_none() && max.is_none() {
+                return Err("--outside requires --min and/or --max".to_string());
+            }
+
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let condition = Condition::Numeric {
+                category_id: numeric_category_id,
+                min,
+                max,
+                outside,
+            };
+            category.conditions.push(condition);
+            let result = aglet
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
+
+            println!(
+                "added numeric condition #{} to {}: {} (processed_items={}, affected_items={})",
+                category.conditions.len(),
+                name,
+                aglet_core::model::render_numeric_condition(&target.name, min, max, outside),
+                result.processed_items,
+                result.affected_items
+            );
+            Ok(())
+        }
         CategoryCommand::SetConditionMode { name, mode } => {
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
@@ -3077,6 +3170,19 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                     criteria.format_trigger(&resolve)
                 }
                 Condition::Date { source, matcher } => render_date_condition(*source, matcher),
+                Condition::Numeric {
+                    category_id,
+                    min,
+                    max,
+                    outside,
+                } => {
+                    let category_names = category_name_map(&categories);
+                    let target = category_names
+                        .get(category_id)
+                        .cloned()
+                        .unwrap_or_else(|| "(deleted)".to_string());
+                    aglet_core::model::render_numeric_condition(&target, *min, *max, *outside)
+                }
             };
             println!(
                 "removed condition #{} ({}) from {} (processed_items={}, affected_items={})",

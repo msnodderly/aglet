@@ -1897,6 +1897,21 @@ impl<'a> Aglet<'a> {
                 source: *source,
                 matcher: matcher.clone(),
             }),
+            Condition::Numeric {
+                category_id,
+                min,
+                max,
+                outside,
+            } => Ok(Condition::Numeric {
+                category_id: Self::mapped_category_id(
+                    *category_id,
+                    id_map,
+                    "preview numeric condition",
+                )?,
+                min: *min,
+                max: *max,
+                outside: *outside,
+            }),
         }
     }
 

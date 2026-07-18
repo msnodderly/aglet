@@ -370,6 +370,11 @@ pub enum AssignmentExplanation {
         condition_index: usize,
         rendered_rule: String,
     },
+    NumericCondition {
+        owner_category_name: String,
+        condition_index: usize,
+        rendered_rule: String,
+    },
     ConditionGroup {
         owner_category_name: String,
         match_mode: ConditionMatchMode,
@@ -424,6 +429,16 @@ impl AssignmentExplanation {
                 rendered_rule,
             } => format!(
                 "Derived from date rule {} on {}: {}",
+                condition_index + 1,
+                owner_category_name,
+                rendered_rule
+            ),
+            Self::NumericCondition {
+                owner_category_name,
+                condition_index,
+                rendered_rule,
+            } => format!(
+                "Derived from numeric rule {} on {}: {}",
                 condition_index + 1,
                 owner_category_name,
                 rendered_rule
@@ -510,6 +525,15 @@ impl AssignmentExplanation {
                 ..
             } => format!(
                 "Date rule {} on {} no longer matched",
+                condition_index + 1,
+                owner_category_name
+            ),
+            Self::NumericCondition {
+                owner_category_name,
+                condition_index,
+                ..
+            } => format!(
+                "Numeric rule {} on {} no longer matched",
                 condition_index + 1,
                 owner_category_name
             ),
@@ -668,6 +692,17 @@ pub enum Condition {
         source: DateSource,
         matcher: DateMatcher,
     },
+    /// Agenda's numeric condition: the item must be assigned to a numeric
+    /// category with a value inside (or, with `outside`, not inside) the
+    /// [min, max] range. An unbounded side is open. With no bounds at all the
+    /// condition is a plain "assigned to this numeric category" test.
+    Numeric {
+        category_id: CategoryId,
+        min: Option<Decimal>,
+        max: Option<Decimal>,
+        #[serde(default)]
+        outside: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -725,6 +760,25 @@ pub enum DateMatcher {
         from: DateValueExpr,
         through: DateValueExpr,
     },
+}
+
+/// Human-readable form of a numeric condition, shared by engine explanations
+/// and CLI display: "Cost in [100, 250]", "Cost >= 100", "assigned to Cost".
+pub fn render_numeric_condition(
+    category_name: &str,
+    min: Option<Decimal>,
+    max: Option<Decimal>,
+    outside: bool,
+) -> String {
+    match (min, max) {
+        (None, None) => format!("assigned to {category_name}"),
+        (Some(low), None) if !outside => format!("{category_name} >= {low}"),
+        (Some(low), None) => format!("{category_name} < {low}"),
+        (None, Some(high)) if !outside => format!("{category_name} <= {high}"),
+        (None, Some(high)) => format!("{category_name} > {high}"),
+        (Some(low), Some(high)) if !outside => format!("{category_name} in [{low}, {high}]"),
+        (Some(low), Some(high)) => format!("{category_name} outside [{low}, {high}]"),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
