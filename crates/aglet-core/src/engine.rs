@@ -61,6 +61,12 @@ struct HierarchyPassInput<'a> {
     categories: &'a [Category],
     categories_by_id: &'a HashMap<CategoryId, &'a Category>,
     original_assignments: &'a HashMap<CategoryId, Assignment>,
+    /// Categories the user has negatively assigned (Agenda's `-`): the engine
+    /// never auto-assigns these, whether by condition match or by action.
+    /// Subsumption is exempt — an assigned descendant still implies its
+    /// ancestors, matching the hierarchy invariant that an ancestor cannot be
+    /// unassigned while a descendant remains.
+    vetoes: &'a HashSet<CategoryId>,
     options: ProcessOptions,
 }
 
@@ -218,6 +224,7 @@ fn process_item_inner(
     options: ProcessOptions,
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
+    let vetoes = store.get_vetoes_for_item(item_id)?;
     let categories = store.get_hierarchy()?;
     let categories_by_id: HashMap<CategoryId, &Category> = categories
         .iter()
@@ -257,6 +264,7 @@ fn process_item_inner(
         categories: &categories,
         categories_by_id: &categories_by_id,
         original_assignments: &original_assignments,
+        vetoes: &vetoes,
         options,
     };
 
@@ -325,9 +333,7 @@ fn run_hierarchy_pass(
     // Fire actions for assignment events seeded before this pass (external
     // writes on the first pass, or events left over from a previous pass).
     fire_queued_actions(
-        input.item_id,
-        input.categories_by_id,
-        input.original_assignments,
+        &ActionContext::from_pass_input(input),
         assignments,
         seen_pairs,
         firing,
@@ -335,6 +341,9 @@ fn run_hierarchy_pass(
     )?;
 
     for category in input.categories {
+        if input.vetoes.contains(&category.id) {
+            continue;
+        }
         let Some(reason) = evaluate_category_match(
             category,
             input.item,
@@ -392,9 +401,7 @@ fn run_hierarchy_pass(
             });
             firing.enqueue(category.id);
             fire_queued_actions(
-                input.item_id,
-                input.categories_by_id,
-                input.original_assignments,
+                &ActionContext::from_pass_input(input),
                 assignments,
                 seen_pairs,
                 firing,
@@ -415,13 +422,25 @@ fn evaluate_category_match(
     categories_by_id: &HashMap<CategoryId, &Category>,
     options: &ProcessOptions,
 ) -> Option<MatchReason> {
-    if options.enable_implicit_string && category.enable_implicit_string {
-        if let Some(matched) = classifier.classify(
+    let implicit_enabled = options.enable_implicit_string && category.enable_implicit_string;
+    let implicit_match = if implicit_enabled {
+        classifier.classify(
             item_text,
             &category.name,
             category.match_category_name,
             &category.also_match,
-        ) {
+        )
+    } else {
+        None
+    };
+
+    // `condition_match_mode` governs how all of a category's matching signals
+    // combine, the implicit text condition included: Any ORs the text match
+    // with each explicit condition; All requires text (when enabled) AND every
+    // explicit condition — Agenda's "combine text and assignment conditions"
+    // setting.
+    if category.condition_match_mode == ConditionMatchMode::Any {
+        if let Some(matched) = implicit_match {
             let matched_source = match matched.source {
                 crate::matcher::ImplicitMatchSource::CategoryName => TextMatchSource::CategoryName,
                 crate::matcher::ImplicitMatchSource::AlsoMatch => TextMatchSource::AlsoMatch,
@@ -485,6 +504,50 @@ fn evaluate_category_match(
                 .iter()
                 .filter(|condition| !matches!(condition, Condition::ImplicitString))
                 .collect();
+
+            if implicit_enabled {
+                // Text is a required conjunct in this run.
+                let matched = implicit_match?;
+                if explicit_conditions.is_empty() {
+                    // Conjunction of one: a plain text match.
+                    let matched_source = match matched.source {
+                        crate::matcher::ImplicitMatchSource::CategoryName => {
+                            TextMatchSource::CategoryName
+                        }
+                        crate::matcher::ImplicitMatchSource::AlsoMatch => {
+                            TextMatchSource::AlsoMatch
+                        }
+                    };
+                    return Some(MatchReason {
+                        origin: match_origin_implicit(&category.name),
+                        explanation: AssignmentExplanation::ImplicitMatch {
+                            matched_term: matched.matched_term,
+                            matched_source,
+                        },
+                    });
+                }
+                if explicit_conditions.iter().all(|condition| {
+                    condition_matches(condition, item, assignments, categories_by_id, options)
+                }) {
+                    let mut rendered_rules =
+                        vec![format!("text ~ \"{}\"", matched.matched_term)];
+                    rendered_rules.extend(
+                        explicit_conditions
+                            .iter()
+                            .map(|condition| render_condition_rule(condition, categories_by_id)),
+                    );
+                    return Some(MatchReason {
+                        origin: format!("match:conditions:all:{}", category.name),
+                        explanation: AssignmentExplanation::ConditionGroup {
+                            owner_category_name: category.name.clone(),
+                            match_mode: ConditionMatchMode::All,
+                            rendered_rules,
+                        },
+                    });
+                }
+                return None;
+            }
+
             if !explicit_conditions.is_empty()
                 && explicit_conditions.iter().all(|condition| {
                     condition_matches(condition, item, assignments, categories_by_id, options)
@@ -554,6 +617,25 @@ fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignmen
         }
 }
 
+/// Immutable context shared by every action firing in one processing run.
+struct ActionContext<'a> {
+    item_id: ItemId,
+    categories_by_id: &'a HashMap<CategoryId, &'a Category>,
+    original_assignments: &'a HashMap<CategoryId, Assignment>,
+    vetoes: &'a HashSet<CategoryId>,
+}
+
+impl<'a> ActionContext<'a> {
+    fn from_pass_input(input: &'a HierarchyPassInput<'a>) -> Self {
+        Self {
+            item_id: input.item_id,
+            categories_by_id: input.categories_by_id,
+            original_assignments: input.original_assignments,
+            vetoes: input.vetoes,
+        }
+    }
+}
+
 /// Drain the assignment-event queue, firing each queued category's actions.
 ///
 /// Assign actions that create new-to-store assignments enqueue their targets in
@@ -561,14 +643,18 @@ fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignmen
 /// one drain. The `fired` set guarantees each category's actions run at most
 /// once per processing run.
 fn fire_queued_actions(
-    item_id: ItemId,
-    categories_by_id: &HashMap<CategoryId, &Category>,
-    original_assignments: &HashMap<CategoryId, Assignment>,
+    ctx: &ActionContext<'_>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
     firing: &mut ActionFiring,
     pass_result: &mut PassResult,
 ) -> Result<()> {
+    let ActionContext {
+        item_id,
+        categories_by_id,
+        original_assignments,
+        vetoes,
+    } = *ctx;
     while let Some(category_id) = firing.queue.pop() {
         if !firing.fired.insert(category_id) {
             continue;
@@ -581,6 +667,9 @@ fn fire_queued_actions(
             match action {
                 Action::Assign { targets } => {
                     for target_id in targets {
+                        if vetoes.contains(target_id) {
+                            continue;
+                        }
                         if !can_assign(item_id, *target_id, assignments, seen_pairs) {
                             continue;
                         }
@@ -1091,6 +1180,97 @@ mod tests {
         EvaluationContext::from_zoned(zoned.parse::<Zoned>().unwrap())
     }
 
+
+    #[test]
+    fn all_mode_requires_text_and_explicit_conditions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let bug = category("Bug", true);
+        create_category(&store, &bug);
+
+        let mut escalated = category("Escalated", true);
+        escalated.condition_match_mode = ConditionMatchMode::All;
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, bug.id);
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        create_category(&store, &escalated);
+
+        // Text matches "escalated" but the Bug condition does not hold.
+        let text_only = create_item(&store, "escalated paperwork");
+        process_item(&store, &classifier, text_only.id).unwrap();
+        let assignments = store.get_assignments_for_item(text_only.id).unwrap();
+        assert!(
+            !assignments.contains_key(&escalated.id),
+            "All mode: text match alone must not assign"
+        );
+
+        // Bug condition holds but the text does not match.
+        let condition_only = create_item(&store, "bug in parser");
+        process_item(&store, &classifier, condition_only.id).unwrap();
+        let assignments = store.get_assignments_for_item(condition_only.id).unwrap();
+        assert!(assignments.contains_key(&bug.id));
+        assert!(
+            !assignments.contains_key(&escalated.id),
+            "All mode: conditions alone must not assign when text matching is enabled"
+        );
+
+        // Both hold.
+        let both = create_item(&store, "escalated bug in parser");
+        process_item(&store, &classifier, both.id).unwrap();
+        let assignments = store.get_assignments_for_item(both.id).unwrap();
+        assert!(
+            assignments.contains_key(&escalated.id),
+            "All mode: text AND conditions assign"
+        );
+    }
+
+    #[test]
+    fn all_mode_without_implicit_uses_explicit_conditions_only() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let bug = category("Bug", true);
+        create_category(&store, &bug);
+
+        let mut escalated = category("Escalated", false);
+        escalated.condition_match_mode = ConditionMatchMode::All;
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, bug.id);
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "bug in parser");
+        process_item(&store, &classifier, item.id).unwrap();
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&escalated.id),
+            "text matching disabled: All mode is the conjunction of explicit conditions"
+        );
+    }
+
+    #[test]
+    fn all_mode_with_no_explicit_conditions_is_plain_text_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut meetings = category("Meetings", true);
+        meetings.condition_match_mode = ConditionMatchMode::All;
+        create_category(&store, &meetings);
+
+        let item = create_item(&store, "Team meetings tomorrow");
+        process_item(&store, &classifier, item.id).unwrap();
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&meetings.id),
+            "All mode with no explicit conditions degenerates to the text condition"
+        );
+    }
+
     #[test]
     fn process_item_single_pass_convergence() {
         let store = Store::open_memory().unwrap();
@@ -1492,6 +1672,7 @@ mod tests {
             categories: &categories,
             categories_by_id: &categories_by_id,
             original_assignments: &HashMap::new(),
+            vetoes: &HashSet::new(),
             options: ProcessOptions::default(),
         };
 

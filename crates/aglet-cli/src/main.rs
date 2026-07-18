@@ -548,6 +548,20 @@ enum CategoryCommand {
         category_name: String,
     },
 
+    /// List an item's vetoed (never-auto-assign) categories
+    ListVetoes {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+    },
+
+    /// Clear a veto so the category may be auto-assigned again
+    ClearVeto {
+        /// Item id (full UUID or unique hex prefix).
+        item_id: String,
+        /// Category name (case-insensitive).
+        category_name: String,
+    },
+
     /// Add a profile condition to a category
     AddCondition {
         /// Category name to add the condition to (case-insensitive).
@@ -2863,10 +2877,53 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             aglet
                 .unassign_item_manual(item_id, category_id)
                 .map_err(|e| e.to_string())?;
-            println!(
-                "unassigned item {} from category {}",
-                item_id, category_name
-            );
+            let vetoed = store
+                .get_vetoes_for_item(item_id)
+                .map_err(|e| e.to_string())?
+                .contains(&category_id);
+            if vetoed {
+                println!(
+                    "unassigned item {} from category {} (vetoed: will not be auto-assigned again; clear with `category clear-veto`)",
+                    item_id, category_name
+                );
+            } else {
+                println!(
+                    "unassigned item {} from category {}",
+                    item_id, category_name
+                );
+            }
+            Ok(())
+        }
+        CategoryCommand::ListVetoes { item_id } => {
+            let item_id = resolve_item_id(&item_id, store)?;
+            let vetoes = store.get_vetoes_for_item(item_id).map_err(|e| e.to_string())?;
+            if vetoes.is_empty() {
+                println!("no vetoes for item {item_id}");
+                return Ok(());
+            }
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let names = category_name_map(&categories);
+            let mut labels: Vec<String> = vetoes
+                .iter()
+                .map(|id| names.get(id).cloned().unwrap_or_else(|| id.to_string()))
+                .collect();
+            labels.sort();
+            for label in labels {
+                println!("{label}");
+            }
+            Ok(())
+        }
+        CategoryCommand::ClearVeto {
+            item_id,
+            category_name,
+        } => {
+            let item_id = resolve_item_id(&item_id, store)?;
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &category_name)?;
+            store
+                .remove_assignment_veto(item_id, category_id)
+                .map_err(|e| e.to_string())?;
+            println!("cleared veto on {category_name} for item {item_id}");
             Ok(())
         }
         CategoryCommand::AddCondition {

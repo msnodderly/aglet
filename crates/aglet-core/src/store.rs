@@ -21,7 +21,7 @@ use crate::model::{
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 19;
+const SCHEMA_VERSION: i32 = 20;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -132,7 +132,16 @@ CREATE TABLE IF NOT EXISTS item_links (
     CHECK (kind <> 'related' OR item_id < other_item_id)
 );
 
+CREATE TABLE IF NOT EXISTS assignment_vetoes (
+    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL,
+    origin      TEXT,
+    PRIMARY KEY (item_id, category_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_assignments_item ON assignments(item_id);
+CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item ON assignment_vetoes(item_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_category ON assignments(category_id);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_items_when_date ON items(when_date);
@@ -1663,6 +1672,54 @@ impl Store {
         Ok(())
     }
 
+    /// Record a negative assignment (Agenda's `-`): the engine must never
+    /// auto-assign this item to this category again. Idempotent.
+    pub fn add_assignment_veto(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        origin: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO assignment_vetoes (item_id, category_id, created_at, origin)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                item_id.to_string(),
+                category_id.to_string(),
+                Timestamp::now().to_string(),
+                origin,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Clear a negative assignment. Returns Ok even if no veto existed.
+    pub fn remove_assignment_veto(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM assignment_vetoes WHERE item_id = ?1 AND category_id = ?2",
+            params![item_id.to_string(), category_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// All categories the user has vetoed for this item.
+    pub fn get_vetoes_for_item(&self, item_id: ItemId) -> Result<HashSet<CategoryId>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT category_id FROM assignment_vetoes WHERE item_id = ?1")?;
+        let rows = stmt.query_map(params![item_id.to_string()], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut vetoes = HashSet::new();
+        for row in rows {
+            let id_str = row?;
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                vetoes.insert(id);
+            }
+        }
+        Ok(vetoes)
+    }
+
     /// Get all assignments for an item as a HashMap.
     pub fn get_assignments_for_item(
         &self,
@@ -2284,6 +2341,21 @@ impl Store {
                 "#,
             )?;
         }
+        if from_version < 20 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS assignment_vetoes (
+                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                    created_at  TEXT NOT NULL,
+                    origin      TEXT,
+                    PRIMARY KEY (item_id, category_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
+                    ON assignment_vetoes(item_id);
+                "#,
+            )?;
+        }
         if from_version < 11 {
             self.conn.execute_batch(
                 r#"
@@ -2354,6 +2426,21 @@ impl Store {
             }
         }
 
+        if from_version < 20 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS assignment_vetoes (
+                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                    created_at  TEXT NOT NULL,
+                    origin      TEXT,
+                    PRIMARY KEY (item_id, category_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
+                    ON assignment_vetoes(item_id);
+                "#,
+            )?;
+        }
         if from_version < 11 {
             // Migrate when_date / done_date from "YYYY-MM-DD HH:MM:SS" to "YYYY-MM-DDTHH:MM:SS"
             self.conn.execute_batch(

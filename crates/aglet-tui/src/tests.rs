@@ -6901,7 +6901,7 @@ fn inspect_unassign_picker_jk_tracks_assignment_rows() {
 }
 
 #[test]
-fn inspect_unassign_explains_rule_locked_auto_match_assignment() {
+fn inspect_unassign_removes_auto_match_assignment_with_veto() {
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
@@ -6926,28 +6926,29 @@ fn inspect_unassign_explains_rule_locked_auto_match_assignment() {
     app.inspect_assignment_index = 0;
 
     app.handle_inspect_unassign_key(KeyCode::Enter, &aglet)
-        .expect("inspect unassign enter should explain rule lock");
+        .expect("inspect unassign enter should remove the assignment");
 
     let after = store
         .get_item(item.id)
-        .expect("reload after inspect attempt");
+        .expect("reload after inspect unassign");
     assert!(
-        after.assignments.contains_key(&tui.id),
-        "rule-derived assignment should remain after failed inspect unassign"
-    );
-    assert_eq!(app.mode, Mode::InspectUnassign);
-    assert!(
-        app.status.contains("Cannot remove TUI [auto-match]"),
-        "status should explain why the assignment is stuck: {}",
-        app.status
+        !after.assignments.contains_key(&tui.id),
+        "unassigning a rule-derived assignment records a veto and sticks"
     );
     assert!(
-        app.status.contains("Matched category name \"TUI\""),
-        "status should include the rule explanation: {}",
+        store
+            .get_vetoes_for_item(item.id)
+            .expect("load vetoes")
+            .contains(&tui.id),
+        "manual unassign of a derived assignment records a veto"
+    );
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(
+        app.status.contains("Unassigned TUI"),
+        "status should confirm the removal: {}",
         app.status
     );
 }
-
 #[test]
 fn normal_mode_f_cycles_numeric_column_format() {
     let nanos = SystemTime::now()
@@ -10990,7 +10991,7 @@ fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
 }
 
 #[test]
-fn item_assign_picker_shows_and_explains_rule_locked_auto_match_assignment() {
+fn item_assign_picker_unassigns_rule_derived_row_with_veto() {
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
@@ -11022,33 +11023,29 @@ fn item_assign_picker_shows_and_explains_rule_locked_auto_match_assignment() {
     terminal.draw(|frame| app.draw(frame)).expect("render app");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("[x] TUI") && rendered.contains("(via text match)"),
+        rendered.contains("TUI") && rendered.contains("(via text match)"),
         "assign picker should show inline provenance for rule-derived rows: {rendered}"
     );
 
     app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
-        .expect("space should report locked assignment instead of unassigning");
+        .expect("space should unassign the rule-derived assignment");
 
     let after = store
         .get_item(item.id)
-        .expect("reload after toggle attempt");
+        .expect("reload after toggle");
     assert!(
-        after.assignments.contains_key(&tui.id),
-        "rule-derived assignment should remain after failed picker unassign"
+        !after.assignments.contains_key(&tui.id),
+        "picker unassign of a rule-derived assignment records a veto and sticks"
+    );
+    assert!(
+        store
+            .get_vetoes_for_item(item.id)
+            .expect("load vetoes")
+            .contains(&tui.id),
+        "picker unassign records a veto"
     );
     assert_eq!(app.mode, Mode::ItemAssignPicker);
-    assert!(
-        app.status.contains("Cannot remove TUI [auto-match]"),
-        "status should explain why the assignment is stuck: {}",
-        app.status
-    );
-    assert!(
-        app.status.contains("Matched category name \"TUI\""),
-        "status should include the rule explanation: {}",
-        app.status
-    );
 }
-
 #[test]
 fn item_assign_view_pane_enter_applies_and_closes() {
     let store = Store::open_memory().expect("memory store");

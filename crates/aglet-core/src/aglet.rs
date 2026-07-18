@@ -389,6 +389,7 @@ impl<'a> Aglet<'a> {
         origin: Option<String>,
     ) -> Result<ProcessItemResult> {
         self.enforce_manual_exclusive_siblings(item_id, category_id)?;
+        self.store.remove_assignment_veto(item_id, category_id)?;
 
         let was_assigned = self
             .store
@@ -511,6 +512,7 @@ impl<'a> Aglet<'a> {
         }
 
         self.enforce_manual_exclusive_siblings(item_id, category_id)?;
+        self.store.remove_assignment_veto(item_id, category_id)?;
 
         let was_assigned = self
             .store
@@ -571,6 +573,18 @@ impl<'a> Aglet<'a> {
                     "cannot remove category '{ancestor_name}' while descendant '{descendant_name}' is assigned; remove descendant first"
                 ),
             });
+        }
+        // Manually removing a machine-made assignment is Agenda's negative
+        // assignment (`-`): record a veto so the engine never re-assigns it.
+        // Removing one's own manual assignment stays a plain removal.
+        let removed_source = self
+            .store
+            .get_assignments_for_item(item_id)?
+            .get(&category_id)
+            .map(|assignment| assignment.source);
+        if removed_source.is_some_and(|source| source != AssignmentSource::Manual) {
+            self.store
+                .add_assignment_veto(item_id, category_id, Some("manual:unassign"))?;
         }
         self.store.unassign_item(item_id, category_id)?;
         let mut result = self.reprocess_existing_item(item_id)?;
@@ -1338,6 +1352,7 @@ impl<'a> Aglet<'a> {
         let mut result = ReviewQueueResult::default();
         let mut choices = Vec::new();
         let mut winning_choice_by_exclusive_parent: HashMap<CategoryId, usize> = HashMap::new();
+        let vetoes = self.store.get_vetoes_for_item(item_id)?;
 
         for candidate in candidates {
             if matches!(
@@ -1347,6 +1362,13 @@ impl<'a> Aglet<'a> {
                 != CandidateDisposition::QueueReview
             {
                 continue;
+            }
+            if let crate::classification::CandidateAssignment::Category(category_id) =
+                candidate.assignment
+            {
+                if vetoes.contains(&category_id) {
+                    continue;
+                }
             }
 
             let is_semantic = Self::is_semantic_provider(&candidate.provider);
@@ -1992,6 +2014,13 @@ impl<'a> Aglet<'a> {
     ) -> Result<ProcessItemResult> {
         match &candidate.assignment {
             crate::classification::CandidateAssignment::Category(category_id) => {
+                if self
+                    .store
+                    .get_vetoes_for_item(item_id)?
+                    .contains(category_id)
+                {
+                    return Ok(ProcessItemResult::default());
+                }
                 let category = self.store.get_category(*category_id)?;
                 let mut result = ProcessItemResult::default();
                 if self.apply_category_assignment(
@@ -2065,6 +2094,8 @@ impl<'a> Aglet<'a> {
         let origin = Some(format!("suggestion:accepted:{}", suggestion.provider_id));
         match suggestion.assignment {
             crate::classification::CandidateAssignment::Category(category_id) => {
+                self.store
+                    .remove_assignment_veto(suggestion.item_id, category_id)?;
                 let mut result = ProcessItemResult::default();
                 if self.apply_category_assignment(
                     suggestion.item_id,
@@ -2212,6 +2243,7 @@ impl<'a> Aglet<'a> {
         };
 
         for category_id in targets {
+            self.store.remove_assignment_veto(item_id, *category_id)?;
             if existing.contains_key(category_id) {
                 continue;
             }
@@ -4561,6 +4593,189 @@ mod tests {
         assert!(
             !assignments.contains_key(&archive.id),
             "editing an item must not re-fire actions for assignments that already existed"
+        );
+    }
+
+    #[test]
+    fn remove_action_clears_manual_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let inbox = category("Inbox", false);
+        store.create_category(&inbox).unwrap();
+
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::Remove {
+            targets: HashSet::from([inbox.id]),
+        });
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, inbox.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&inbox.id),
+            "Remove actions clear manual assignments too (product decision #45)"
+        );
+    }
+
+    #[test]
+    fn manual_unassign_of_automatch_sticks_via_veto() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let meetings = category("Meetings", true);
+        store.create_category(&meetings).unwrap();
+
+        let item = Item::new("Team meetings tomorrow".to_string());
+        aglet.create_item(&item).unwrap();
+        assert!(store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&meetings.id));
+
+        aglet.unassign_item_manual(item.id, meetings.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&meetings.id),
+            "manual unassign records a veto; the engine must not re-assign"
+        );
+        assert!(store
+            .get_vetoes_for_item(item.id)
+            .unwrap()
+            .contains(&meetings.id));
+
+        // Even a later text edit (full re-match) must respect the veto.
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "Team meetings moved to Friday".to_string();
+        updated.modified_at = Timestamp::now();
+        aglet.update_item(&updated).unwrap();
+        assert!(!store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&meetings.id));
+    }
+
+    #[test]
+    fn manual_reassign_clears_veto() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let meetings = category("Meetings", true);
+        store.create_category(&meetings).unwrap();
+
+        let item = Item::new("Team meetings tomorrow".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet.unassign_item_manual(item.id, meetings.id).unwrap();
+        assert!(!store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&meetings.id));
+
+        aglet
+            .assign_item_manual(item.id, meetings.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&meetings.id));
+        assert!(
+            store.get_vetoes_for_item(item.id).unwrap().is_empty(),
+            "manual re-assignment clears the veto"
+        );
+    }
+
+    #[test]
+    fn veto_blocks_action_assignment() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let archive = category("Archive", false);
+        store.create_category(&archive).unwrap();
+
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::Assign {
+            targets: HashSet::from([archive.id]),
+        });
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        store
+            .add_assignment_veto(item.id, archive.id, Some("manual:test"))
+            .unwrap();
+
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&trigger.id));
+        assert!(
+            !assignments.contains_key(&archive.id),
+            "vetoed categories are not assignable by actions"
+        );
+    }
+
+    #[test]
+    fn removing_manual_assignment_records_no_veto() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+        aglet.unassign_item_manual(item.id, work.id).unwrap();
+
+        assert!(
+            store.get_vetoes_for_item(item.id).unwrap().is_empty(),
+            "removing one's own manual assignment is symmetric, not a veto"
+        );
+    }
+
+    #[test]
+    fn veto_does_not_block_subsumption() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let projects = category("Projects", false);
+        store.create_category(&projects).unwrap();
+        let alpha = child_category("Alpha", projects.id, false);
+        store.create_category(&alpha).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        store
+            .add_assignment_veto(item.id, projects.id, Some("manual:test"))
+            .unwrap();
+
+        aglet
+            .assign_item_manual(item.id, alpha.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&projects.id),
+            "an assigned descendant still implies its ancestors"
         );
     }
 
