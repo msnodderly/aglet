@@ -28,7 +28,8 @@ Current implementation does not yet include several v0.6 model fields/concepts:
 - typed value columns (`values`, category `value_type`, precision)
 - suggestion model (`rejected_suggestions`, suggestion acceptance provenance)
 - aliases and condition modes on categories
-- validation/date/delete condition-action variants
+- validation condition variants (numeric/date conditions, date/delete/mark-done
+  actions, and negative assignments shipped 2026-07)
 - `Entry When Done` reserved category trigger sequence
 
 Why it matters:

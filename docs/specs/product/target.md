@@ -181,6 +181,12 @@ RecurrenceRule {
   condition stops matching (e.g., the matched text is edited away, or a prerequisite
   category is removed). This "auto-break" behavior keeps derived state consistent with
   current item state. Actions may also remove assignments via `RemoveAction`.
+- **Negative assignments (vetoes)** restore Agenda's `-` marker (implemented 2026-07).
+  Manually unassigning a machine-made assignment records a per-(item, category) veto;
+  the engine then refuses to re-assign that category by condition match, action
+  target, or classification. Manually assigning the category (or accepting a
+  suggestion for it) clears the veto. Subsumption is exempt: an assigned descendant
+  still implies its ancestors. Stored in the `assignment_vetoes` table.
 - The `rejected_suggestions` set prevents re-suggestion of the same category for the
   same item. If the item text changes materially (e.g., Levenshtein edit distance > 20%
   of original length, or other implementation-defined threshold), the rejected set is
@@ -439,7 +445,8 @@ Conditions determine when an item should be automatically assigned to a category
 Actions fire when an assignment (automatic or manual) occurs.
 
 ```
-Condition = StringCondition | ProfileCondition | DateCondition | ValidationCondition
+Condition = StringCondition | ProfileCondition | DateCondition | NumericCondition
+          | ValidationCondition
 
 StringCondition {
   // Implicit from category name + aliases (unless enable_implicit_string = false).
@@ -468,17 +475,43 @@ DateCondition {
   range:        DateRange  // can be relative, e.g., "within 3 days", "overdue"
 }
 
-Action = AssignAction | DateAction | RemoveAction | DeleteAction
+NumericCondition {
+  // (Implemented 2026-07.) The item must be assigned to the numeric category
+  // with a value inside [min, max] (open sides allowed) — or outside the
+  // range with the outside flag. With no bounds it is a plain assigned-to test.
+  category_id:  CategoryID   // a Numeric category
+  min:          Optional<Decimal>
+  max:          Optional<Decimal>
+  outside:      Boolean (default false)
+}
+
+Action = AssignAction | AssignNumericAction | DateAction | RemoveAction
+       | MarkDoneAction | DeleteAction
 
 AssignAction {
   // Push item onto additional categories
   target_categories: Set<CategoryID>
 }
 
+AssignNumericAction {
+  // (Implemented 2026-07.) Agenda's numeric action: assign to a numeric
+  // category WITH a value.
+  target: CategoryID   // a Numeric category
+  value:  Decimal
+}
+
 DateAction {
-  // Set or modify one of the item's date fields
-  target_field: enum { when_date, done_date }
+  // Set or modify the item's When date from an expression resolved when the
+  // action fires. (Implemented 2026-07 as SetWhen; done_date is covered by
+  // MarkDoneAction instead.)
+  target_field: enum { when_date }
   expression:   DateExpression
+}
+
+MarkDoneAction {
+  // (Implemented 2026-07.) Agenda's "designate as done": stamps done_date and
+  // marks the item done. A no-op on already-done items, which makes cycles
+  // safe.
 }
 
 RemoveAction {
@@ -508,13 +541,25 @@ DeleteAction {
 1. When an item is created or modified, it enters the processing queue.
 2. The engine walks the category hierarchy depth-first.
 3. For each category, conditions are evaluated using that category's `condition_mode`.
+   `condition_mode` governs how ALL matching signals combine, the implicit text
+   condition included: `any` ORs text with each condition; `all` requires text
+   (when enabled) AND every explicit condition. Vetoed categories are skipped.
 4. For string-based matches, confidence is routed by classification settings (§2.8):
    assign, suggest, or prompt based on confidence thresholds and assignment mode.
 5. For each accepted assignment (automatic or manual), the engine writes
    `assignments[category_id]` with provenance.
-6. For each new assignment, it fires that category's actions.
+6. **Actions fire on assignment events**: whenever an assignment becomes
+   new-to-store — created by a condition match, by another category's
+   AssignAction (chains cascade), or by an external write (manual assignment,
+   mark-done, section insert, accepted suggestion, auto-classification) seeded
+   into the run — the assigned category's actions fire. Each category's
+   actions fire at most once per processing run. Re-writing an assignment that
+   already exists is not an event and does not re-fire actions.
 7. If an action modifies the item (e.g., adds another assignment, changes a date), the
-   item re-enters the queue for another pass.
+   item re-enters the queue for another pass. Item-mutating action effects
+   (SetWhen, MarkDone, Delete) are deferred like removals: collected during the
+   cascade and applied after the engine run (dates, then done, then delete),
+   with a bounded follow-up reprocess.
 8. Processing terminates when a pass produces no new changes (fixed-point).
 9. **Termination guarantees**:
    - A maximum of **10 passes** is enforced. If the fixed-point is not reached in 10
