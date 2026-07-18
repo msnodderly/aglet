@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
+use rust_decimal::Decimal;
 
-use crate::date_rules::{item_matches_date_condition, render_date_condition, EvaluationContext};
+use crate::date_rules::{item_matches_date_condition, EvaluationContext};
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
+    Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition,
     ConditionMatchMode, Item, ItemId, Query, TextMatchSource,
 };
@@ -45,6 +46,10 @@ pub struct ProcessItemResult {
     pub assignment_events: Vec<AssignmentEvent>,
     pub deferred_removals: Vec<DeferredRemoval>,
     pub deferred_specials: Vec<DeferredSpecial>,
+    /// Human-readable warnings about effects that could not be applied (e.g.
+    /// special-action recursion hitting its depth cap). Surfaced by the CLI
+    /// and TUI so rule authors see when a cascade was cut short.
+    pub warnings: Vec<String>,
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
     pub semantic_candidates_skipped_already_assigned: usize,
@@ -61,6 +66,13 @@ pub struct EvaluateAllItemsResult {
     pub total_new_assignments: usize,
     pub total_removed_assignments: usize,
     pub total_deferred_removals: usize,
+    /// Special-action effects (SetWhen/MarkDone/Delete) produced per item.
+    /// The engine cannot apply these itself; the Aglet layer must apply them
+    /// after the bulk run, exactly as it does for single-item processing.
+    pub deferred_specials: Vec<(ItemId, DeferredSpecial)>,
+    /// Warnings from applying those effects (e.g. depth-capped cascades),
+    /// filled in by the Aglet layer so bulk rule edits surface them too.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -104,16 +116,44 @@ struct AssignmentTemplate {
     numeric_value: Option<rust_decimal::Decimal>,
 }
 
+/// An assignment decision made outside the engine (by the user or a
+/// classifier) that the engine executes with uniform veto, exclusivity, and
+/// subsumption handling — the single write path for assignments. New-to-store
+/// intents are assignment events and fire the category's actions.
+#[derive(Debug, Clone)]
+pub struct AssignmentIntent {
+    pub category_id: CategoryId,
+    pub source: AssignmentSource,
+    /// `None` derives the origin from the explanation.
+    pub origin: Option<String>,
+    pub explanation: Option<AssignmentExplanation>,
+    pub numeric_value: Option<Decimal>,
+    /// Upsert semantics: re-assigning an existing category replaces its
+    /// provenance (manual re-assign upgrades an auto-match to sticky Manual;
+    /// numeric re-assign updates the value). `false` skips already-assigned
+    /// categories, which keeps edit-through inserts idempotent.
+    pub upgrade_existing: bool,
+    /// Explicit user intent clears any veto; machine intents respect it.
+    pub clears_veto: bool,
+    /// Whether the intent may kick assigned exclusive siblings (user wins);
+    /// otherwise a blocking sibling makes the intent a no-op.
+    pub override_exclusive: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessOptions {
     pub enable_implicit_string: bool,
     pub evaluation_context: EvaluationContext,
-    /// Categories whose assignment was just created by the caller (manual entry,
-    /// accepted suggestion, auto-classification, ...) before this processing run.
-    /// The engine treats each as a fresh assignment event and fires that
+    /// Categories whose assignment was just created by the caller (e.g. the
+    /// When-date sync, which owns its typed field) before this processing
+    /// run. The engine treats each as a fresh assignment event and fires that
     /// category's actions, mirroring Agenda's rule that actions fire on any
     /// assignment "including an explicit assignment by the user".
     pub pending_action_triggers: HashSet<CategoryId>,
+    /// Assignments for the engine to perform this run. Prefer this over
+    /// writing rows externally: intents go through the same veto,
+    /// exclusivity, and subsumption handling as engine-derived assignments.
+    pub pending_intents: Vec<AssignmentIntent>,
 }
 
 impl Default for ProcessOptions {
@@ -122,6 +162,7 @@ impl Default for ProcessOptions {
             enable_implicit_string: true,
             evaluation_context: EvaluationContext::now(),
             pending_action_triggers: HashSet::new(),
+            pending_intents: Vec::new(),
         }
     }
 }
@@ -151,6 +192,20 @@ impl ActionFiring {
 struct MatchReason {
     explanation: AssignmentExplanation,
     origin: String,
+}
+
+impl MatchReason {
+    /// The origin string is derived from the explanation — one provenance
+    /// source, two stored fields.
+    fn from_explanation(explanation: AssignmentExplanation) -> Self {
+        let origin = explanation
+            .origin()
+            .expect("engine match explanations always derive an origin");
+        Self {
+            explanation,
+            origin,
+        }
+    }
 }
 
 /// Process one item through fixed-point category evaluation.
@@ -218,13 +273,18 @@ fn evaluate_items_internal(
     let items = store.list_items()?;
 
     for item in items {
-        let process_result =
+        let mut process_result =
             process_item_with_options(store, classifier, item.id, options.clone())?;
 
         result.processed_items += 1;
         result.total_new_assignments += process_result.new_assignments.len();
         result.total_removed_assignments += process_result.removed_assignments.len();
         result.total_deferred_removals += process_result.deferred_removals.len();
+        result.deferred_specials.extend(
+            std::mem::take(&mut process_result.deferred_specials)
+                .into_iter()
+                .map(|special| (item.id, special)),
+        );
 
         if !process_result.new_assignments.is_empty()
             || !process_result.removed_assignments.is_empty()
@@ -244,7 +304,7 @@ fn process_item_inner(
     options: ProcessOptions,
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
-    let vetoes = store.get_vetoes_for_item(item_id)?;
+    let mut vetoes = store.get_vetoes_for_item(item_id)?;
     let categories = store.get_hierarchy()?;
     let categories_by_id: HashMap<CategoryId, &Category> = categories
         .iter()
@@ -270,6 +330,22 @@ fn process_item_inner(
 
     let mut result = ProcessItemResult::default();
     let mut firing = ActionFiring::default();
+
+    // Externally-submitted assignment decisions execute first, through the
+    // same veto/exclusivity/subsumption machinery as engine matches.
+    apply_assignment_intents(
+        store,
+        item_id,
+        &options.pending_intents,
+        &categories_by_id,
+        &original_assignments,
+        &mut vetoes,
+        &mut assignments,
+        &mut seen_pairs,
+        &mut firing,
+        &mut result,
+    )?;
+
     for category_id in &options.pending_action_triggers {
         // Only categories actually assigned right now count as assignment events.
         if assignments.contains_key(category_id) {
@@ -343,6 +419,99 @@ fn item_match_text(item: &crate::model::Item) -> String {
         Some(note) if !note.trim().is_empty() => format!("{} {}", item.text, note),
         _ => item.text.clone(),
     }
+}
+
+/// Execute externally-submitted assignment intents (see [`AssignmentIntent`]).
+/// Runs before the hierarchy passes so the resulting assignment events fire
+/// actions and participate in the cascade exactly like engine matches.
+#[allow(clippy::too_many_arguments)]
+fn apply_assignment_intents(
+    store: &Store,
+    item_id: ItemId,
+    intents: &[AssignmentIntent],
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    original_assignments: &HashMap<CategoryId, Assignment>,
+    vetoes: &mut HashSet<CategoryId>,
+    assignments: &mut HashMap<CategoryId, Assignment>,
+    seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+    firing: &mut ActionFiring,
+    result: &mut ProcessItemResult,
+) -> Result<()> {
+    for intent in intents {
+        let category_id = intent.category_id;
+        if intent.clears_veto {
+            store.remove_assignment_veto(item_id, category_id)?;
+            vetoes.remove(&category_id);
+        } else if vetoes.contains(&category_id) {
+            continue;
+        }
+
+        let already_assigned = assignments.contains_key(&category_id);
+        if already_assigned && !intent.upgrade_existing {
+            seen_pairs.insert((item_id, category_id));
+            continue;
+        }
+
+        if !already_assigned {
+            if !intent.override_exclusive
+                && has_blocking_exclusive_sibling(category_id, categories_by_id, assignments)
+            {
+                continue;
+            }
+            enforce_mutual_exclusion(category_id, categories_by_id, assignments)?;
+        }
+
+        let assignment = Assignment {
+            source: intent.source,
+            assigned_at: Timestamp::now(),
+            sticky: true,
+            origin: intent.origin.clone().or_else(|| {
+                intent
+                    .explanation
+                    .as_ref()
+                    .and_then(AssignmentExplanation::origin)
+            }),
+            explanation: intent.explanation.clone(),
+            numeric_value: intent.numeric_value,
+        };
+        let new_to_store = !original_assignments.contains_key(&category_id);
+        if already_assigned {
+            // Provenance/value upgrade of an existing assignment: sync only
+            // diffs key sets, so write the changed row directly.
+            store.assign_item(item_id, category_id, &assignment)?;
+        }
+        assignments.insert(category_id, assignment);
+        seen_pairs.insert((item_id, category_id));
+        assign_subsumption_ancestors(
+            item_id,
+            category_id,
+            categories_by_id,
+            original_assignments,
+            assignments,
+            seen_pairs,
+        );
+
+        if new_to_store {
+            result.new_assignments.insert(category_id);
+            let summary = intent
+                .explanation
+                .as_ref()
+                .map(AssignmentExplanation::summary)
+                .unwrap_or_else(|| "Assigned".to_string());
+            let category_name = categories_by_id
+                .get(&category_id)
+                .map(|category| category.name.clone())
+                .unwrap_or_else(|| category_id.to_string());
+            result.assignment_events.push(AssignmentEvent {
+                kind: AssignmentEventKind::Assigned,
+                category_id,
+                category_name,
+                summary,
+            });
+            firing.enqueue(category_id);
+        }
+    }
+    Ok(())
 }
 
 fn run_hierarchy_pass(
@@ -469,13 +638,13 @@ fn evaluate_category_match(
                 crate::matcher::ImplicitMatchSource::CategoryName => TextMatchSource::CategoryName,
                 crate::matcher::ImplicitMatchSource::AlsoMatch => TextMatchSource::AlsoMatch,
             };
-            return Some(MatchReason {
-                origin: match_origin_implicit(&category.name),
-                explanation: AssignmentExplanation::ImplicitMatch {
+            return Some(MatchReason::from_explanation(
+                AssignmentExplanation::ImplicitMatch {
                     matched_term: matched.matched_term,
                     matched_source,
+                    owner_category_name: category.name.clone(),
                 },
-            });
+            ));
         }
     }
 
@@ -485,9 +654,8 @@ fn evaluate_category_match(
                 match condition {
                     Condition::Profile { criteria } => {
                         if profile_matches(criteria, assignments) {
-                            return Some(MatchReason {
-                                origin: match_origin_profile(&category.name),
-                                explanation: AssignmentExplanation::ProfileCondition {
+                            return Some(MatchReason::from_explanation(
+                                AssignmentExplanation::ProfileCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
                                     rendered_rule: render_condition_rule(
@@ -495,7 +663,7 @@ fn evaluate_category_match(
                                         categories_by_id,
                                     ),
                                 },
-                            });
+                            ));
                         }
                     }
                     Condition::Date { source, matcher } => {
@@ -505,9 +673,8 @@ fn evaluate_category_match(
                             matcher,
                             &options.evaluation_context,
                         ) {
-                            return Some(MatchReason {
-                                origin: format!("match:date:{}", category.name),
-                                explanation: AssignmentExplanation::DateCondition {
+                            return Some(MatchReason::from_explanation(
+                                AssignmentExplanation::DateCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
                                     rendered_rule: render_condition_rule(
@@ -515,7 +682,7 @@ fn evaluate_category_match(
                                         categories_by_id,
                                     ),
                                 },
-                            });
+                            ));
                         }
                     }
                     Condition::Numeric {
@@ -526,9 +693,8 @@ fn evaluate_category_match(
                     } => {
                         if numeric_condition_matches(*category_id, *min, *max, *outside, assignments)
                         {
-                            return Some(MatchReason {
-                                origin: format!("match:numeric:{}", category.name),
-                                explanation: AssignmentExplanation::NumericCondition {
+                            return Some(MatchReason::from_explanation(
+                                AssignmentExplanation::NumericCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
                                     rendered_rule: render_condition_rule(
@@ -536,7 +702,7 @@ fn evaluate_category_match(
                                         categories_by_id,
                                     ),
                                 },
-                            });
+                            ));
                         }
                     }
                     Condition::ImplicitString => {}
@@ -563,13 +729,13 @@ fn evaluate_category_match(
                             TextMatchSource::AlsoMatch
                         }
                     };
-                    return Some(MatchReason {
-                        origin: match_origin_implicit(&category.name),
-                        explanation: AssignmentExplanation::ImplicitMatch {
+                    return Some(MatchReason::from_explanation(
+                        AssignmentExplanation::ImplicitMatch {
                             matched_term: matched.matched_term,
                             matched_source,
+                            owner_category_name: category.name.clone(),
                         },
-                    });
+                    ));
                 }
                 if explicit_conditions.iter().all(|condition| {
                     condition_matches(condition, item, assignments, categories_by_id, options)
@@ -581,14 +747,13 @@ fn evaluate_category_match(
                             .iter()
                             .map(|condition| render_condition_rule(condition, categories_by_id)),
                     );
-                    return Some(MatchReason {
-                        origin: format!("match:conditions:all:{}", category.name),
-                        explanation: AssignmentExplanation::ConditionGroup {
+                    return Some(MatchReason::from_explanation(
+                        AssignmentExplanation::ConditionGroup {
                             owner_category_name: category.name.clone(),
                             match_mode: ConditionMatchMode::All,
                             rendered_rules,
                         },
-                    });
+                    ));
                 }
                 return None;
             }
@@ -668,28 +833,12 @@ fn render_condition_rule(
     condition: &Condition,
     categories_by_id: &HashMap<CategoryId, &Category>,
 ) -> String {
-    match condition {
-        Condition::Profile { criteria } => criteria.format_trigger(&|category_id| {
-            categories_by_id
-                .get(&category_id)
-                .map(|candidate| candidate.name.clone())
-                .unwrap_or_else(|| category_id.to_string())
-        }),
-        Condition::Date { source, matcher } => render_date_condition(*source, matcher),
-        Condition::Numeric {
-            category_id,
-            min,
-            max,
-            outside,
-        } => {
-            let name = categories_by_id
-                .get(category_id)
-                .map(|candidate| candidate.name.clone())
-                .unwrap_or_else(|| category_id.to_string());
-            crate::model::render_numeric_condition(&name, *min, *max, *outside)
-        }
-        Condition::ImplicitString => "ImplicitString".to_string(),
-    }
+    condition.render(&|category_id| {
+        categories_by_id
+            .get(&category_id)
+            .map(|candidate| candidate.name.clone())
+            .unwrap_or_else(|| category_id.to_string())
+    })
 }
 
 fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignment>) -> bool {
@@ -770,17 +919,18 @@ fn fire_queued_actions(
                         }
                         enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
 
+                        let explanation = AssignmentExplanation::Action {
+                            trigger_category_name: category.name.clone(),
+                            kind: AssignmentActionKind::Assign,
+                        };
                         let assigned = assign_if_unassigned(
                             item_id,
                             *target_id,
                             AssignmentTemplate {
                                 source: AssignmentSource::Action,
                                 sticky: true,
-                                origin: Some(format!("action:{}", category.name)),
-                                explanation: Some(AssignmentExplanation::Action {
-                                    trigger_category_name: category.name.clone(),
-                                    kind: AssignmentActionKind::Assign,
-                                }),
+                                origin: explanation.origin(),
+                                explanation: Some(explanation),
                                 numeric_value: None,
                             },
                             original_assignments,
@@ -842,17 +992,18 @@ fn fire_queued_actions(
                     }
                     enforce_mutual_exclusion(*target, categories_by_id, assignments)?;
 
+                    let explanation = AssignmentExplanation::Action {
+                        trigger_category_name: category.name.clone(),
+                        kind: AssignmentActionKind::Assign,
+                    };
                     let assigned = assign_if_unassigned(
                         item_id,
                         *target,
                         AssignmentTemplate {
                             source: AssignmentSource::Action,
                             sticky: true,
-                            origin: Some(format!("action:{}", category.name)),
-                            explanation: Some(AssignmentExplanation::Action {
-                                trigger_category_name: category.name.clone(),
-                                kind: AssignmentActionKind::Assign,
-                            }),
+                            origin: explanation.origin(),
+                            explanation: Some(explanation),
                             numeric_value: Some(*value),
                         },
                         original_assignments,
@@ -1053,7 +1204,6 @@ fn assign_subsumption_ancestors(
         return;
     };
 
-    let subsumption_origin = Some(format!("{}:{}", origin_const::SUBSUMPTION, category.name));
     let mut current_parent = category.parent;
     let mut visited = HashSet::new();
 
@@ -1072,16 +1222,19 @@ fn assign_subsumption_ancestors(
                 let assignment = original_assignments
                     .get(&ancestor_id)
                     .cloned()
-                    .unwrap_or_else(|| Assignment {
-                        source: AssignmentSource::Subsumption,
-                        assigned_at: Timestamp::now(),
-                        sticky: false,
-                        origin: subsumption_origin.clone(),
-                        explanation: Some(AssignmentExplanation::Subsumption {
+                    .unwrap_or_else(|| {
+                        let explanation = AssignmentExplanation::Subsumption {
                             parent_category_name: parent_name,
                             via_child_category_name: category.name.clone(),
-                        }),
-                        numeric_value: None,
+                        };
+                        Assignment {
+                            source: AssignmentSource::Subsumption,
+                            assigned_at: Timestamp::now(),
+                            sticky: false,
+                            origin: explanation.origin(),
+                            explanation: Some(explanation),
+                            numeric_value: None,
+                        }
                     });
                 entry.insert(assignment);
                 seen_pairs.insert(pair);
@@ -1195,14 +1348,6 @@ fn sync_assignments(
     }
 
     Ok(())
-}
-
-fn match_origin_implicit(category_name: &str) -> String {
-    format!("cat:{category_name}")
-}
-
-fn match_origin_profile(category_name: &str) -> String {
-    format!("profile:{category_name}")
 }
 
 fn pass_cap_error(item_id: ItemId) -> AgletError {

@@ -3311,7 +3311,9 @@ impl App {
     }
 
     fn action_picker_status(&mut self) {
-        self.status = "Space:toggle target  1:Assign  2:Remove  Enter:save  Esc:cancel".to_string();
+        self.status =
+            "Space:toggle target  1:Assign  2:Remove  3:MarkDone  4:Delete  Enter:save  Esc:cancel"
+                .to_string();
     }
 
     fn open_action_edit_picker(&mut self, action_index: Option<usize>) {
@@ -3322,12 +3324,13 @@ impl App {
                 .map(|action| match action {
                     Action::Assign { targets } => (ActionEditKind::Assign, targets.clone()),
                     Action::Remove { targets } => (ActionEditKind::Remove, targets.clone()),
-                    // Value-carrying and special actions are authored via the
-                    // CLI; editing one here starts a fresh Assign draft.
-                    Action::AssignNumeric { .. }
-                    | Action::SetWhen { .. }
-                    | Action::MarkDone
-                    | Action::Delete => (ActionEditKind::Assign, HashSet::new()),
+                    Action::MarkDone => (ActionEditKind::MarkDone, HashSet::new()),
+                    Action::Delete => (ActionEditKind::Delete, HashSet::new()),
+                    // Value-carrying actions are authored via the CLI;
+                    // editing one here starts a fresh Assign draft.
+                    Action::AssignNumeric { .. } | Action::SetWhen { .. } => {
+                        (ActionEditKind::Assign, HashSet::new())
+                    }
                 })
                 .unwrap_or((ActionEditKind::Assign, HashSet::new()))
         } else {
@@ -3369,7 +3372,7 @@ impl App {
             )
         };
 
-        if draft_targets.is_empty() {
+        if draft_kind.takes_targets() && draft_targets.is_empty() {
             if let Some(edit) = self.category_manager_action_edit_mut() {
                 edit.picker_open = false;
             }
@@ -3389,12 +3392,25 @@ impl App {
             ActionEditKind::Remove => Action::Remove {
                 targets: draft_targets,
             },
+            ActionEditKind::MarkDone => Action::MarkDone,
+            ActionEditKind::Delete => Action::Delete,
         };
 
-        let result = if let Some(idx) = action_index {
-            aglet.update_category_action(category_id, idx, new_action)?
+        let save_result = if let Some(idx) = action_index {
+            aglet.update_category_action(category_id, idx, new_action)
         } else {
-            aglet.add_category_action(category_id, new_action)?.1
+            aglet
+                .add_category_action(category_id, new_action)
+                .map(|(_, result)| result)
+        };
+        // Validation errors (e.g. Delete without allow_delete_action, set via
+        // `category set-allow-delete`) surface in the status line.
+        let result = match save_result {
+            Ok(result) => result,
+            Err(err) => {
+                self.status = format!("Action not saved: {err}");
+                return Ok(true);
+            }
         };
         self.refresh(aglet.store())?;
         self.set_category_selection_by_id(category_id);
@@ -3411,6 +3427,9 @@ impl App {
             "Action {} (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
             action, result.processed_items, result.affected_items
         );
+        if let Some(warning) = result.warnings.first() {
+            self.status = format!("{}  Warning: {warning}", self.status);
+        }
         Ok(true)
     }
 
@@ -3596,6 +3615,8 @@ impl App {
             }
             KeyCode::Char('1') => self.set_action_picker_kind(ActionEditKind::Assign),
             KeyCode::Char('2') => self.set_action_picker_kind(ActionEditKind::Remove),
+            KeyCode::Char('3') => self.set_action_picker_kind(ActionEditKind::MarkDone),
+            KeyCode::Char('4') => self.set_action_picker_kind(ActionEditKind::Delete),
             KeyCode::Esc => {
                 self.cancel_action_picker();
             }

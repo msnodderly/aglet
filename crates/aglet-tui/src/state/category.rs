@@ -195,6 +195,8 @@ pub(crate) struct ConditionEditState {
 pub(crate) enum ActionEditKind {
     Assign,
     Remove,
+    MarkDone,
+    Delete,
 }
 
 impl ActionEditKind {
@@ -202,7 +204,15 @@ impl ActionEditKind {
         match self {
             Self::Assign => "Assign",
             Self::Remove => "Remove",
+            Self::MarkDone => "MarkDone",
+            Self::Delete => "Delete",
         }
+    }
+
+    /// MarkDone and Delete act on the item itself; only Assign/Remove take
+    /// category targets.
+    pub(crate) fn takes_targets(self) -> bool {
+        matches!(self, Self::Assign | Self::Remove)
     }
 }
 

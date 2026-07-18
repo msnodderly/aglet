@@ -2525,6 +2525,7 @@ impl App {
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
                     self.item_assign_preview = AssignmentPreview::default();
+                    self.reload_item_assign_vetoes();
                     self.compute_assignment_preview(aglet);
                     self.clear_input();
                     self.status = if self.has_selected_items() {
@@ -5686,31 +5687,14 @@ impl App {
         Ok(())
     }
 
-    fn item_assign_reapply_status(
-        &self,
-        aglet: &Aglet<'_>,
-        item_id: ItemId,
-        category_id: CategoryId,
-        category_name: &str,
-    ) -> TuiResult<Option<String>> {
-        let Some(item) = self.all_items.iter().find(|item| item.id == item_id) else {
-            return Ok(None);
-        };
-        let Some(assignment) = item.assignments.get(&category_id) else {
-            return Ok(None);
-        };
-        let hypothetical = aglet.preview_manual_category_toggle(item_id, category_id)?;
-        if !hypothetical.assignments.contains_key(&category_id) {
-            return Ok(None);
-        }
-
-        let summary = Self::assignment_status_summary(assignment);
-        let badge_suffix = Self::assignment_badge_from_assignment(assignment)
-            .map(|badge| format!(" [{badge}]"))
+    /// Reload the vetoed-category set for the assign picker's target item
+    /// from the refresh-time cache (refresh runs after every mutation, so the
+    /// cache is current at every call site).
+    pub(crate) fn reload_item_assign_vetoes(&mut self) {
+        self.item_assign_vetoes = self
+            .selected_item_id()
+            .and_then(|item_id| self.vetoes_by_item.get(&item_id).cloned())
             .unwrap_or_default();
-        Ok(Some(format!(
-            "Cannot remove {category_name}{badge_suffix}: it will be re-applied ({summary})"
-        )))
     }
 
     pub(crate) fn handle_item_assign_category_key(
@@ -5829,19 +5813,10 @@ impl App {
 
                     for action_item_id in &action_item_ids {
                         let result = if should_unassign {
-                            if let Some(reason) = self.item_assign_reapply_status(
-                                aglet,
-                                *action_item_id,
-                                row.id,
-                                &row.name,
-                            )? {
-                                Err(reason)
-                            } else {
-                                aglet
-                                    .unassign_item_manual(*action_item_id, row.id)
-                                    .map(|_| ())
-                                    .map_err(|err| err.to_string())
-                            }
+                            aglet
+                                .unassign_item_manual(*action_item_id, row.id)
+                                .map(|_| ())
+                                .map_err(|err| err.to_string())
                         } else {
                             aglet
                                 .assign_item_manual(
@@ -5892,12 +5867,6 @@ impl App {
                         summary
                     };
                 } else if self.selected_item_has_assignment(row.id) {
-                    if let Some(reason) =
-                        self.item_assign_reapply_status(aglet, item_id, row.id, &row.name)?
-                    {
-                        self.status = reason;
-                        return Ok(false);
-                    }
                     // Capture old assignment for undo
                     let old_assignment = self
                         .all_items
@@ -5917,6 +5886,7 @@ impl App {
                             self.item_assign_dirty = true;
                             self.refresh(aglet.store())?;
                             self.set_item_selection_by_id(item_id);
+                            self.reload_item_assign_vetoes();
                             self.status = self
                                 .assignment_event_status_summary(&result)
                                 .unwrap_or_else(|| format!("Removed category {}", row.name));
@@ -5938,6 +5908,7 @@ impl App {
                     self.item_assign_dirty = true;
                     self.refresh(aglet.store())?;
                     self.set_item_selection_by_id(item_id);
+                    self.reload_item_assign_vetoes();
                     self.status = self
                         .assignment_event_status_summary(&result)
                         .unwrap_or_else(|| {
@@ -6295,16 +6266,6 @@ impl App {
                     self.status = "Unassign failed: no assignment selected".to_string();
                     return Ok(false);
                 };
-
-                if let Some(reason) = self.item_assign_reapply_status(
-                    aglet,
-                    item_id,
-                    row.category_id,
-                    &row.category_name,
-                )? {
-                    self.status = reason;
-                    return Ok(false);
-                }
 
                 aglet.unassign_item_manual(item_id, row.category_id)?;
                 self.refresh(aglet.store())?;

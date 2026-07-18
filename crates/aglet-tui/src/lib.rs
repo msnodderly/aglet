@@ -473,6 +473,15 @@ struct App {
     item_assign_view_row_index: usize,
     view_assign_rows: Vec<ViewAssignRow>,
     item_assign_preview: AssignmentPreview,
+    /// Vetoed categories for the item under the assign picker / inspector —
+    /// rendered as `[-]` rows (Agenda's negative assignment marker).
+    item_assign_vetoes: std::collections::HashSet<aglet_core::model::CategoryId>,
+    /// All vetoes by item, refreshed with the board — powers the Preview
+    /// Info provenance panel's veto line.
+    vetoes_by_item: std::collections::HashMap<
+        aglet_core::model::ItemId,
+        std::collections::HashSet<aglet_core::model::CategoryId>,
+    >,
     item_assign_return_target: Option<ItemAssignReturnTarget>,
     input_panel: Option<input_panel::InputPanel>,
     link_wizard: Option<LinkWizardState>,
@@ -556,6 +565,8 @@ impl Default for App {
             item_assign_view_row_index: 0,
             view_assign_rows: Vec::new(),
             item_assign_preview: AssignmentPreview::default(),
+            item_assign_vetoes: std::collections::HashSet::new(),
+            vetoes_by_item: std::collections::HashMap::new(),
             item_assign_return_target: None,
             input_panel: None,
             link_wizard: None,

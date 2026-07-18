@@ -3723,6 +3723,25 @@ impl App {
                     }
                 }
             }
+            if let Some(vetoed) = self.vetoes_by_item.get(&item.id) {
+                if !vetoed.is_empty() {
+                    let mut names: Vec<String> = vetoed
+                        .iter()
+                        .map(|category_id| {
+                            self.categories
+                                .iter()
+                                .find(|category| category.id == *category_id)
+                                .map(|category| category.name.clone())
+                                .unwrap_or_else(|| category_id.to_string())
+                        })
+                        .collect();
+                    names.sort();
+                    items.push(ListItem::new(Line::from(format!(
+                        "vetoed (never auto-assign): {}",
+                        names.join(", ")
+                    ))));
+                }
+            }
         } else {
             items.push(ListItem::new(Line::from("Info")));
             items.push(ListItem::new(Line::from(
@@ -5704,7 +5723,7 @@ impl App {
         frame.render_widget(Paragraph::new(header), chunks[0]);
         frame.render_widget(
             Paragraph::new(
-                "[x] assigned   [ \u{2192}x] will add   [x\u{2192} ] will remove   dim = derived (via \u{2026})",
+                "[x] assigned   [-] vetoed   green = will add   red = will remove   dim = derived (via \u{2026})",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR)),
             chunks[1],
@@ -5819,6 +5838,7 @@ impl App {
                     let (assigned_count, total_count) =
                         self.effective_action_assignment_counts(row.id);
                     let assigned_here = self.selected_item_has_assignment(row.id);
+                    let vetoed = !assigned_here && self.item_assign_vetoes.contains(&row.id);
                     let base_state = if total_count > 1 {
                         if assigned_count == 0 {
                             ' '
@@ -5829,20 +5849,26 @@ impl App {
                         }
                     } else if assigned_here {
                         'x'
+                    } else if vetoed {
+                        // Agenda's negative assignment: the user said no and
+                        // the engine will not re-assign; Space clears the veto
+                        // and assigns.
+                        '-'
                     } else {
                         ' '
                     };
                     let to_add = self.item_assign_preview.cat_to_add.contains(&row.id);
                     let to_remove = self.item_assign_preview.cat_to_remove.contains(&row.id);
-                    // One marker per row encoding state + pending delta
-                    // (UX audit P2-4): [x] assigned, [ \u{2192}x] will add,
-                    // [x\u{2192} ] will remove.
-                    let (marker, delta_label) = if to_add {
-                        (format!("[{base_state}\u{2192}x]"), "  will add")
+                    // The box always holds one character: the state after
+                    // apply ([x], [ ], [-], [~] for mixed batch state). A
+                    // pending change is carried by the row color alone —
+                    // green = will add, red = will remove (legend line).
+                    let marker = if to_add {
+                        "[x]".to_string()
                     } else if to_remove {
-                        (format!("[{base_state}\u{2192} ]"), "  will remove")
+                        "[ ]".to_string()
                     } else {
-                        (format!("[{base_state}]"), "")
+                        format!("[{base_state}]")
                     };
                     let derived_via = if total_count <= 1 && assigned_here {
                         self.selected_item_assignment_via(row.id)
@@ -5892,9 +5918,6 @@ impl App {
                         Style::default()
                     };
                     let mut spans = vec![Span::styled(text, style)];
-                    if !delta_label.is_empty() {
-                        spans.push(Span::styled(delta_label, style));
-                    }
                     if !displaced.is_empty() {
                         spans.push(Span::styled(
                             format!("  (replaces: {})", displaced.join(", ")),
@@ -7039,6 +7062,11 @@ impl App {
                             match edit.draft_kind {
                                 ActionEditKind::Assign => Color::Green,
                                 ActionEditKind::Remove => Color::Red,
+                                // Target-less kinds keep any leftover
+                                // selections visually neutral.
+                                ActionEditKind::MarkDone | ActionEditKind::Delete => {
+                                    MUTED_TEXT_COLOR
+                                }
                             },
                         )
                     } else {

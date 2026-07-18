@@ -340,6 +340,7 @@ impl App {
     pub(crate) fn refresh(&mut self, store: &Store) -> TuiResult<()> {
         self.views = projection::load_views_with_ready_queue(store)?;
         self.workflow_config = store.get_workflow_config()?;
+        self.vetoes_by_item = store.list_assignment_vetoes()?;
         if let Some(active_view_name) = self.active_view_name.clone() {
             if let Some(index) = self
                 .views
@@ -1141,7 +1142,7 @@ impl App {
     ) -> Option<String> {
         use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
 
-        if result.assignment_events.is_empty() {
+        if result.assignment_events.is_empty() && result.warnings.is_empty() {
             return None;
         }
 
@@ -1185,6 +1186,9 @@ impl App {
         parts.extend(other.into_iter().take(2));
         if extra > 0 {
             parts.push(format!("+{extra} more"));
+        }
+        for warning in &result.warnings {
+            parts.push(format!("Warning: {warning}"));
         }
 
         if parts.is_empty() {
@@ -1340,55 +1344,8 @@ impl App {
             .and_then(|item| item.assignments.get(&category_id))
     }
 
-    fn summarize_implicit_string_rationale(rationale: &str) -> Option<String> {
-        rationale
-            .strip_prefix("matched category name '")
-            .and_then(|tail| tail.strip_suffix('\''))
-            .map(|term| format!("Matched category name \"{term}\""))
-            .or_else(|| {
-                rationale
-                    .strip_prefix("matched also-match term '")
-                    .and_then(|tail| tail.strip_suffix('\''))
-                    .map(|term| format!("Matched alias \"{term}\""))
-            })
-    }
 
-    pub(crate) fn assignment_badge_from_assignment(
-        assignment: &Assignment,
-    ) -> Option<&'static str> {
-        match assignment.explanation.as_ref() {
-            Some(AssignmentExplanation::ImplicitMatch { .. }) => Some("auto-match"),
-            Some(AssignmentExplanation::ProfileCondition { .. }) => Some("profile"),
-            Some(AssignmentExplanation::DateCondition { .. }) => Some("date"),
-            Some(AssignmentExplanation::NumericCondition { .. }) => Some("numeric"),
-            Some(AssignmentExplanation::ConditionGroup { .. }) => Some("rules"),
-            Some(AssignmentExplanation::Action { .. }) => Some("action"),
-            Some(AssignmentExplanation::Subsumption { .. }) => Some("inherited"),
-            Some(AssignmentExplanation::SuggestionAccepted { .. }) => Some("suggested"),
-            Some(AssignmentExplanation::AutoClassified { provider_id, .. })
-                if provider_id == PROVIDER_ID_IMPLICIT_STRING =>
-            {
-                Some("auto-match")
-            }
-            Some(AssignmentExplanation::AutoClassified { .. }) => Some("auto"),
-            Some(AssignmentExplanation::Manual { .. }) | None => None,
-        }
-    }
 
-    pub(crate) fn assignment_status_summary(assignment: &Assignment) -> String {
-        match assignment.explanation.as_ref() {
-            Some(AssignmentExplanation::AutoClassified {
-                provider_id,
-                rationale: Some(rationale),
-                ..
-            }) if provider_id == PROVIDER_ID_IMPLICIT_STRING => {
-                Self::summarize_implicit_string_rationale(rationale)
-                    .unwrap_or_else(|| assignment.explanation.as_ref().unwrap().summary())
-            }
-            Some(explanation) => explanation.summary(),
-            None => format!("{:?}", assignment.source),
-        }
-    }
 
     /// Short "(via …)" source label for a derived (non-manual) assignment on
     /// the selected item, e.g. `via Sheffield Financial` for subsumption or

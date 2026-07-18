@@ -10710,8 +10710,9 @@ fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[~\u{2192}x] Work") && rendered.contains("will add"),
-        "mixed batch row should merge tri-state and pending delta in one marker: {rendered}"
+        rendered.contains("[x] Work"),
+        "mixed batch row with a pending add shows the result state in the box \
+         (color carries the delta): {rendered}"
     );
 }
 
@@ -10771,10 +10772,11 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         "assign picker header should describe close semantics: {rendered}"
     );
     assert!(
-        rendered.contains("[ \u{2192}x] will add")
-            && rendered.contains("[x\u{2192} ] will remove")
+        rendered.contains("green = will add")
+            && rendered.contains("red = will remove")
+            && rendered.contains("[-] vetoed")
             && rendered.contains("derived"),
-        "assign picker legend should explain the merged markers: {rendered}"
+        "assign picker legend should explain result-state markers and colors: {rendered}"
     );
     assert!(
         rendered.contains("Target: Plain  Batch: 2 items"),
@@ -10880,8 +10882,8 @@ fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[ \u{2192}x] Work"),
-        "work row should render with the cursor-row preview marker: {rendered}"
+        rendered.contains("[x] Work"),
+        "hovered row previews its result state in the box: {rendered}"
     );
     assert!(
         !rendered.contains("] Done"),
@@ -10988,6 +10990,54 @@ fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
         !after.assignments.contains_key(&critical.id),
         "live profile-derived assignment should auto-break after unassign via item picker"
     );
+}
+
+#[test]
+fn item_assign_picker_shows_veto_marker_and_space_clears_it() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut meetings = Category::new("Meetings".to_string());
+    meetings.enable_implicit_string = true;
+    store.create_category(&meetings).expect("create meetings");
+
+    let item = Item::new("Team meetings tomorrow".to_string());
+    aglet.create_item(&item).expect("create item");
+    aglet
+        .unassign_item_manual(item.id, meetings.id)
+        .expect("unassign records veto");
+    assert!(store
+        .get_vetoes_for_item(item.id)
+        .expect("vetoes")
+        .contains(&meetings.id));
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.set_item_assign_category_selection_by_id(meetings.id);
+
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("[x] Meetings"),
+        "hovering a vetoed row previews the result state (assigned) in the box: {rendered}"
+    );
+
+    // Space on a vetoed row is an explicit yes: clears the veto and assigns.
+    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+        .expect("space assigns");
+    let after = store.get_item(item.id).expect("reload");
+    assert!(after.assignments.contains_key(&meetings.id));
+    assert!(store
+        .get_vetoes_for_item(item.id)
+        .expect("vetoes")
+        .is_empty());
 }
 
 #[test]
@@ -15631,7 +15681,6 @@ fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
             ..Query::default()
         }),
     });
-    category.conditions.push(Condition::ImplicitString);
     category.actions.push(Action::Assign {
         targets: HashSet::from([target.id]),
     });
@@ -15656,7 +15705,7 @@ fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
     terminal.draw(|frame| app.draw(frame)).expect("draw");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("Ready [exclusive] [ready-queue] [2 conditions] [1 action]"),
+        rendered.contains("Ready [exclusive] [ready-queue] [1 condition] [1 action]"),
         "tree should render readable non-default/special/count badges on the category row: {rendered}"
     );
     assert!(
@@ -16835,6 +16884,7 @@ fn inspect_assignment_rows_include_explanation_summary() {
             sticky: false,
             origin: Some("cat:Phone Calls".to_string()),
             explanation: Some(AssignmentExplanation::ImplicitMatch {
+                owner_category_name: String::new(),
                 matched_term: "call".to_string(),
                 matched_source: TextMatchSource::AlsoMatch,
             }),
