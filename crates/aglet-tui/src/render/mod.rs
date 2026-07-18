@@ -3723,6 +3723,25 @@ impl App {
                     }
                 }
             }
+            if let Some(vetoed) = self.vetoes_by_item.get(&item.id) {
+                if !vetoed.is_empty() {
+                    let mut names: Vec<String> = vetoed
+                        .iter()
+                        .map(|category_id| {
+                            self.categories
+                                .iter()
+                                .find(|category| category.id == *category_id)
+                                .map(|category| category.name.clone())
+                                .unwrap_or_else(|| category_id.to_string())
+                        })
+                        .collect();
+                    names.sort();
+                    items.push(ListItem::new(Line::from(format!(
+                        "vetoed (never auto-assign): {}",
+                        names.join(", ")
+                    ))));
+                }
+            }
         } else {
             items.push(ListItem::new(Line::from("Info")));
             items.push(ListItem::new(Line::from(
@@ -5704,7 +5723,7 @@ impl App {
         frame.render_widget(Paragraph::new(header), chunks[0]);
         frame.render_widget(
             Paragraph::new(
-                "[x] assigned   [ \u{2192}x] will add   [x\u{2192} ] will remove   dim = derived (via \u{2026})",
+                "[x] assigned   [ \u{2192}x] will add   [x\u{2192} ] will remove   [-] vetoed   dim = derived (via \u{2026})",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR)),
             chunks[1],
@@ -5819,6 +5838,7 @@ impl App {
                     let (assigned_count, total_count) =
                         self.effective_action_assignment_counts(row.id);
                     let assigned_here = self.selected_item_has_assignment(row.id);
+                    let vetoed = !assigned_here && self.item_assign_vetoes.contains(&row.id);
                     let base_state = if total_count > 1 {
                         if assigned_count == 0 {
                             ' '
@@ -5829,6 +5849,11 @@ impl App {
                         }
                     } else if assigned_here {
                         'x'
+                    } else if vetoed {
+                        // Agenda's negative assignment: the user said no and
+                        // the engine will not re-assign; Space clears the veto
+                        // and assigns.
+                        '-'
                     } else {
                         ' '
                     };
@@ -5841,6 +5866,8 @@ impl App {
                         (format!("[{base_state}\u{2192}x]"), "  will add")
                     } else if to_remove {
                         (format!("[{base_state}\u{2192} ]"), "  will remove")
+                    } else if vetoed {
+                        (format!("[{base_state}]"), "  vetoed")
                     } else {
                         (format!("[{base_state}]"), "")
                     };
@@ -7039,6 +7066,11 @@ impl App {
                             match edit.draft_kind {
                                 ActionEditKind::Assign => Color::Green,
                                 ActionEditKind::Remove => Color::Red,
+                                // Target-less kinds keep any leftover
+                                // selections visually neutral.
+                                ActionEditKind::MarkDone | ActionEditKind::Delete => {
+                                    MUTED_TEXT_COLOR
+                                }
                             },
                         )
                     } else {

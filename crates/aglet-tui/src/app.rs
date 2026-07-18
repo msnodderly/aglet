@@ -340,6 +340,7 @@ impl App {
     pub(crate) fn refresh(&mut self, store: &Store) -> TuiResult<()> {
         self.views = projection::load_views_with_ready_queue(store)?;
         self.workflow_config = store.get_workflow_config()?;
+        self.vetoes_by_item = store.list_assignment_vetoes()?;
         if let Some(active_view_name) = self.active_view_name.clone() {
             if let Some(index) = self
                 .views

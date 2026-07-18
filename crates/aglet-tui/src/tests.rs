@@ -10991,6 +10991,55 @@ fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
 }
 
 #[test]
+fn item_assign_picker_shows_veto_marker_and_space_clears_it() {
+    let store = Store::open_memory().expect("memory store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let mut meetings = Category::new("Meetings".to_string());
+    meetings.enable_implicit_string = true;
+    store.create_category(&meetings).expect("create meetings");
+
+    let item = Item::new("Team meetings tomorrow".to_string());
+    aglet.create_item(&item).expect("create item");
+    aglet
+        .unassign_item_manual(item.id, meetings.id)
+        .expect("unassign records veto");
+    assert!(store
+        .get_vetoes_for_item(item.id)
+        .expect("vetoes")
+        .contains(&meetings.id));
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::Normal;
+    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+        .expect("open assign picker");
+    app.set_item_assign_category_selection_by_id(meetings.id);
+
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| app.draw(frame)).expect("draw");
+    let rendered = terminal_buffer_lines(&terminal).join("\n");
+    assert!(
+        rendered.contains("[-\u{2192}x] Meetings"),
+        "picker should mark vetoed categories with Agenda's '-' as the base state \
+         (with the hover preview composing on top): {rendered}"
+    );
+
+    // Space on a vetoed row is an explicit yes: clears the veto and assigns.
+    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+        .expect("space assigns");
+    let after = store.get_item(item.id).expect("reload");
+    assert!(after.assignments.contains_key(&meetings.id));
+    assert!(store
+        .get_vetoes_for_item(item.id)
+        .expect("vetoes")
+        .is_empty());
+}
+
+#[test]
 fn item_assign_picker_unassigns_rule_derived_row_with_veto() {
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;

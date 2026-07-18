@@ -72,15 +72,15 @@ then mechanical splits last so they don't pollute the semantic diffs.
       equivalents. Clamping tests (Jan 31 → Feb 28/29 etc.) stay green.
 
 ### TUI feature work
-- [ ] **D2 — Vetoes visible in the TUI.** Assign picker shows a `[-]` marker on
+- [x] **D2 — Vetoes visible in the TUI.** Assign picker shows a `[-]` marker on
       vetoed categories; Space on a vetoed row clears the veto and assigns
       (matching `assign_item_manual` semantics); item inspector lists vetoes.
-- [ ] **D1 — TUI authoring for new rule vocabulary.** Category manager action
-      editor gains kind selection for AssignNumeric (target + value),
-      SetWhen (date expression), MarkDone, and Delete (gated on
-      allow_delete_action); numeric conditions get an editor row. Scope
-      honestly: if the input plumbing balloons, land MarkDone/Delete +
-      rendering first and file the rest.
+- [x] **D1 — TUI authoring for new rule vocabulary (partial, as scoped).**
+      MarkDone and Delete kinds landed in the action picker (keys 3/4;
+      target-less save; Delete's allow_delete_action validation error surfaces
+      in the status line). AssignNumeric/SetWhen kinds, the numeric condition
+      editor, and an allow-delete flag toggle need typed-input plumbing inside
+      the picker — filed as FR 214fbf23 in aglet-features.ag.
 
 ### Mechanical (last, so diffs above stay readable)
 - [ ] **C5a — Extract inline test modules.** `aglet.rs` (~4.0k) and

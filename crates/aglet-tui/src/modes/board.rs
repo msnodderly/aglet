@@ -2525,6 +2525,7 @@ impl App {
                     self.view_assign_rows = build_view_assign_rows(&self.views);
                     self.item_assign_view_row_index = 0;
                     self.item_assign_preview = AssignmentPreview::default();
+                    self.reload_item_assign_vetoes(aglet);
                     self.compute_assignment_preview(aglet);
                     self.clear_input();
                     self.status = if self.has_selected_items() {
@@ -5686,6 +5687,14 @@ impl App {
         Ok(())
     }
 
+    /// Reload the vetoed-category set for the assign picker's target item.
+    pub(crate) fn reload_item_assign_vetoes(&mut self, aglet: &Aglet<'_>) {
+        self.item_assign_vetoes = self
+            .selected_item_id()
+            .and_then(|item_id| aglet.store().get_vetoes_for_item(item_id).ok())
+            .unwrap_or_default();
+    }
+
     pub(crate) fn handle_item_assign_category_key(
         &mut self,
         code: KeyCode,
@@ -5875,6 +5884,7 @@ impl App {
                             self.item_assign_dirty = true;
                             self.refresh(aglet.store())?;
                             self.set_item_selection_by_id(item_id);
+                            self.reload_item_assign_vetoes(aglet);
                             self.status = self
                                 .assignment_event_status_summary(&result)
                                 .unwrap_or_else(|| format!("Removed category {}", row.name));
@@ -5896,6 +5906,7 @@ impl App {
                     self.item_assign_dirty = true;
                     self.refresh(aglet.store())?;
                     self.set_item_selection_by_id(item_id);
+                    self.reload_item_assign_vetoes(aglet);
                     self.status = self
                         .assignment_event_status_summary(&result)
                         .unwrap_or_else(|| {

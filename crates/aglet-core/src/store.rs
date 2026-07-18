@@ -1706,6 +1706,26 @@ impl Store {
         Ok(())
     }
 
+    /// All vetoes in the database, grouped by item — one query for UI caches.
+    pub fn list_assignment_vetoes(&self) -> Result<HashMap<ItemId, HashSet<CategoryId>>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT item_id, category_id FROM assignment_vetoes")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut vetoes: HashMap<ItemId, HashSet<CategoryId>> = HashMap::new();
+        for row in rows {
+            let (item_str, category_str) = row?;
+            if let (Ok(item_id), Ok(category_id)) =
+                (Uuid::parse_str(&item_str), Uuid::parse_str(&category_str))
+            {
+                vetoes.entry(item_id).or_default().insert(category_id);
+            }
+        }
+        Ok(vetoes)
+    }
+
     /// All categories the user has vetoed for this item.
     pub fn get_vetoes_for_item(&self, item_id: ItemId) -> Result<HashSet<CategoryId>> {
         let mut stmt = self
