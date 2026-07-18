@@ -10710,8 +10710,9 @@ fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[~\u{2192}x] Work") && rendered.contains("will add"),
-        "mixed batch row should merge tri-state and pending delta in one marker: {rendered}"
+        rendered.contains("[x] Work"),
+        "mixed batch row with a pending add shows the result state in the box \
+         (color carries the delta): {rendered}"
     );
 }
 
@@ -10771,10 +10772,11 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
         "assign picker header should describe close semantics: {rendered}"
     );
     assert!(
-        rendered.contains("[ \u{2192}x] will add")
-            && rendered.contains("[x\u{2192} ] will remove")
+        rendered.contains("green = will add")
+            && rendered.contains("red = will remove")
+            && rendered.contains("[-] vetoed")
             && rendered.contains("derived"),
-        "assign picker legend should explain the merged markers: {rendered}"
+        "assign picker legend should explain result-state markers and colors: {rendered}"
     );
     assert!(
         rendered.contains("Target: Plain  Batch: 2 items"),
@@ -10880,8 +10882,8 @@ fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
     let rendered = terminal_buffer_lines(&terminal).join("\n");
 
     assert!(
-        rendered.contains("[ \u{2192}x] Work"),
-        "work row should render with the cursor-row preview marker: {rendered}"
+        rendered.contains("[x] Work"),
+        "hovered row previews its result state in the box: {rendered}"
     );
     assert!(
         !rendered.contains("] Done"),
@@ -11023,9 +11025,8 @@ fn item_assign_picker_shows_veto_marker_and_space_clears_it() {
     terminal.draw(|frame| app.draw(frame)).expect("draw");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("[-\u{2192}x] Meetings"),
-        "picker should mark vetoed categories with Agenda's '-' as the base state \
-         (with the hover preview composing on top): {rendered}"
+        rendered.contains("[x] Meetings"),
+        "hovering a vetoed row previews the result state (assigned) in the box: {rendered}"
     );
 
     // Space on a vetoed row is an explicit yes: clears the veto and assigns.

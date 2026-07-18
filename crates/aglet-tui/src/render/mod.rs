@@ -5723,7 +5723,7 @@ impl App {
         frame.render_widget(Paragraph::new(header), chunks[0]);
         frame.render_widget(
             Paragraph::new(
-                "[x] assigned   [ \u{2192}x] will add   [x\u{2192} ] will remove   [-] vetoed   dim = derived (via \u{2026})",
+                "[x] assigned   [-] vetoed   green = will add   red = will remove   dim = derived (via \u{2026})",
             )
             .style(Style::default().fg(MUTED_TEXT_COLOR)),
             chunks[1],
@@ -5859,17 +5859,16 @@ impl App {
                     };
                     let to_add = self.item_assign_preview.cat_to_add.contains(&row.id);
                     let to_remove = self.item_assign_preview.cat_to_remove.contains(&row.id);
-                    // One marker per row encoding state + pending delta
-                    // (UX audit P2-4): [x] assigned, [ \u{2192}x] will add,
-                    // [x\u{2192} ] will remove.
-                    let (marker, delta_label) = if to_add {
-                        (format!("[{base_state}\u{2192}x]"), "  will add")
+                    // The box always holds one character: the state after
+                    // apply ([x], [ ], [-], [~] for mixed batch state). A
+                    // pending change is carried by the row color alone —
+                    // green = will add, red = will remove (legend line).
+                    let marker = if to_add {
+                        "[x]".to_string()
                     } else if to_remove {
-                        (format!("[{base_state}\u{2192} ]"), "  will remove")
-                    } else if vetoed {
-                        (format!("[{base_state}]"), "  vetoed")
+                        "[ ]".to_string()
                     } else {
-                        (format!("[{base_state}]"), "")
+                        format!("[{base_state}]")
                     };
                     let derived_via = if total_count <= 1 && assigned_here {
                         self.selected_item_assignment_via(row.id)
@@ -5919,9 +5918,6 @@ impl App {
                         Style::default()
                     };
                     let mut spans = vec![Span::styled(text, style)];
-                    if !delta_label.is_empty() {
-                        spans.push(Span::styled(delta_label, style));
-                    }
                     if !displaced.is_empty() {
                         spans.push(Span::styled(
                             format!("  (replaces: {})", displaced.join(", ")),
