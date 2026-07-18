@@ -135,13 +135,26 @@ pub(super) fn format_category_action(
     action: &Action,
     category_names: &HashMap<CategoryId, String>,
 ) -> String {
-    match action.category_targets() {
-        Some(targets) => format!(
-            "{} {}",
-            action.kind_label(),
-            format_action_targets(targets, category_names)
+    match action {
+        Action::AssignNumeric { target, value } => {
+            let name = category_names
+                .get(target)
+                .cloned()
+                .unwrap_or_else(|| target.to_string());
+            format!("AssignNumeric {name}={value}")
+        }
+        Action::SetWhen { value } => format!(
+            "SetWhen {}",
+            aglet_core::date_rules::render_date_value_expr(value)
         ),
-        None => action.kind_label().to_string(),
+        _ => match action.category_targets() {
+            Some(targets) => format!(
+                "{} {}",
+                action.kind_label(),
+                format_action_targets(targets, category_names)
+            ),
+            None => action.kind_label().to_string(),
+        },
     }
 }
 
@@ -1370,6 +1383,7 @@ mod tests {
             condition_match_mode: aglet_core::model::ConditionMatchMode::Any,
             conditions: Vec::new(),
             actions: Vec::new(),
+            allow_delete_action: false,
             value_kind: Default::default(),
             numeric_format: None,
         }

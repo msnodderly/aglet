@@ -25,7 +25,7 @@ use crate::engine::{
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentEvent,
+    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
     CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
     RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
@@ -46,6 +46,10 @@ pub struct Aglet<'a> {
     openrouter_transport: Arc<dyn OpenRouterTransport>,
     openai_transport: Arc<dyn OpenAiTransport>,
     debug: bool,
+    /// Recursion depth for applying special action effects (SetWhen/MarkDone/
+    /// Delete): each application reprocesses the item, which may produce more
+    /// specials. Capped so cascades of specials terminate.
+    specials_depth: std::cell::Cell<u8>,
 }
 
 /// The net category changes that would result from a section-move operation,
@@ -137,6 +141,7 @@ impl<'a> Aglet<'a> {
             openrouter_transport,
             openai_transport,
             debug: false,
+            specials_depth: std::cell::Cell::new(0),
         }
     }
 
@@ -363,6 +368,41 @@ impl<'a> Aglet<'a> {
                     ),
                 });
             }
+        }
+        match action {
+            Action::AssignNumeric { target, .. } => {
+                if *target == category.id {
+                    return Err(AgletError::InvalidOperation {
+                        message: format!(
+                            "category '{}' cannot target itself in an action",
+                            category.name
+                        ),
+                    });
+                }
+                let target_category = self.store.get_category(*target)?;
+                if target_category.value_kind != CategoryValueKind::Numeric {
+                    return Err(AgletError::InvalidOperation {
+                        message: format!(
+                            "numeric action target '{}' is not a Numeric category",
+                            target_category.name
+                        ),
+                    });
+                }
+            }
+            Action::Delete => {
+                if !category.allow_delete_action {
+                    return Err(AgletError::InvalidOperation {
+                        message: format!(
+                            "category '{}' must have allow_delete_action enabled before a Delete action can be attached",
+                            category.name
+                        ),
+                    });
+                }
+            }
+            Action::Assign { .. }
+            | Action::Remove { .. }
+            | Action::SetWhen { .. }
+            | Action::MarkDone => {}
         }
         Ok(())
     }
@@ -1811,16 +1851,128 @@ impl<'a> Aglet<'a> {
         evaluation_context: EvaluationContext,
         pending_action_triggers: HashSet<CategoryId>,
     ) -> Result<ProcessItemResult> {
-        process_item_with_options(
+        let mut result = process_item_with_options(
             self.store,
             self.classifier,
             item_id,
             ProcessOptions {
                 enable_implicit_string,
-                evaluation_context,
+                evaluation_context: evaluation_context.clone(),
                 pending_action_triggers,
             },
-        )
+        )?;
+        if !result.deferred_specials.is_empty() {
+            let specials = std::mem::take(&mut result.deferred_specials);
+            self.apply_deferred_specials(item_id, &specials, &evaluation_context, &mut result)?;
+        }
+        Ok(result)
+    }
+
+    /// Apply the item-mutating effects of special actions (SetWhen, MarkDone,
+    /// Delete) after an engine run. Order: dates first, done second, delete
+    /// last — a deletion ends processing. Each application reprocesses the
+    /// item, which can produce further specials; `specials_depth` caps that
+    /// recursion so cascades terminate.
+    fn apply_deferred_specials(
+        &self,
+        item_id: ItemId,
+        specials: &[crate::engine::DeferredSpecial],
+        evaluation_context: &EvaluationContext,
+        result: &mut ProcessItemResult,
+    ) -> Result<()> {
+        const MAX_SPECIALS_DEPTH: u8 = 3;
+        let depth = self.specials_depth.get();
+        if depth >= MAX_SPECIALS_DEPTH {
+            self.debug_log(&format!(
+                "specials: depth cap reached for item {item_id}; dropping {} effect(s)",
+                specials.len()
+            ));
+            return Ok(());
+        }
+        self.specials_depth.set(depth + 1);
+        let applied = self.apply_deferred_specials_inner(item_id, specials, evaluation_context, result);
+        self.specials_depth.set(depth);
+        applied
+    }
+
+    fn apply_deferred_specials_inner(
+        &self,
+        item_id: ItemId,
+        specials: &[crate::engine::DeferredSpecial],
+        evaluation_context: &EvaluationContext,
+        result: &mut ProcessItemResult,
+    ) -> Result<()> {
+        use crate::engine::SpecialActionKind;
+
+        let trigger_name = |category_id: CategoryId| {
+            self.store
+                .get_category(category_id)
+                .map(|category| category.name)
+                .unwrap_or_else(|_| category_id.to_string())
+        };
+
+        let mut mark_done_by: Option<CategoryId> = None;
+        let mut delete_by: Option<CategoryId> = None;
+        let mut when_changed = false;
+
+        for special in specials {
+            match &special.kind {
+                SpecialActionKind::SetWhen(expr) => {
+                    let when = crate::date_rules::resolve_date_value_expr(expr, evaluation_context);
+                    let name = trigger_name(special.triggered_by);
+                    if self.apply_when_assignment(
+                        item_id,
+                        when,
+                        AssignmentSource::Action,
+                        Some(format!("action:{name}")),
+                        Some(AssignmentExplanation::Action {
+                            trigger_category_name: name,
+                            kind: AssignmentActionKind::Assign,
+                        }),
+                    )? {
+                        when_changed = true;
+                    }
+                }
+                SpecialActionKind::MarkDone => {
+                    mark_done_by.get_or_insert(special.triggered_by);
+                }
+                SpecialActionKind::Delete => {
+                    delete_by.get_or_insert(special.triggered_by);
+                }
+            }
+        }
+
+        if when_changed {
+            // The item changed outside the engine run; re-enter processing so
+            // date conditions see the new When value (target.md §2.5 step 7).
+            let cascade =
+                self.reprocess_with_options(item_id, false, evaluation_context.clone(), HashSet::new())?;
+            merge_process_results(result, cascade);
+        }
+
+        if let Some(trigger) = mark_done_by {
+            let item = self.store.get_item(item_id)?;
+            if !item.is_done {
+                self.debug_log(&format!(
+                    "specials: MarkDone on item {item_id} triggered by {}",
+                    trigger_name(trigger)
+                ));
+                let done = self.mark_item_done(item_id)?;
+                merge_process_results(result, done);
+            }
+        }
+
+        if let Some(trigger) = delete_by {
+            // allow_delete_action was checked at fire time; the deletion log
+            // records the triggering category via deleted_by.
+            let name = trigger_name(trigger);
+            self.store.delete_item(item_id, &format!("action:{name}"))?;
+            self.debug_log(&format!(
+                "specials: Delete on item {item_id} triggered by {name} (logged to deletion log)"
+            ));
+        }
+
+        Ok(())
     }
 
     fn copy_preview_categories(
@@ -1930,6 +2082,15 @@ impl<'a> Aglet<'a> {
             Action::Assign { targets } => Ok(Action::Assign {
                 targets: remap_targets(targets)?,
             }),
+            Action::AssignNumeric { target, value } => Ok(Action::AssignNumeric {
+                target: Self::mapped_category_id(*target, id_map, "preview numeric action")?,
+                value: *value,
+            }),
+            Action::SetWhen { value } => Ok(Action::SetWhen {
+                value: value.clone(),
+            }),
+            Action::MarkDone => Ok(Action::MarkDone),
+            Action::Delete => Ok(Action::Delete),
             Action::Remove { targets } => Ok(Action::Remove {
                 targets: remap_targets(targets)?,
             }),
@@ -4792,6 +4953,160 @@ mod tests {
             assignments.contains_key(&projects.id),
             "an assigned descendant still implies its ancestors"
         );
+    }
+
+    #[test]
+    fn assign_numeric_action_assigns_with_value() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).unwrap();
+
+        let mut trigger = category("Standard order", false);
+        trigger.actions.push(Action::AssignNumeric {
+            target: cost.id,
+            value: Decimal::new(100, 0),
+        });
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("order the usual".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        let cost_assignment = assignments
+            .get(&cost.id)
+            .expect("numeric action should assign the target");
+        assert_eq!(cost_assignment.numeric_value, Some(Decimal::new(100, 0)));
+        assert_eq!(cost_assignment.source, AssignmentSource::Action);
+    }
+
+    #[test]
+    fn set_when_action_stamps_when_date() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let mut this_week = category("Schedule soon", false);
+        this_week.actions.push(Action::SetWhen {
+            value: aglet_core_test_date_expr_tomorrow(),
+        });
+        store.create_category(&this_week).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        assert!(store.get_item(item.id).unwrap().when_date.is_none());
+
+        aglet
+            .assign_item_manual(item.id, this_week.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let after = store.get_item(item.id).unwrap();
+        let when = after.when_date.expect("SetWhen action stamps the When date");
+        let tomorrow = jiff::Zoned::now()
+            .date()
+            .checked_add(jiff::Span::new().days(1))
+            .unwrap();
+        assert_eq!(when.date(), tomorrow);
+    }
+
+    #[test]
+    fn mark_done_action_marks_item_done() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let mut archive = category("Archive", false);
+        archive.actions.push(Action::MarkDone);
+        store.create_category(&archive).unwrap();
+
+        let item = Item::new("finished thing".to_string());
+        aglet.create_item(&item).unwrap();
+
+        aglet
+            .assign_item_manual(item.id, archive.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let after = store.get_item(item.id).unwrap();
+        assert!(after.is_done, "MarkDone action marks the item done");
+        assert!(after.done_date.is_some());
+    }
+
+    #[test]
+    fn delete_action_requires_allow_flag_and_logs_deletion() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let trash = category("Trash", false);
+        store.create_category(&trash).unwrap();
+
+        // Attaching Delete without the flag is rejected.
+        let err = aglet
+            .add_category_action(trash.id, Action::Delete)
+            .unwrap_err();
+        assert!(matches!(err, AgletError::InvalidOperation { .. }));
+
+        let mut trash = store.get_category(trash.id).unwrap();
+        trash.allow_delete_action = true;
+        store.update_category(&trash).unwrap();
+        aglet
+            .add_category_action(trash.id, Action::Delete)
+            .unwrap();
+
+        let item = Item::new("ephemeral note".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, trash.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        assert!(
+            store.get_item(item.id).is_err(),
+            "Delete action removes the item"
+        );
+        let log = store.list_deleted_items().unwrap();
+        let entry = log
+            .iter()
+            .find(|entry| entry.item_id == item.id)
+            .expect("deletion is logged");
+        assert_eq!(entry.deleted_by, "action:Trash");
+        assert_eq!(entry.text, "ephemeral note");
+    }
+
+    #[test]
+    fn special_action_cascades_terminate() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        // Done itself carries a MarkDone action: firing it on an already-done
+        // item must be a no-op, not an infinite loop.
+        let done_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_DONE).unwrap();
+        let mut done = store.get_category(done_id).unwrap();
+        done.actions.push(Action::MarkDone);
+        store.update_category(&done).unwrap();
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+
+        let item = Item::new("loop bait".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        aglet.mark_item_done(item.id).unwrap();
+        let after = store.get_item(item.id).unwrap();
+        assert!(after.is_done);
+    }
+
+    fn aglet_core_test_date_expr_tomorrow() -> crate::model::DateValueExpr {
+        crate::model::DateValueExpr::Tomorrow
     }
 
     #[test]

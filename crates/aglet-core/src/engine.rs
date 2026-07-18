@@ -21,12 +21,30 @@ pub struct DeferredRemoval {
     pub triggered_by: CategoryId,
 }
 
+/// Item-mutating action effects (SetWhen / MarkDone / Delete) collected during
+/// the cascade and applied by the Aglet layer once the engine run completes,
+/// mirroring how Remove actions are deferred. Keeping the engine's passes
+/// monotonic over assignments preserves the termination guarantees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredSpecial {
+    pub triggered_by: CategoryId,
+    pub kind: SpecialActionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpecialActionKind {
+    SetWhen(crate::model::DateValueExpr),
+    MarkDone,
+    Delete,
+}
+
 #[derive(Debug, Default)]
 pub struct ProcessItemResult {
     pub new_assignments: HashSet<CategoryId>,
     pub removed_assignments: HashSet<CategoryId>,
     pub assignment_events: Vec<AssignmentEvent>,
     pub deferred_removals: Vec<DeferredRemoval>,
+    pub deferred_specials: Vec<DeferredSpecial>,
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
     pub semantic_candidates_skipped_already_assigned: usize,
@@ -50,6 +68,7 @@ struct PassResult {
     new_assignments: HashSet<CategoryId>,
     assignment_events: Vec<AssignmentEvent>,
     deferred_removals: Vec<DeferredRemoval>,
+    deferred_specials: Vec<DeferredSpecial>,
     changed: bool,
 }
 
@@ -82,6 +101,7 @@ struct AssignmentTemplate {
     sticky: bool,
     origin: Option<String>,
     explanation: Option<AssignmentExplanation>,
+    numeric_value: Option<rust_decimal::Decimal>,
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +301,9 @@ fn process_item_inner(
         result
             .deferred_removals
             .extend(pass_result.deferred_removals);
+        result
+            .deferred_specials
+            .extend(pass_result.deferred_specials);
 
         if !changed {
             apply_deferred_removals_to_assignments(&result.deferred_removals, &mut assignments);
@@ -373,6 +396,7 @@ fn run_hierarchy_pass(
                 sticky: false,
                 origin: Some(reason.origin.clone()),
                 explanation: Some(reason.explanation.clone()),
+                numeric_value: None,
             },
             input.original_assignments,
             assignments,
@@ -757,6 +781,7 @@ fn fire_queued_actions(
                                     trigger_category_name: category.name.clone(),
                                     kind: AssignmentActionKind::Assign,
                                 }),
+                                numeric_value: None,
                             },
                             original_assignments,
                             assignments,
@@ -794,6 +819,94 @@ fn fire_queued_actions(
                         pass_result.deferred_removals.push(DeferredRemoval {
                             target: *target_id,
                             triggered_by: category.id,
+                        });
+                    }
+                }
+                Action::AssignNumeric { target, value } => {
+                    if vetoes.contains(target) {
+                        continue;
+                    }
+                    // Only meaningful for numeric targets; skip quietly if the
+                    // target category changed kind after the action was authored.
+                    let target_is_numeric = categories_by_id.get(target).is_some_and(|target| {
+                        target.value_kind == crate::model::CategoryValueKind::Numeric
+                    });
+                    if !target_is_numeric {
+                        continue;
+                    }
+                    if !can_assign(item_id, *target, assignments, seen_pairs) {
+                        continue;
+                    }
+                    if has_blocking_exclusive_sibling(*target, categories_by_id, assignments) {
+                        continue;
+                    }
+                    enforce_mutual_exclusion(*target, categories_by_id, assignments)?;
+
+                    let assigned = assign_if_unassigned(
+                        item_id,
+                        *target,
+                        AssignmentTemplate {
+                            source: AssignmentSource::Action,
+                            sticky: true,
+                            origin: Some(format!("action:{}", category.name)),
+                            explanation: Some(AssignmentExplanation::Action {
+                                trigger_category_name: category.name.clone(),
+                                kind: AssignmentActionKind::Assign,
+                            }),
+                            numeric_value: Some(*value),
+                        },
+                        original_assignments,
+                        assignments,
+                        seen_pairs,
+                    );
+                    if assigned.inserted {
+                        pass_result.changed = true;
+                        assign_subsumption_ancestors(
+                            item_id,
+                            *target,
+                            categories_by_id,
+                            original_assignments,
+                            assignments,
+                            seen_pairs,
+                        );
+                        if assigned.new_to_store {
+                            pass_result.new_assignments.insert(*target);
+                            let target_name = categories_by_id
+                                .get(target)
+                                .map(|category| category.name.clone())
+                                .unwrap_or_else(|| target.to_string());
+                            pass_result.assignment_events.push(AssignmentEvent {
+                                kind: AssignmentEventKind::Assigned,
+                                category_id: *target,
+                                category_name: target_name,
+                                summary: format!(
+                                    "Assigned with value {value} by action on {}",
+                                    category.name
+                                ),
+                            });
+                            firing.enqueue(*target);
+                        }
+                    }
+                }
+                Action::SetWhen { value } => {
+                    pass_result.deferred_specials.push(DeferredSpecial {
+                        triggered_by: category.id,
+                        kind: SpecialActionKind::SetWhen(value.clone()),
+                    });
+                }
+                Action::MarkDone => {
+                    pass_result.deferred_specials.push(DeferredSpecial {
+                        triggered_by: category.id,
+                        kind: SpecialActionKind::MarkDone,
+                    });
+                }
+                Action::Delete => {
+                    // Guardrail: the flag is checked at fire time, so revoking
+                    // it disarms existing Delete actions immediately.
+                    if category.allow_delete_action {
+                        pass_result.deferred_specials.push(DeferredSpecial {
+                            triggered_by: category.id,
+                            kind: SpecialActionKind::Delete,
                         });
                     }
                 }
@@ -846,7 +959,7 @@ fn assign_if_unassigned(
             sticky: template.sticky,
             origin: template.origin,
             explanation: template.explanation,
-            numeric_value: None,
+            numeric_value: template.numeric_value,
         });
     assignments.insert(category_id, assignment);
     seen_pairs.insert(pair);

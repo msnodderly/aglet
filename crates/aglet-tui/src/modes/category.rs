@@ -3322,6 +3322,12 @@ impl App {
                 .map(|action| match action {
                     Action::Assign { targets } => (ActionEditKind::Assign, targets.clone()),
                     Action::Remove { targets } => (ActionEditKind::Remove, targets.clone()),
+                    // Value-carrying and special actions are authored via the
+                    // CLI; editing one here starts a fresh Assign draft.
+                    Action::AssignNumeric { .. }
+                    | Action::SetWhen { .. }
+                    | Action::MarkDone
+                    | Action::Delete => (ActionEditKind::Assign, HashSet::new()),
                 })
                 .unwrap_or((ActionEditKind::Assign, HashSet::new()))
         } else {

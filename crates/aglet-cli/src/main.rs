@@ -651,6 +651,29 @@ enum CategoryCommand {
         /// Categories to remove when this category is assigned.
         #[arg(long = "remove", value_name = "CATEGORY")]
         remove_categories: Vec<String>,
+        /// Numeric category to assign with a value (requires --value).
+        #[arg(long = "assign-numeric", value_name = "CATEGORY", requires = "value")]
+        assign_numeric: Option<String>,
+        /// Value for --assign-numeric (example: 100 or 12.50).
+        #[arg(long = "value", value_name = "NUMBER")]
+        value: Option<String>,
+        /// Stamp the item's When date (today, tomorrow, +N, -N, or YYYY-MM-DD).
+        #[arg(long = "set-when", value_name = "DATE_EXPR")]
+        set_when: Option<String>,
+        /// Mark the item done when assigned here.
+        #[arg(long = "mark-done")]
+        mark_done: bool,
+        /// Delete the item when assigned here (requires allow-delete on the category).
+        #[arg(long = "delete")]
+        delete: bool,
+    },
+
+    /// Enable or disable Delete actions on a category
+    SetAllowDelete {
+        /// Category name (case-insensitive).
+        name: String,
+        /// true/on to allow Delete actions, false/off to forbid them.
+        enabled: String,
     },
 
     /// Remove an action from a category by index (1-based)
@@ -3194,37 +3217,72 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             name,
             assign_categories,
             remove_categories,
+            assign_numeric,
+            value,
+            set_when,
+            mark_done,
+            delete,
         } => {
-            let assign_requested = !assign_categories.is_empty();
-            let remove_requested = !remove_categories.is_empty();
-            if assign_requested == remove_requested {
+            let kinds_requested = usize::from(!assign_categories.is_empty())
+                + usize::from(!remove_categories.is_empty())
+                + usize::from(assign_numeric.is_some())
+                + usize::from(set_when.is_some())
+                + usize::from(mark_done)
+                + usize::from(delete);
+            if kinds_requested != 1 {
                 return Err(
-                    "specify exactly one action kind: use either --assign or --remove".to_string(),
+                    "specify exactly one action kind: --assign, --remove, --assign-numeric, --set-when, --mark-done, or --delete"
+                        .to_string(),
                 );
             }
 
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let target_names = if assign_requested {
-                &assign_categories
-            } else {
-                &remove_categories
-            };
-            let mut targets = HashSet::new();
-            for target_name in target_names {
-                let target_id = category_id_by_name(&categories, target_name)?;
-                targets.insert(target_id);
-            }
 
-            let action = if assign_requested {
-                Action::Assign { targets }
+            let (action, action_kind) = if !assign_categories.is_empty()
+                || !remove_categories.is_empty()
+            {
+                let assign_requested = !assign_categories.is_empty();
+                let target_names = if assign_requested {
+                    &assign_categories
+                } else {
+                    &remove_categories
+                };
+                let mut targets = HashSet::new();
+                for target_name in target_names {
+                    let target_id = category_id_by_name(&categories, target_name)?;
+                    targets.insert(target_id);
+                }
+                if assign_requested {
+                    (Action::Assign { targets }, "assign")
+                } else {
+                    (Action::Remove { targets }, "remove")
+                }
+            } else if let Some(numeric_name) = &assign_numeric {
+                let target_id = category_id_by_name(&categories, numeric_name)?;
+                let raw = value.as_deref().expect("clap enforces --value");
+                let parsed = raw
+                    .parse::<Decimal>()
+                    .map_err(|_| format!("invalid --value: {raw}"))?;
+                (
+                    Action::AssignNumeric {
+                        target: target_id,
+                        value: parsed,
+                    },
+                    "assign-numeric",
+                )
+            } else if let Some(expr) = &set_when {
+                let parsed = parse_date_value_expr(expr)?;
+                (Action::SetWhen { value: parsed }, "set-when")
+            } else if mark_done {
+                (Action::MarkDone, "mark-done")
             } else {
-                Action::Remove { targets }
+                (Action::Delete, "delete")
             };
+
             let (action_index, result) = aglet
                 .add_category_action(category_id, action)
                 .map_err(|e| e.to_string())?;
-            let action_kind = if assign_requested { "assign" } else { "remove" };
             println!(
                 "added {} action #{} to {} (processed_items={}, affected_items={})",
                 action_kind,
@@ -3232,6 +3290,24 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 name,
                 result.processed_items,
                 result.affected_items
+            );
+            Ok(())
+        }
+        CategoryCommand::SetAllowDelete { name, enabled } => {
+            let enabled = match enabled.to_ascii_lowercase().as_str() {
+                "true" | "on" | "yes" | "1" => true,
+                "false" | "off" | "no" | "0" => false,
+                other => return Err(format!("expected true/false, got '{other}'")),
+            };
+            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let category_id = category_id_by_name(&categories, &name)?;
+            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            category.allow_delete_action = enabled;
+            aglet.update_category(&category).map_err(|e| e.to_string())?;
+            println!(
+                "allow_delete_action on {} is now {}",
+                name,
+                if enabled { "enabled" } else { "disabled" }
             );
             Ok(())
         }
@@ -7574,6 +7650,11 @@ mod tests {
                 name: "Escalated".to_string(),
                 assign_categories: vec!["Notify".to_string()],
                 remove_categories: Vec::new(),
+                assign_numeric: None,
+                value: None,
+                set_when: None,
+                mark_done: false,
+                delete: false,
             },
         )
         .expect("add action");
@@ -7637,6 +7718,11 @@ mod tests {
                 name: "Escalated".to_string(),
                 assign_categories: vec!["Notify".to_string()],
                 remove_categories: vec!["Low".to_string()],
+                assign_numeric: None,
+                value: None,
+                set_when: None,
+                mark_done: false,
+                delete: false,
             },
         );
 
@@ -7662,6 +7748,11 @@ mod tests {
                 name: "Escalated".to_string(),
                 assign_categories: vec!["Escalated".to_string()],
                 remove_categories: Vec::new(),
+                assign_numeric: None,
+                value: None,
+                set_when: None,
+                mark_done: false,
+                delete: false,
             },
         );
 
@@ -7691,6 +7782,11 @@ mod tests {
                 name: "Escalated".to_string(),
                 assign_categories: vec!["Notify".to_string()],
                 remove_categories: Vec::new(),
+                assign_numeric: None,
+                value: None,
+                set_when: None,
+                mark_done: false,
+                delete: false,
             },
         )
         .expect("add action 1");
@@ -7701,6 +7797,11 @@ mod tests {
                 name: "Escalated".to_string(),
                 assign_categories: Vec::new(),
                 remove_categories: vec!["Low".to_string()],
+                assign_numeric: None,
+                value: None,
+                set_when: None,
+                mark_done: false,
+                delete: false,
             },
         )
         .expect("add action 2");

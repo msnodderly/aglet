@@ -638,6 +638,9 @@ pub struct Category {
     pub value_kind: CategoryValueKind,
     #[serde(default)]
     pub numeric_format: Option<NumericFormat>,
+    /// Must be true for a Delete action to be attached or to fire.
+    #[serde(default)]
+    pub allow_delete_action: bool,
 }
 
 const fn default_true() -> bool {
@@ -783,8 +786,28 @@ pub fn render_numeric_condition(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Action {
-    Assign { targets: HashSet<CategoryId> },
-    Remove { targets: HashSet<CategoryId> },
+    Assign {
+        targets: HashSet<CategoryId>,
+    },
+    Remove {
+        targets: HashSet<CategoryId>,
+    },
+    /// Agenda's numeric action: assign to a numeric category *with a value*.
+    AssignNumeric {
+        target: CategoryId,
+        value: Decimal,
+    },
+    /// Agenda's date action: stamp the item's When date from an expression
+    /// (resolved against the evaluation context when the action fires).
+    SetWhen {
+        value: DateValueExpr,
+    },
+    /// Agenda's "designate as done" special action.
+    MarkDone,
+    /// Agenda's "discard item" special action. Only fires when the owning
+    /// category's `allow_delete_action` flag is set; every deletion lands in
+    /// the persistent deletion log.
+    Delete,
 }
 
 impl Action {
@@ -792,12 +815,19 @@ impl Action {
         match self {
             Self::Assign { .. } => "Assign",
             Self::Remove { .. } => "Remove",
+            Self::AssignNumeric { .. } => "AssignNumeric",
+            Self::SetWhen { .. } => "SetWhen",
+            Self::MarkDone => "MarkDone",
+            Self::Delete => "Delete",
         }
     }
 
     pub fn category_targets(&self) -> Option<&HashSet<CategoryId>> {
         match self {
             Self::Assign { targets } | Self::Remove { targets } => Some(targets),
+            Self::AssignNumeric { .. } | Self::SetWhen { .. } | Self::MarkDone | Self::Delete => {
+                None
+            }
         }
     }
 }
@@ -1358,6 +1388,7 @@ impl Category {
             actions: Vec::new(),
             value_kind: CategoryValueKind::Tag,
             numeric_format: None,
+            allow_delete_action: false,
         }
     }
 }
