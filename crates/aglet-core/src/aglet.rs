@@ -20,7 +20,7 @@ use crate::date_rules::{category_uses_date_conditions, EvaluationContext};
 use crate::dates::BasicDateParser;
 use crate::engine::{
     evaluate_all_items_with_options, process_item_with_options, reevaluate_all_items_with_options,
-    EvaluateAllItemsResult, ProcessItemResult, ProcessOptions,
+    AssignmentIntent, EvaluateAllItemsResult, ProcessItemResult, ProcessOptions,
 };
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
@@ -424,53 +424,36 @@ impl<'a> Aglet<'a> {
         self.process_category_change(category_id)
     }
 
-    /// Write a sticky Manual assignment: clears any veto, writes the row with
-    /// derived provenance, materializes subsumption ancestors, and returns
-    /// the action triggers for the follow-up reprocess — the category itself
-    /// when the assignment is new (a fresh assignment event), nothing when it
-    /// already existed. Exclusivity checks are the caller's responsibility.
+    /// Build the intent for a sticky Manual assignment; the engine executes
+    /// it (veto clear, exclusivity, subsumption, action firing) as the single
+    /// assignment write path.
     ///
     /// `upgrade_existing` selects the two manual-write semantics: direct
     /// assignment upserts (re-assigning an auto-matched category upgrades it
     /// to sticky Manual, numeric assignment updates the value); edit-through
     /// paths skip categories that are already assigned so a section insert
     /// never rewrites existing provenance.
-    fn write_manual_assignment(
-        &self,
-        item_id: ItemId,
+    fn manual_intent(
         category_id: CategoryId,
         origin: Option<String>,
         default_origin: &str,
         numeric_value: Option<Decimal>,
         upgrade_existing: bool,
-    ) -> Result<HashSet<CategoryId>> {
-        self.store.remove_assignment_veto(item_id, category_id)?;
-        let was_assigned = self
-            .store
-            .get_assignments_for_item(item_id)?
-            .contains_key(&category_id);
-        if was_assigned && !upgrade_existing {
-            return Ok(HashSet::new());
-        }
-        let assignment = Assignment {
+    ) -> AssignmentIntent {
+        AssignmentIntent {
+            category_id,
             source: AssignmentSource::Manual,
-            assigned_at: Timestamp::now(),
-            sticky: true,
-            origin: origin
-                .clone()
-                .or_else(|| Some(default_origin.to_string())),
+            origin: Some(
+                origin
+                    .clone()
+                    .unwrap_or_else(|| default_origin.to_string()),
+            ),
             explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value,
-        };
-        self.store.assign_item(item_id, category_id, &assignment)?;
-        self.assign_subsumption_for_category(item_id, category_id)?;
-        // A newly created assignment is an assignment event: the category's
-        // actions fire even though the user (not the engine) made it.
-        Ok(if was_assigned {
-            HashSet::new()
-        } else {
-            HashSet::from([category_id])
-        })
+            upgrade_existing,
+            clears_veto: true,
+            override_exclusive: true,
+        }
     }
 
     pub fn assign_item_manual(
@@ -479,22 +462,9 @@ impl<'a> Aglet<'a> {
         category_id: CategoryId,
         origin: Option<String>,
     ) -> Result<ProcessItemResult> {
-        self.enforce_manual_exclusive_siblings(item_id, category_id)?;
-        let triggers = self.write_manual_assignment(
-            item_id,
-            category_id,
-            origin,
-            origin_const::MANUAL,
-            None,
-            true,
-        )?;
-        let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
-        self.prepend_assignment_event(
-            &mut result,
-            AssignmentEventKind::Assigned,
-            category_id,
-            "Assigned manually",
-        );
+        let intent =
+            Self::manual_intent(category_id, origin, origin_const::MANUAL, None, true);
+        let result = self.reprocess_existing_item_with_intents(item_id, vec![intent])?;
         self.debug_log_process_result("assign.manual", item_id, &result);
         Ok(result)
     }
@@ -584,22 +554,14 @@ impl<'a> Aglet<'a> {
             });
         }
 
-        self.enforce_manual_exclusive_siblings(item_id, category_id)?;
-        let triggers = self.write_manual_assignment(
-            item_id,
+        let intent = Self::manual_intent(
             category_id,
             origin,
             origin_const::MANUAL_NUMERIC,
             Some(numeric_value),
             true,
-        )?;
-        let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
-        self.prepend_assignment_event(
-            &mut result,
-            AssignmentEventKind::Assigned,
-            category_id,
-            "Assigned manually",
         );
+        let result = self.reprocess_existing_item_with_intents(item_id, vec![intent])?;
         self.debug_log_process_result("assign.manual.numeric", item_id, &result);
         Ok(result)
     }
@@ -671,8 +633,8 @@ impl<'a> Aglet<'a> {
     ) -> Result<ProcessItemResult> {
         let targets = Self::section_insert_targets(view, section);
 
-        let triggers = self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
-        self.reprocess_existing_item_with_triggers(item_id, triggers)
+        let intents = Self::manual_category_intents(&targets, "edit:section.insert");
+        self.reprocess_existing_item_with_intents(item_id, intents)
     }
 
     pub fn insert_item_in_unmatched(
@@ -681,9 +643,8 @@ impl<'a> Aglet<'a> {
         view: &View,
     ) -> Result<ProcessItemResult> {
         let view_include: HashSet<CategoryId> = view.criteria.and_category_ids().collect();
-        let triggers =
-            self.assign_manual_categories(item_id, &view_include, "edit:view.insert")?;
-        self.reprocess_existing_item_with_triggers(item_id, triggers)
+        let intents = Self::manual_category_intents(&view_include, "edit:view.insert");
+        self.reprocess_existing_item_with_intents(item_id, intents)
     }
 
     pub fn remove_item_from_section(
@@ -712,8 +673,8 @@ impl<'a> Aglet<'a> {
         let to_assign = Self::section_insert_targets(view, to_section);
 
         self.unassign_categories(item_id, &to_unassign)?;
-        let triggers = self.assign_manual_categories(item_id, &to_assign, "edit:section.move")?;
-        self.reprocess_existing_item_with_triggers(item_id, triggers)
+        let intents = Self::manual_category_intents(&to_assign, "edit:section.move");
+        self.reprocess_existing_item_with_intents(item_id, intents)
     }
 
     /// Compute the net category changes that would result from moving an item
@@ -844,16 +805,15 @@ impl<'a> Aglet<'a> {
         self.store.update_item(&item)?;
 
         let done_category_id = self.done_category_id()?;
-        let triggers = self.write_manual_assignment(
-            item_id,
+        let intent = Self::manual_intent(
             done_category_id,
             Some(origin_const::MANUAL_DONE.to_string()),
             origin_const::MANUAL_DONE,
             None,
             true,
-        )?;
+        );
         self.clear_claim_assignment_if_configured(item_id)?;
-        let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
+        let mut result = self.reprocess_existing_item_with_intents(item_id, vec![intent])?;
 
         // Succession: generate next instance for recurring items
         if let Some(ref rule) = item.recurrence_rule {
@@ -1109,13 +1069,19 @@ impl<'a> Aglet<'a> {
                 id: suggestion_id,
             })?;
 
-        let mut result = self.apply_suggestion_assignment(&suggestion)?;
+        let (mut result, intent) = self.apply_suggestion_assignment(&suggestion)?;
         self.store
             .set_suggestion_status(suggestion_id, SuggestionStatus::Accepted)?;
         let triggers = result.new_assignments.clone();
         merge_process_results(
             &mut result,
-            self.process_cascades_with_triggers(suggestion.item_id, triggers)?,
+            self.reprocess_with_options(
+                suggestion.item_id,
+                false,
+                EvaluationContext::now(),
+                triggers,
+                intent.into_iter().collect(),
+            )?,
         );
         self.debug_log_process_result("suggestion.accept", suggestion.item_id, &result);
         Ok(result)
@@ -1175,6 +1141,7 @@ impl<'a> Aglet<'a> {
             .supersede_suggestions_for_item_revision(item_id, item_revision_hash)?;
 
         let mut queued = 0usize;
+        let mut intents: Vec<AssignmentIntent> = Vec::new();
         for candidate in candidates {
             if matches!(
                 candidate.assignment,
@@ -1193,7 +1160,8 @@ impl<'a> Aglet<'a> {
                     continue;
                 }
                 self.store.upsert_suggestion(&suggestion)?;
-                self.apply_auto_classification_candidate(item_id, candidate)?;
+                let (_, intent) = self.apply_auto_classification_candidate(item_id, candidate)?;
+                intents.extend(intent);
                 continue;
             }
 
@@ -1213,10 +1181,18 @@ impl<'a> Aglet<'a> {
                         continue;
                     }
                     self.store.upsert_suggestion(&suggestion)?;
-                    self.apply_auto_classification_candidate(item_id, candidate)?;
+                    let (_, intent) =
+                        self.apply_auto_classification_candidate(item_id, candidate)?;
+                    intents.extend(intent);
                 }
                 CandidateDisposition::QueueReview => {}
             }
+        }
+        if !intents.is_empty() {
+            // On-demand/background classification previously wrote rows with
+            // no follow-up run, so auto-applied assignments never fired their
+            // actions here; routing intents through the engine closes that.
+            self.reprocess_existing_item_with_intents(item_id, intents)?;
         }
 
         queued += self
@@ -1306,8 +1282,13 @@ impl<'a> Aglet<'a> {
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
         if !cfg.should_run_continuously() || !cfg.run_on_item_save {
-            let result =
-                self.reprocess_with_options(item_id, false, evaluation_context, HashSet::new())?;
+            let result = self.reprocess_with_options(
+                item_id,
+                false,
+                evaluation_context,
+                HashSet::new(),
+                Vec::new(),
+            )?;
             self.debug_log_process_result("item.process", item_id, &result);
             return Ok(result);
         }
@@ -1318,8 +1299,13 @@ impl<'a> Aglet<'a> {
             self.classification_service_cheap(reference_date, &cfg, text_changed)
         };
         if !service.has_providers() {
-            let result =
-                self.reprocess_with_options(item_id, false, evaluation_context, HashSet::new())?;
+            let result = self.reprocess_with_options(
+                item_id,
+                false,
+                evaluation_context,
+                HashSet::new(),
+                Vec::new(),
+            )?;
             self.debug_log_process_result("item.process", item_id, &result);
             return Ok(result);
         }
@@ -1330,6 +1316,7 @@ impl<'a> Aglet<'a> {
         self.store
             .supersede_suggestions_for_item_revision(item_id, &item_revision_hash)?;
 
+        let mut intents: Vec<AssignmentIntent> = Vec::new();
         for candidate in &candidates {
             let is_semantic = Self::is_semantic_provider(&candidate.provider);
             if is_semantic {
@@ -1352,10 +1339,10 @@ impl<'a> Aglet<'a> {
                     continue;
                 }
                 self.store.upsert_suggestion(&suggestion)?;
-                merge_process_results(
-                    &mut result,
-                    self.apply_auto_classification_candidate(item_id, candidate)?,
-                );
+                let (when_result, intent) =
+                    self.apply_auto_classification_candidate(item_id, candidate)?;
+                merge_process_results(&mut result, when_result);
+                intents.extend(intent);
                 continue;
             }
 
@@ -1375,14 +1362,29 @@ impl<'a> Aglet<'a> {
                         continue;
                     }
                     self.store.upsert_suggestion(&suggestion)?;
-                    merge_process_results(
-                        &mut result,
-                        self.apply_auto_classification_candidate(item_id, candidate)?,
-                    );
+                    let (when_result, intent) =
+                        self.apply_auto_classification_candidate(item_id, candidate)?;
+                    merge_process_results(&mut result, when_result);
+                    intents.extend(intent);
                 }
                 CandidateDisposition::QueueReview => {}
             }
         }
+
+        // Apply the collected intents (and fire When triggers) before queueing
+        // review candidates, so the already-assigned check sees the final
+        // assignment state.
+        let triggers = result.new_assignments.clone();
+        merge_process_results(
+            &mut result,
+            self.reprocess_with_options(
+                item_id,
+                false,
+                evaluation_context,
+                triggers,
+                intents,
+            )?,
+        );
 
         let review_result =
             self.queue_review_candidates(item_id, &item_revision_hash, &candidates, &cfg)?;
@@ -1391,12 +1393,6 @@ impl<'a> Aglet<'a> {
             review_result.semantic_skipped_already_assigned;
         result.semantic_candidates_skipped_unavailable +=
             review_result.semantic_skipped_unavailable;
-
-        let triggers = result.new_assignments.clone();
-        merge_process_results(
-            &mut result,
-            self.process_cascades_with_triggers(item_id, triggers)?,
-        );
         self.debug_log_process_result("item.process", item_id, &result);
         Ok(result)
     }
@@ -1609,43 +1605,6 @@ impl<'a> Aglet<'a> {
             || provider_id == PROVIDER_ID_OPENAI
     }
 
-    fn has_blocking_exclusive_sibling_assignment(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-    ) -> Result<bool> {
-        let category = self.store.get_category(category_id)?;
-        let Some(parent_id) = category.parent else {
-            return Ok(false);
-        };
-        let parent = self.store.get_category(parent_id)?;
-        if !parent.is_exclusive {
-            return Ok(false);
-        }
-        let assignments = self.store.get_assignments_for_item(item_id)?;
-        let current_index = parent
-            .children
-            .iter()
-            .position(|child_id| *child_id == category_id)
-            .unwrap_or(parent.children.len());
-        Ok(parent
-            .children
-            .into_iter()
-            .enumerate()
-            .any(|(sibling_index, sibling_id)| {
-                if sibling_id == category_id {
-                    return false;
-                }
-                let Some(assignment) = assignments.get(&sibling_id) else {
-                    return false;
-                };
-                matches!(
-                    assignment.source,
-                    AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
-                ) || sibling_index < current_index
-            }))
-    }
-
     fn has_any_exclusive_sibling_assigned(
         &self,
         item_id: ItemId,
@@ -1718,7 +1677,9 @@ impl<'a> Aglet<'a> {
             created_at: Timestamp::now(),
             decided_at: None,
         };
-        preview_aglet.apply_suggestion_assignment(&preview_suggestion)?;
+        let (_, preview_intent) = preview_aglet.apply_suggestion_assignment(&preview_suggestion)?;
+        preview_aglet
+            .reprocess_existing_item_with_intents(item_id, preview_intent.into_iter().collect())?;
 
         let mut preview_result = preview_store.get_item(item_id)?;
         preview_result.assignments = preview_result
@@ -1885,15 +1846,25 @@ impl<'a> Aglet<'a> {
             self.should_reprocess_with_implicit(&cfg),
             EvaluationContext::now(),
             action_triggers,
+            Vec::new(),
         )
     }
 
-    fn process_cascades_with_triggers(
+    /// Reprocess while submitting assignment intents for the engine to
+    /// execute — the single write path for assignments.
+    fn reprocess_existing_item_with_intents(
         &self,
         item_id: ItemId,
-        action_triggers: HashSet<CategoryId>,
+        intents: Vec<AssignmentIntent>,
     ) -> Result<ProcessItemResult> {
-        self.reprocess_with_options(item_id, false, EvaluationContext::now(), action_triggers)
+        let cfg = self.store.get_classification_config()?;
+        self.reprocess_with_options(
+            item_id,
+            self.should_reprocess_with_implicit(&cfg),
+            EvaluationContext::now(),
+            HashSet::new(),
+            intents,
+        )
     }
 
     fn reprocess_with_options(
@@ -1902,6 +1873,7 @@ impl<'a> Aglet<'a> {
         enable_implicit_string: bool,
         evaluation_context: EvaluationContext,
         pending_action_triggers: HashSet<CategoryId>,
+        pending_intents: Vec<AssignmentIntent>,
     ) -> Result<ProcessItemResult> {
         let mut result = process_item_with_options(
             self.store,
@@ -1911,6 +1883,7 @@ impl<'a> Aglet<'a> {
                 enable_implicit_string,
                 evaluation_context: evaluation_context.clone(),
                 pending_action_triggers,
+                pending_intents,
             },
         )?;
         if !result.deferred_specials.is_empty() {
@@ -2008,8 +1981,13 @@ impl<'a> Aglet<'a> {
         if when_changed {
             // The item changed outside the engine run; re-enter processing so
             // date conditions see the new When value (target.md §2.5 step 7).
-            let cascade =
-                self.reprocess_with_options(item_id, false, evaluation_context.clone(), HashSet::new())?;
+            let cascade = self.reprocess_with_options(
+                item_id,
+                false,
+                evaluation_context.clone(),
+                HashSet::new(),
+                Vec::new(),
+            )?;
             merge_process_results(result, cascade);
             // That cascade runs nested specials at depth+1 and may have
             // deleted the item (e.g. a date condition now matches a category
@@ -2256,48 +2234,33 @@ impl<'a> Aglet<'a> {
         }
     }
 
+    /// Convert an auto-classified candidate into work: Category candidates
+    /// become assignment intents the engine executes (single write path,
+    /// with veto and exclusivity handling); When candidates are applied
+    /// immediately because they sync the typed `when_date` field.
     fn apply_auto_classification_candidate(
         &self,
         item_id: ItemId,
         candidate: &ClassificationCandidate,
-    ) -> Result<ProcessItemResult> {
+    ) -> Result<(ProcessItemResult, Option<AssignmentIntent>)> {
         match &candidate.assignment {
             crate::classification::CandidateAssignment::Category(category_id) => {
-                if self
-                    .store
-                    .get_vetoes_for_item(item_id)?
-                    .contains(category_id)
-                {
-                    return Ok(ProcessItemResult::default());
-                }
                 let category = self.store.get_category(*category_id)?;
-                let mut result = ProcessItemResult::default();
-                if self.apply_category_assignment(
-                    item_id,
-                    *category_id,
-                    AssignmentSource::AutoClassified,
-                    Some(format!("cat:{}", category.name)),
-                    Some(AssignmentExplanation::AutoClassified {
+                let intent = AssignmentIntent {
+                    category_id: *category_id,
+                    source: AssignmentSource::AutoClassified,
+                    origin: Some(format!("cat:{}", category.name)),
+                    explanation: Some(AssignmentExplanation::AutoClassified {
                         provider_id: candidate.provider.clone(),
                         model: candidate.model.clone(),
                         rationale: candidate.rationale.clone(),
                     }),
-                    false,
-                )? {
-                    result.new_assignments.insert(*category_id);
-                    result.assignment_events.push(AssignmentEvent {
-                        kind: AssignmentEventKind::Assigned,
-                        category_id: *category_id,
-                        category_name: category.name.clone(),
-                        summary: AssignmentExplanation::AutoClassified {
-                            provider_id: candidate.provider.clone(),
-                            model: candidate.model.clone(),
-                            rationale: candidate.rationale.clone(),
-                        }
-                        .summary(),
-                    });
-                }
-                Ok(result)
+                    numeric_value: None,
+                    upgrade_existing: false,
+                    clears_veto: false,
+                    override_exclusive: false,
+                };
+                Ok((ProcessItemResult::default(), Some(intent)))
             }
             crate::classification::CandidateAssignment::When(when_date) => {
                 let origin = if candidate.provider == PROVIDER_ID_WHEN_PARSER {
@@ -2331,47 +2294,38 @@ impl<'a> Aglet<'a> {
                         .summary(),
                     });
                 }
-                Ok(result)
+                Ok((result, None))
             }
         }
     }
 
+
+    /// Convert an accepted suggestion into work: Category suggestions become
+    /// assignment intents (explicit user intent: clears the veto and may kick
+    /// exclusive siblings); When suggestions are applied immediately because
+    /// they sync the typed `when_date` field.
     fn apply_suggestion_assignment(
         &self,
         suggestion: &ClassificationSuggestion,
-    ) -> Result<ProcessItemResult> {
+    ) -> Result<(ProcessItemResult, Option<AssignmentIntent>)> {
         let origin = Some(format!("suggestion:accepted:{}", suggestion.provider_id));
         match suggestion.assignment {
             crate::classification::CandidateAssignment::Category(category_id) => {
-                self.store
-                    .remove_assignment_veto(suggestion.item_id, category_id)?;
-                let mut result = ProcessItemResult::default();
-                if self.apply_category_assignment(
-                    suggestion.item_id,
+                let intent = AssignmentIntent {
                     category_id,
-                    AssignmentSource::SuggestionAccepted,
+                    source: AssignmentSource::SuggestionAccepted,
                     origin,
-                    Some(AssignmentExplanation::SuggestionAccepted {
+                    explanation: Some(AssignmentExplanation::SuggestionAccepted {
                         provider_id: suggestion.provider_id.clone(),
                         model: suggestion.model.clone(),
                         rationale: suggestion.rationale.clone(),
                     }),
-                    true,
-                )? {
-                    result.new_assignments.insert(category_id);
-                    result.assignment_events.push(AssignmentEvent {
-                        kind: AssignmentEventKind::Assigned,
-                        category_id,
-                        category_name: self.category_name_or_id(category_id),
-                        summary: AssignmentExplanation::SuggestionAccepted {
-                            provider_id: suggestion.provider_id.clone(),
-                            model: suggestion.model.clone(),
-                            rationale: suggestion.rationale.clone(),
-                        }
-                        .summary(),
-                    });
-                }
-                Ok(result)
+                    numeric_value: None,
+                    upgrade_existing: false,
+                    clears_veto: true,
+                    override_exclusive: true,
+                };
+                Ok((ProcessItemResult::default(), Some(intent)))
             }
             crate::classification::CandidateAssignment::When(when_date) => {
                 let mut result = ProcessItemResult::default();
@@ -2400,42 +2354,9 @@ impl<'a> Aglet<'a> {
                         .summary(),
                     });
                 }
-                Ok(result)
+                Ok((result, None))
             }
         }
-    }
-
-    fn apply_category_assignment(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-        source: AssignmentSource,
-        origin: Option<String>,
-        explanation: Option<AssignmentExplanation>,
-        allow_exclusive_override: bool,
-    ) -> Result<bool> {
-        let assignments = self.store.get_assignments_for_item(item_id)?;
-        if assignments.contains_key(&category_id) {
-            return Ok(false);
-        }
-        if !allow_exclusive_override
-            && self.has_blocking_exclusive_sibling_assignment(item_id, category_id)?
-        {
-            return Ok(false);
-        }
-
-        self.enforce_manual_exclusive_siblings(item_id, category_id)?;
-        let assignment = Assignment {
-            source,
-            assigned_at: Timestamp::now(),
-            sticky: true,
-            origin,
-            explanation,
-            numeric_value: None,
-        };
-        self.store.assign_item(item_id, category_id, &assignment)?;
-        self.assign_subsumption_for_category(item_id, category_id)?;
-        Ok(true)
     }
 
     fn apply_when_assignment(
@@ -2466,102 +2387,24 @@ impl<'a> Aglet<'a> {
         Ok(true)
     }
 
-    /// Returns the categories that were newly assigned (assignment events the
-    /// caller should pass as action triggers to the follow-up reprocess).
-    fn assign_manual_categories(
-        &self,
-        item_id: ItemId,
+    /// Intents for edit-through assignment (section insert/move): idempotent
+    /// for categories that are already assigned.
+    fn manual_category_intents(
         targets: &HashSet<CategoryId>,
         origin: &str,
-    ) -> Result<HashSet<CategoryId>> {
-        let mut newly_assigned = HashSet::new();
-        for category_id in targets {
-            self.enforce_manual_exclusive_siblings(item_id, *category_id)?;
-            newly_assigned.extend(self.write_manual_assignment(
-                item_id,
-                *category_id,
-                Some(origin.to_string()),
-                origin,
-                None,
-                false,
-            )?);
-        }
-        Ok(newly_assigned)
-    }
-
-    fn enforce_manual_exclusive_siblings(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-    ) -> Result<()> {
-        let category = self.store.get_category(category_id)?;
-        let Some(parent_id) = category.parent else {
-            return Ok(());
-        };
-
-        let parent = self.store.get_category(parent_id)?;
-        if !parent.is_exclusive {
-            return Ok(());
-        }
-
-        let assignments = self.store.get_assignments_for_item(item_id)?;
-        for sibling_id in parent.children {
-            if sibling_id == category_id {
-                continue;
-            }
-            if assignments.contains_key(&sibling_id) {
-                self.store.unassign_item(item_id, sibling_id)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn assign_subsumption_for_category(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-    ) -> Result<()> {
-        let categories = self.store.get_hierarchy()?;
-        let categories_by_id: HashMap<CategoryId, &Category> = categories
+    ) -> Vec<AssignmentIntent> {
+        targets
             .iter()
-            .map(|category| (category.id, category))
-            .collect();
-        let mut existing = self.store.get_assignments_for_item(item_id)?;
-
-        let mut cursor = categories_by_id
-            .get(&category_id)
-            .and_then(|category| category.parent);
-        while let Some(parent_id) = cursor {
-            if let std::collections::hash_map::Entry::Vacant(entry) = existing.entry(parent_id) {
-                let parent_name = categories_by_id
-                    .get(&parent_id)
-                    .map(|category| category.name.clone())
-                    .unwrap_or_else(|| parent_id.to_string());
-                let assignment = Assignment {
-                    source: AssignmentSource::Subsumption,
-                    assigned_at: Timestamp::now(),
-                    sticky: false,
-                    origin: Some(format!("{}:{parent_name}", origin_const::SUBSUMPTION)),
-                    explanation: Some(AssignmentExplanation::Subsumption {
-                        parent_category_name: parent_name.clone(),
-                        via_child_category_name: categories_by_id
-                            .get(&category_id)
-                            .map(|category| category.name.clone())
-                            .unwrap_or_else(|| category_id.to_string()),
-                    }),
-                    numeric_value: None,
-                };
-                self.store.assign_item(item_id, parent_id, &assignment)?;
-                entry.insert(assignment);
-            }
-
-            cursor = categories_by_id
-                .get(&parent_id)
-                .and_then(|category| category.parent);
-        }
-
-        Ok(())
+            .map(|category_id| {
+                Self::manual_intent(
+                    *category_id,
+                    Some(origin.to_string()),
+                    origin,
+                    None,
+                    false,
+                )
+            })
+            .collect()
     }
 
     fn unassign_categories(&self, item_id: ItemId, targets: &HashSet<CategoryId>) -> Result<()> {
@@ -2594,31 +2437,6 @@ impl<'a> Aglet<'a> {
         let mut targets = section.on_insert_assign.clone();
         targets.extend(section.criteria.and_category_ids());
         targets
-    }
-
-    fn prepend_assignment_event(
-        &self,
-        result: &mut ProcessItemResult,
-        kind: AssignmentEventKind,
-        category_id: CategoryId,
-        summary: &str,
-    ) {
-        result.assignment_events.insert(
-            0,
-            AssignmentEvent {
-                kind,
-                category_id,
-                category_name: self.category_name_or_id(category_id),
-                summary: summary.to_string(),
-            },
-        );
-    }
-
-    fn category_name_or_id(&self, category_id: CategoryId) -> String {
-        self.store
-            .get_category(category_id)
-            .map(|category| category.name)
-            .unwrap_or_else(|_| category_id.to_string())
     }
 
     fn debug_log_process_result(&self, context: &str, item_id: ItemId, result: &ProcessItemResult) {
@@ -5355,6 +5173,41 @@ mod tests {
                 .unwrap()
                 .contains_key(&meetings.id),
             "veto blocks literal auto-apply after rejection"
+        );
+    }
+
+    #[test]
+    fn numeric_reassignment_updates_value_through_intent_upgrade() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = CategoryValueKind::Numeric;
+        store.create_category(&cost).unwrap();
+
+        let item = Item::new("estimate".to_string());
+        aglet.create_item(&item).unwrap();
+
+        aglet
+            .assign_item_numeric_manual(item.id, cost.id, Decimal::new(100, 0), None)
+            .unwrap();
+        let result = aglet
+            .assign_item_numeric_manual(item.id, cost.id, Decimal::new(200, 0), None)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert_eq!(
+            assignments.get(&cost.id).unwrap().numeric_value,
+            Some(Decimal::new(200, 0)),
+            "intent upgrade persists the changed value"
+        );
+        assert!(
+            !result
+                .assignment_events
+                .iter()
+                .any(|event| event.category_id == cost.id),
+            "re-assignment is not a new assignment event"
         );
     }
 

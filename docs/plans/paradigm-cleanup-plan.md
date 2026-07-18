@@ -45,7 +45,7 @@ then mechanical splits last so they don't pollute the semantic diffs.
       `assign_item_numeric_manual`, and `mark_item_done` share a
       `write_manual_assignment` helper (veto clear + was-assigned check +
       write + subsumption + trigger computation).
-- [ ] **B1 — The engine is the single assignment write path.**
+- [x] **B1 — The engine is the single assignment write path.**
       `pending_action_triggers` generalizes to `pending_assignments:
       Vec<AssignmentIntent>` (category, source, sticky, origin/explanation,
       numeric_value). Aglet-layer writers (manual assign, classification

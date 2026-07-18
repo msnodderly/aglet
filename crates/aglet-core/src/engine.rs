@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
+use rust_decimal::Decimal;
 
 use crate::date_rules::{item_matches_date_condition, EvaluationContext};
 use crate::error::{AgletError, Result};
@@ -112,16 +113,44 @@ struct AssignmentTemplate {
     numeric_value: Option<rust_decimal::Decimal>,
 }
 
+/// An assignment decision made outside the engine (by the user or a
+/// classifier) that the engine executes with uniform veto, exclusivity, and
+/// subsumption handling — the single write path for assignments. New-to-store
+/// intents are assignment events and fire the category's actions.
+#[derive(Debug, Clone)]
+pub struct AssignmentIntent {
+    pub category_id: CategoryId,
+    pub source: AssignmentSource,
+    /// `None` derives the origin from the explanation.
+    pub origin: Option<String>,
+    pub explanation: Option<AssignmentExplanation>,
+    pub numeric_value: Option<Decimal>,
+    /// Upsert semantics: re-assigning an existing category replaces its
+    /// provenance (manual re-assign upgrades an auto-match to sticky Manual;
+    /// numeric re-assign updates the value). `false` skips already-assigned
+    /// categories, which keeps edit-through inserts idempotent.
+    pub upgrade_existing: bool,
+    /// Explicit user intent clears any veto; machine intents respect it.
+    pub clears_veto: bool,
+    /// Whether the intent may kick assigned exclusive siblings (user wins);
+    /// otherwise a blocking sibling makes the intent a no-op.
+    pub override_exclusive: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessOptions {
     pub enable_implicit_string: bool,
     pub evaluation_context: EvaluationContext,
-    /// Categories whose assignment was just created by the caller (manual entry,
-    /// accepted suggestion, auto-classification, ...) before this processing run.
-    /// The engine treats each as a fresh assignment event and fires that
+    /// Categories whose assignment was just created by the caller (e.g. the
+    /// When-date sync, which owns its typed field) before this processing
+    /// run. The engine treats each as a fresh assignment event and fires that
     /// category's actions, mirroring Agenda's rule that actions fire on any
     /// assignment "including an explicit assignment by the user".
     pub pending_action_triggers: HashSet<CategoryId>,
+    /// Assignments for the engine to perform this run. Prefer this over
+    /// writing rows externally: intents go through the same veto,
+    /// exclusivity, and subsumption handling as engine-derived assignments.
+    pub pending_intents: Vec<AssignmentIntent>,
 }
 
 impl Default for ProcessOptions {
@@ -130,6 +159,7 @@ impl Default for ProcessOptions {
             enable_implicit_string: true,
             evaluation_context: EvaluationContext::now(),
             pending_action_triggers: HashSet::new(),
+            pending_intents: Vec::new(),
         }
     }
 }
@@ -271,7 +301,7 @@ fn process_item_inner(
     options: ProcessOptions,
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
-    let vetoes = store.get_vetoes_for_item(item_id)?;
+    let mut vetoes = store.get_vetoes_for_item(item_id)?;
     let categories = store.get_hierarchy()?;
     let categories_by_id: HashMap<CategoryId, &Category> = categories
         .iter()
@@ -297,6 +327,22 @@ fn process_item_inner(
 
     let mut result = ProcessItemResult::default();
     let mut firing = ActionFiring::default();
+
+    // Externally-submitted assignment decisions execute first, through the
+    // same veto/exclusivity/subsumption machinery as engine matches.
+    apply_assignment_intents(
+        store,
+        item_id,
+        &options.pending_intents,
+        &categories_by_id,
+        &original_assignments,
+        &mut vetoes,
+        &mut assignments,
+        &mut seen_pairs,
+        &mut firing,
+        &mut result,
+    )?;
+
     for category_id in &options.pending_action_triggers {
         // Only categories actually assigned right now count as assignment events.
         if assignments.contains_key(category_id) {
@@ -370,6 +416,99 @@ fn item_match_text(item: &crate::model::Item) -> String {
         Some(note) if !note.trim().is_empty() => format!("{} {}", item.text, note),
         _ => item.text.clone(),
     }
+}
+
+/// Execute externally-submitted assignment intents (see [`AssignmentIntent`]).
+/// Runs before the hierarchy passes so the resulting assignment events fire
+/// actions and participate in the cascade exactly like engine matches.
+#[allow(clippy::too_many_arguments)]
+fn apply_assignment_intents(
+    store: &Store,
+    item_id: ItemId,
+    intents: &[AssignmentIntent],
+    categories_by_id: &HashMap<CategoryId, &Category>,
+    original_assignments: &HashMap<CategoryId, Assignment>,
+    vetoes: &mut HashSet<CategoryId>,
+    assignments: &mut HashMap<CategoryId, Assignment>,
+    seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+    firing: &mut ActionFiring,
+    result: &mut ProcessItemResult,
+) -> Result<()> {
+    for intent in intents {
+        let category_id = intent.category_id;
+        if intent.clears_veto {
+            store.remove_assignment_veto(item_id, category_id)?;
+            vetoes.remove(&category_id);
+        } else if vetoes.contains(&category_id) {
+            continue;
+        }
+
+        let already_assigned = assignments.contains_key(&category_id);
+        if already_assigned && !intent.upgrade_existing {
+            seen_pairs.insert((item_id, category_id));
+            continue;
+        }
+
+        if !already_assigned {
+            if !intent.override_exclusive
+                && has_blocking_exclusive_sibling(category_id, categories_by_id, assignments)
+            {
+                continue;
+            }
+            enforce_mutual_exclusion(category_id, categories_by_id, assignments)?;
+        }
+
+        let assignment = Assignment {
+            source: intent.source,
+            assigned_at: Timestamp::now(),
+            sticky: true,
+            origin: intent.origin.clone().or_else(|| {
+                intent
+                    .explanation
+                    .as_ref()
+                    .and_then(AssignmentExplanation::origin)
+            }),
+            explanation: intent.explanation.clone(),
+            numeric_value: intent.numeric_value,
+        };
+        let new_to_store = !original_assignments.contains_key(&category_id);
+        if already_assigned {
+            // Provenance/value upgrade of an existing assignment: sync only
+            // diffs key sets, so write the changed row directly.
+            store.assign_item(item_id, category_id, &assignment)?;
+        }
+        assignments.insert(category_id, assignment);
+        seen_pairs.insert((item_id, category_id));
+        assign_subsumption_ancestors(
+            item_id,
+            category_id,
+            categories_by_id,
+            original_assignments,
+            assignments,
+            seen_pairs,
+        );
+
+        if new_to_store {
+            result.new_assignments.insert(category_id);
+            let summary = intent
+                .explanation
+                .as_ref()
+                .map(AssignmentExplanation::summary)
+                .unwrap_or_else(|| "Assigned".to_string());
+            let category_name = categories_by_id
+                .get(&category_id)
+                .map(|category| category.name.clone())
+                .unwrap_or_else(|| category_id.to_string());
+            result.assignment_events.push(AssignmentEvent {
+                kind: AssignmentEventKind::Assigned,
+                category_id,
+                category_name,
+                summary,
+            });
+            firing.enqueue(category_id);
+        }
+    }
+    Ok(())
 }
 
 fn run_hierarchy_pass(
