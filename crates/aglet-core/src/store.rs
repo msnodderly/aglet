@@ -1756,7 +1756,13 @@ impl Store {
 
         // Corrupt or legacy category row: fall back to no conditions/actions
         // so the category still loads without its rules rather than failing.
-        let conditions: Vec<Condition> = serde_json::from_str(&conditions_json).unwrap_or_default();
+        let mut conditions: Vec<Condition> =
+            serde_json::from_str(&conditions_json).unwrap_or_default();
+        // Legacy no-op marker: implicit text matching is governed by the
+        // enable_implicit_string flag, never by a stored condition. Strip on
+        // load; nothing writes it anymore, so it ages out of stored rows on
+        // the next category save.
+        conditions.retain(|condition| !matches!(condition, Condition::ImplicitString));
         let actions: Vec<Action> = serde_json::from_str(&actions_json).unwrap_or_default();
         let also_match: Vec<String> = serde_json::from_str(&also_match_json).unwrap_or_default();
         let value_kind = Self::category_value_kind_from_db(&value_kind_str);
@@ -2617,6 +2623,26 @@ mod tests {
             created_at: Timestamp::now(),
             origin: Some("test".to_string()),
         }
+    }
+
+    #[test]
+    fn legacy_implicit_string_condition_is_stripped_on_load() {
+        let store = Store::open_memory().unwrap();
+        let category = Category::new("Legacy".to_string());
+        store.create_category(&category).unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE categories SET conditions_json = '[\"ImplicitString\"]' WHERE id = ?1",
+                params![category.id.to_string()],
+            )
+            .unwrap();
+
+        let loaded = store.get_category(category.id).unwrap();
+        assert!(
+            loaded.conditions.is_empty(),
+            "legacy ImplicitString markers are stripped on load"
+        );
     }
 
     fn category_id_by_name(store: &Store, name: &str) -> Uuid {

@@ -57,14 +57,16 @@ then mechanical splits last so they don't pollute the semantic diffs.
       where the old path skipped checks the engine performs.
 
 ### Simplification
-- [ ] **C2 — `Condition::ImplicitString` retired from storage.** Serde shim
+- [x] **C2 — `Condition::ImplicitString` retired from storage.** Serde shim
       drops it on read; writers never emit it; variant kept one release for
       decode compatibility, all match arms collapse to a deprecation no-op.
-- [ ] **C1 — Retire the store-clone toggle preview.**
-      `item_assign_reapply_status` and `preview_manual_category_toggle` are
-      removed; the picker relies on veto semantics and existing guard errors
-      (subsumption-descendant unassign). TUI tests updated.
-- [ ] **C3 — Calendar math delegates to jiff.** `days_in_month`,
+- [x] **C1 — Retire the rule-lock refusal guard.** (Scope narrowed during
+      implementation: `item_assign_reapply_status` and its three guard sites
+      are removed — vetoes make the unassign stick, and guard errors still
+      cover subsumption-descendant cases. `preview_manual_category_toggle`
+      stays: it powers the picker's live will-add/will-remove hover preview,
+      which is a feature, not a workaround.)
+- [x] **C3 — Calendar math delegates to jiff.** `days_in_month`,
       `weekday_from_u8`/`weekday_to_u8` wrappers, and manual month/year
       arithmetic in `RecurrenceRule::next_date` replaced with jiff
       equivalents. Clamping tests (Jan 31 → Feb 28/29 etc.) stay green.

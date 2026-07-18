@@ -153,23 +153,30 @@ impl RecurrenceRule {
             }
             RecurrenceFrequency::Monthly => {
                 let target_day = self.day_of_month.unwrap_or(anchor.date().day() as u8);
-                let months_ahead = self.interval as i16;
-                let raw_month = i16::from(anchor.date().month()) + months_ahead;
-                let year = anchor.date().year() + (raw_month - 1) / 12;
-                let month = ((raw_month - 1) % 12 + 1) as u8;
-                let max_day = days_in_month(i32::from(year), month);
-                let day = target_day.min(max_day);
-                let date = Date::new(year, month as i8, day as i8).expect("valid monthly date");
+                // Advance from the 1st so month arithmetic never overflows,
+                // then clamp the target day to the month's length.
+                let base = anchor
+                    .date()
+                    .first_of_month()
+                    .checked_add(jiff::Span::new().months(i64::from(self.interval)))
+                    .expect("monthly advance overflow");
+                let day = target_day.min(base.days_in_month() as u8);
+                let date = Date::new(base.year(), base.month(), day as i8)
+                    .expect("valid monthly date");
                 date.at(anchor.hour(), anchor.minute(), anchor.second(), 0)
             }
             RecurrenceFrequency::Yearly => {
                 let target_month = self.month.unwrap_or(anchor.date().month() as u8);
                 let target_day = self.day_of_month.unwrap_or(anchor.date().day() as u8);
-                let year = anchor.date().year() + self.interval as i16;
-                let max_day = days_in_month(i32::from(year), target_month);
-                let day = target_day.min(max_day);
-                let date =
-                    Date::new(year, target_month as i8, day as i8).expect("valid yearly date");
+                let base = Date::new(
+                    anchor.date().year() + self.interval as i16,
+                    target_month as i8,
+                    1,
+                )
+                .expect("valid yearly month");
+                let day = target_day.min(base.days_in_month() as u8);
+                let date = Date::new(base.year(), base.month(), day as i8)
+                    .expect("valid yearly date");
                 date.at(anchor.hour(), anchor.minute(), anchor.second(), 0)
             }
         }
@@ -217,19 +224,14 @@ impl RecurrenceRule {
     }
 }
 
-/// Convert 1=Mon .. 7=Sun to jiff::civil::Weekday. Clamps invalid values to Monday.
+/// Convert 1=Mon .. 7=Sun to jiff::civil::Weekday (the serde boundary —
+/// jiff's Weekday doesn't implement Serialize). Clamps invalid values to
+/// Monday.
 pub fn weekday_from_u8(n: u8) -> jiff::civil::Weekday {
-    use jiff::civil::Weekday;
-    match n {
-        1 => Weekday::Monday,
-        2 => Weekday::Tuesday,
-        3 => Weekday::Wednesday,
-        4 => Weekday::Thursday,
-        5 => Weekday::Friday,
-        6 => Weekday::Saturday,
-        7 => Weekday::Sunday,
-        _ => Weekday::Monday,
-    }
+    i8::try_from(n)
+        .ok()
+        .and_then(|n| jiff::civil::Weekday::from_monday_one_offset(n).ok())
+        .unwrap_or(jiff::civil::Weekday::Monday)
 }
 
 /// Convert jiff::civil::Weekday to 1=Mon .. 7=Sun.
@@ -279,19 +281,14 @@ fn ordinal(n: u8) -> String {
 }
 
 /// Returns the number of days in the given month (1–12) for the given year.
+/// Out-of-range inputs fall back to 30 (matching the old hand-rolled table).
 pub fn days_in_month(year: i32, month: u8) -> u8 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 30,
-    }
+    i16::try_from(year)
+        .ok()
+        .zip(i8::try_from(month).ok())
+        .and_then(|(year, month)| jiff::civil::Date::new(year, month, 1).ok())
+        .map(|date| date.days_in_month() as u8)
+        .unwrap_or(30)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -740,6 +737,9 @@ impl Default for NumericFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Condition {
+    /// Legacy no-op marker kept only so old `conditions_json` rows decode;
+    /// the store strips it on load. Implicit text matching is governed by
+    /// [`Category::enable_implicit_string`].
     ImplicitString,
     Profile {
         criteria: Box<Query>,

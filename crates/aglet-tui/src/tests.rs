@@ -15631,7 +15631,6 @@ fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
             ..Query::default()
         }),
     });
-    category.conditions.push(Condition::ImplicitString);
     category.actions.push(Action::Assign {
         targets: HashSet::from([target.id]),
     });
@@ -15656,7 +15655,7 @@ fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
     terminal.draw(|frame| app.draw(frame)).expect("draw");
     let rendered = terminal_buffer_lines(&terminal).join("\n");
     assert!(
-        rendered.contains("Ready [exclusive] [ready-queue] [2 conditions] [1 action]"),
+        rendered.contains("Ready [exclusive] [ready-queue] [1 condition] [1 action]"),
         "tree should render readable non-default/special/count badges on the category row: {rendered}"
     );
     assert!(
