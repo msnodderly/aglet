@@ -165,15 +165,17 @@ impl<'a> Aglet<'a> {
         &self,
         evaluation_context: EvaluationContext,
     ) -> Result<EvaluateAllItemsResult> {
-        reevaluate_all_items_with_options(
+        let mut result = reevaluate_all_items_with_options(
             self.store,
             self.classifier,
             ProcessOptions {
                 enable_implicit_string: false,
-                evaluation_context,
+                evaluation_context: evaluation_context.clone(),
                 ..ProcessOptions::default()
             },
-        )
+        )?;
+        self.apply_bulk_deferred_specials(&mut result, &evaluation_context)?;
+        Ok(result)
     }
 
     pub fn debug_enabled(&self) -> bool {
@@ -1118,6 +1120,21 @@ impl<'a> Aglet<'a> {
     }
 
     pub fn reject_classification_suggestion(&self, suggestion_id: Uuid) -> Result<()> {
+        // Rejection is the user saying "no" to this category for this item;
+        // record the veto so no machine path (including literal auto-apply)
+        // re-assigns it. Accepting a suggestion or assigning manually clears
+        // the veto again (product decision #46).
+        if let Some(suggestion) = self.store.get_classification_suggestion(suggestion_id)? {
+            if let crate::classification::CandidateAssignment::Category(category_id) =
+                suggestion.assignment
+            {
+                self.store.add_assignment_veto(
+                    suggestion.item_id,
+                    category_id,
+                    Some("suggestion:rejected"),
+                )?;
+            }
+        }
         self.store
             .set_suggestion_status(suggestion_id, SuggestionStatus::Rejected)
     }
@@ -1720,16 +1737,49 @@ impl<'a> Aglet<'a> {
         let enable_implicit_string = cfg.should_run_continuously()
             && cfg.run_on_category_change
             && cfg.literal_mode == LiteralClassificationMode::AutoApply;
-        evaluate_all_items_with_options(
+        let evaluation_context = EvaluationContext::now();
+        let mut result = evaluate_all_items_with_options(
             self.store,
             self.classifier,
             category_id,
             ProcessOptions {
                 enable_implicit_string,
-                evaluation_context: EvaluationContext::now(),
+                evaluation_context: evaluation_context.clone(),
                 ..ProcessOptions::default()
             },
-        )
+        )?;
+        self.apply_bulk_deferred_specials(&mut result, &evaluation_context)?;
+        Ok(result)
+    }
+
+    /// Apply the special-action effects a bulk evaluation produced, item by
+    /// item — the bulk counterpart of the specials application that
+    /// single-item reprocessing performs. Items may have been deleted by an
+    /// earlier item's cascade; those are skipped.
+    fn apply_bulk_deferred_specials(
+        &self,
+        result: &mut EvaluateAllItemsResult,
+        evaluation_context: &EvaluationContext,
+    ) -> Result<()> {
+        let per_item = std::mem::take(&mut result.deferred_specials);
+        if per_item.is_empty() {
+            return Ok(());
+        }
+        let mut grouped: Vec<(ItemId, Vec<crate::engine::DeferredSpecial>)> = Vec::new();
+        for (item_id, special) in per_item {
+            match grouped.iter_mut().find(|(id, _)| *id == item_id) {
+                Some((_, specials)) => specials.push(special),
+                None => grouped.push((item_id, vec![special])),
+            }
+        }
+        for (item_id, specials) in grouped {
+            if !self.item_exists(item_id)? {
+                continue;
+            }
+            let mut item_result = ProcessItemResult::default();
+            self.apply_deferred_specials(item_id, &specials, evaluation_context, &mut item_result)?;
+        }
+        Ok(())
     }
 
     fn classification_service<'b>(
@@ -1883,10 +1933,13 @@ impl<'a> Aglet<'a> {
         const MAX_SPECIALS_DEPTH: u8 = 3;
         let depth = self.specials_depth.get();
         if depth >= MAX_SPECIALS_DEPTH {
-            self.debug_log(&format!(
-                "specials: depth cap reached for item {item_id}; dropping {} effect(s)",
-                specials.len()
-            ));
+            let warning = format!(
+                "rule cascade cut short: {} special effect(s) dropped at depth {} for item {item_id}",
+                specials.len(),
+                depth
+            );
+            self.debug_log(&format!("specials: {warning}"));
+            result.warnings.push(warning);
             return Ok(());
         }
         self.specials_depth.set(depth + 1);
@@ -2813,6 +2866,7 @@ fn merge_process_results(target: &mut ProcessItemResult, incoming: ProcessItemRe
     target
         .semantic_debug_messages
         .extend(incoming.semantic_debug_messages);
+    target.warnings.extend(incoming.warnings);
 }
 
 #[cfg(test)]
@@ -5176,6 +5230,147 @@ mod tests {
 
     fn aglet_core_test_when_source() -> crate::model::DateSource {
         crate::model::DateSource::When
+    }
+
+    #[test]
+    fn category_change_bulk_run_applies_special_effects() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let archive = category("Archive", false);
+        store.create_category(&archive).unwrap();
+
+        let item = Item::new("finish the report".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+        assert!(!store.get_item(item.id).unwrap().is_done);
+
+        // Adding the rule triggers a bulk reevaluation; the new Archive
+        // assignment fires MarkDone, whose effect must actually apply.
+        let mut archive = store.get_category(archive.id).unwrap();
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, work.id);
+        archive.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        archive.actions.push(Action::MarkDone);
+        aglet.update_category(&archive).unwrap();
+
+        let after = store.get_item(item.id).unwrap();
+        assert!(
+            after.assignments.contains_key(&archive.id),
+            "bulk run assigns Archive"
+        );
+        assert!(
+            after.is_done,
+            "bulk-run action effects (MarkDone) are applied, not dropped"
+        );
+    }
+
+    #[test]
+    fn special_cascade_depth_cap_reports_warning() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let date_cat = |name: &str, day: i32, next_day: i32| {
+            let mut cat = category(name, false);
+            cat.conditions.push(Condition::Date {
+                source: crate::model::DateSource::When,
+                matcher: crate::model::DateMatcher::Compare {
+                    op: crate::model::DateCompareOp::On,
+                    value: crate::model::DateValueExpr::DaysFromToday(day),
+                },
+            });
+            cat.actions.push(Action::SetWhen {
+                value: crate::model::DateValueExpr::DaysFromToday(next_day),
+            });
+            cat
+        };
+
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::SetWhen {
+            value: crate::model::DateValueExpr::DaysFromToday(1),
+        });
+        store.create_category(&trigger).unwrap();
+        store.create_category(&date_cat("Hop1", 1, 2)).unwrap();
+        store.create_category(&date_cat("Hop2", 2, 3)).unwrap();
+        store.create_category(&date_cat("Hop3", 3, 4)).unwrap();
+        store.create_category(&date_cat("Hop4", 4, 5)).unwrap();
+
+        let item = Item::new("cascade bait".to_string());
+        aglet.create_item(&item).unwrap();
+
+        let result = aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        assert!(
+            !result.warnings.is_empty(),
+            "depth-capped special effects must surface a warning, got none"
+        );
+        assert!(
+            result.warnings[0].contains("cut short"),
+            "warning text: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn rejecting_suggestion_records_veto() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let meetings = category("Meetings", false);
+        store.create_category(&meetings).unwrap();
+
+        let item = Item::new("plan the offsite".to_string());
+        aglet.create_item(&item).unwrap();
+
+        let suggestion = crate::classification::ClassificationSuggestion {
+            id: uuid::Uuid::new_v4(),
+            item_id: item.id,
+            assignment: crate::classification::CandidateAssignment::Category(meetings.id),
+            provider_id: "test-provider".to_string(),
+            model: None,
+            confidence: None,
+            rationale: None,
+            context_hash: "test".to_string(),
+            item_revision_hash: "test".to_string(),
+            status: SuggestionStatus::Pending,
+            created_at: Timestamp::now(),
+            decided_at: None,
+        };
+        store.upsert_suggestion(&suggestion).unwrap();
+
+        aglet.reject_classification_suggestion(suggestion.id).unwrap();
+
+        assert!(
+            store
+                .get_vetoes_for_item(item.id)
+                .unwrap()
+                .contains(&meetings.id),
+            "rejection records a veto (product decision #46)"
+        );
+
+        // The vetoed category must not come back via text matching either.
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "plan the meetings offsite".to_string();
+        updated.modified_at = Timestamp::now();
+        aglet.update_item(&updated).unwrap();
+        assert!(
+            !store
+                .get_assignments_for_item(item.id)
+                .unwrap()
+                .contains_key(&meetings.id),
+            "veto blocks literal auto-apply after rejection"
+        );
     }
 
     #[test]

@@ -13,20 +13,20 @@ then mechanical splits last so they don't pollute the semantic diffs.
 ## Checklist
 
 ### Correctness
-- [ ] **A1 — Bulk reevaluation applies special-action effects.**
+- [x] **A1 — Bulk reevaluation applies special-action effects.**
       `EvaluateAllItemsResult` carries per-item deferred specials;
       `process_category_change` and `reevaluate_temporal_conditions` apply them
       via `apply_deferred_specials`. Test: category edit that newly matches an
       item whose category has a MarkDone action → item is done afterwards.
-- [ ] **A2 — Depth-capped specials warn visibly.** Dropped specials surface as
+- [x] **A2 — Depth-capped specials warn visibly.** Dropped specials surface as
       an assignment-event-style warning in `ProcessItemResult`, not just a
       debug log. Test: 4-deep SetWhen chain reports the drop.
-- [ ] **A3 — Rejecting a suggestion also vetoes.** Decision: "reject ⇒ veto;
+- [x] **A3 — Rejecting a suggestion also vetoes.** Decision: "reject ⇒ veto;
       accept/manual-assign clears both." Implemented in
       `reject_classification_suggestion`; documented in product-decisions.md.
       Test: reject implicit-string suggestion, literal auto-apply cannot
       re-assign.
-- [ ] **D4 — Decision recorded: subsumption does not fire parent actions.**
+- [x] **D4 — Decision recorded: subsumption does not fire parent actions.**
       Paragraph in product-decisions.md documenting the divergence from
       Agenda's "or one of its children" wording, and why.
 

@@ -1141,7 +1141,7 @@ impl App {
     ) -> Option<String> {
         use aglet_core::model::{AssignmentEvent, AssignmentEventKind};
 
-        if result.assignment_events.is_empty() {
+        if result.assignment_events.is_empty() && result.warnings.is_empty() {
             return None;
         }
 
@@ -1185,6 +1185,9 @@ impl App {
         parts.extend(other.into_iter().take(2));
         if extra > 0 {
             parts.push(format!("+{extra} more"));
+        }
+        for warning in &result.warnings {
+            parts.push(format!("Warning: {warning}"));
         }
 
         if parts.is_empty() {

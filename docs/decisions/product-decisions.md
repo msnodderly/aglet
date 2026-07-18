@@ -1218,3 +1218,38 @@ Alternatives considered and rejected:
   makes rule behavior depend on invisible provenance.
 - *Per-action `force` flag*: more machinery for a distinction users would
   have to configure and remember.
+
+---
+
+## 46. Rejecting a suggestion is a veto
+
+**Date**: 2026-07-17
+
+Rejecting a classification suggestion for a category records the same
+per-(item, category) veto that manually unassigning a machine-made assignment
+does. Before this, rejection only blocked re-suggestion by the same provider —
+the literal text matcher in auto-apply mode could still assign the very
+category the user had just declined, which reads as "I said no and it came
+back anyway."
+
+One mental model: the user's "no" (veto) blocks every machine path; the user's
+"yes" (manual assignment or accepting a suggestion) clears it.
+
+---
+
+## 47. Subsumption does not fire parent-category actions
+
+**Date**: 2026-07-17
+
+Agenda's manual describes special actions firing when an item is assigned "to
+this category or to one of its children." Aglet deliberately diverges: actions
+fire only for the category that received the assignment event, never for
+ancestors reached via subsumption.
+
+Rationale: subsumption assignments are bookkeeping (an assigned descendant
+implies its ancestors), and firing every ancestor's actions on every child
+assignment would make rule behavior scale with hierarchy depth and be much
+harder to reason about. A rule that should fire for a whole subtree can be
+expressed directly: give the parent a profile condition on itself, or attach
+the action to each child. If real workflows demand Agenda's inherited firing,
+it can be added later as an opt-in category flag.

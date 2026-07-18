@@ -1497,6 +1497,7 @@ fn cmd_add(
     }
     if !result.new_assignments.is_empty() {
         println!("new_assignments={}", result.new_assignments.len());
+        print_process_warnings(&result);
     }
     if let Some(line) = unknown_hashtag_feedback_line(&unknown_hashtags) {
         println!("{line}");
@@ -1895,6 +1896,7 @@ fn cmd_claim(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> Result<()
     );
     if !result.new_assignments.is_empty() {
         println!("new_assignments={}", result.new_assignments.len());
+        print_process_warnings(&result);
     }
     Ok(())
 }
@@ -1914,6 +1916,7 @@ fn cmd_release(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> Result<
     );
     if !result.new_assignments.is_empty() {
         println!("new_assignments={}", result.new_assignments.len());
+        print_process_warnings(&result);
     }
     Ok(())
 }
@@ -2816,6 +2819,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             println!("assigned item {} to category {}", item_id, category_name);
             if !result.new_assignments.is_empty() {
                 println!("new_assignments={}", result.new_assignments.len());
+        print_process_warnings(&result);
             }
             Ok(())
         }
@@ -2842,6 +2846,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             );
             if !result.new_assignments.is_empty() {
                 println!("new_assignments={}", result.new_assignments.len());
+        print_process_warnings(&result);
             }
             Ok(())
         }
@@ -4070,6 +4075,12 @@ fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
         .iter()
         .map(|category| (category.id, category.name.clone()))
         .collect()
+}
+
+fn print_process_warnings(result: &aglet_core::engine::ProcessItemResult) {
+    for warning in &result.warnings {
+        eprintln!("warning: {warning}");
+    }
 }
 
 fn describe_category_targets(

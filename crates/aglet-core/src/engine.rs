@@ -45,6 +45,10 @@ pub struct ProcessItemResult {
     pub assignment_events: Vec<AssignmentEvent>,
     pub deferred_removals: Vec<DeferredRemoval>,
     pub deferred_specials: Vec<DeferredSpecial>,
+    /// Human-readable warnings about effects that could not be applied (e.g.
+    /// special-action recursion hitting its depth cap). Surfaced by the CLI
+    /// and TUI so rule authors see when a cascade was cut short.
+    pub warnings: Vec<String>,
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
     pub semantic_candidates_skipped_already_assigned: usize,
@@ -61,6 +65,10 @@ pub struct EvaluateAllItemsResult {
     pub total_new_assignments: usize,
     pub total_removed_assignments: usize,
     pub total_deferred_removals: usize,
+    /// Special-action effects (SetWhen/MarkDone/Delete) produced per item.
+    /// The engine cannot apply these itself; the Aglet layer must apply them
+    /// after the bulk run, exactly as it does for single-item processing.
+    pub deferred_specials: Vec<(ItemId, DeferredSpecial)>,
 }
 
 #[derive(Debug, Default)]
@@ -218,13 +226,18 @@ fn evaluate_items_internal(
     let items = store.list_items()?;
 
     for item in items {
-        let process_result =
+        let mut process_result =
             process_item_with_options(store, classifier, item.id, options.clone())?;
 
         result.processed_items += 1;
         result.total_new_assignments += process_result.new_assignments.len();
         result.total_removed_assignments += process_result.removed_assignments.len();
         result.total_deferred_removals += process_result.deferred_removals.len();
+        result.deferred_specials.extend(
+            std::mem::take(&mut process_result.deferred_specials)
+                .into_iter()
+                .map(|special| (item.id, special)),
+        );
 
         if !process_result.new_assignments.is_empty()
             || !process_result.removed_assignments.is_empty()
