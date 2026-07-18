@@ -1728,12 +1728,9 @@ impl<'a> Aglet<'a> {
         if per_item.is_empty() {
             return Ok(());
         }
-        let mut grouped: Vec<(ItemId, Vec<crate::engine::DeferredSpecial>)> = Vec::new();
+        let mut grouped: HashMap<ItemId, Vec<crate::engine::DeferredSpecial>> = HashMap::new();
         for (item_id, special) in per_item {
-            match grouped.iter_mut().find(|(id, _)| *id == item_id) {
-                Some((_, specials)) => specials.push(special),
-                None => grouped.push((item_id, vec![special])),
-            }
+            grouped.entry(item_id).or_default().push(special);
         }
         for (item_id, specials) in grouped {
             if !self.item_exists(item_id)? {
