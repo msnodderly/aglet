@@ -2352,21 +2352,6 @@ impl Store {
                 "#,
             )?;
         }
-        if from_version < 20 {
-            self.conn.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS assignment_vetoes (
-                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-                    created_at  TEXT NOT NULL,
-                    origin      TEXT,
-                    PRIMARY KEY (item_id, category_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
-                    ON assignment_vetoes(item_id);
-                "#,
-            )?;
-        }
         if from_version < 11 {
             self.conn.execute_batch(
                 r#"
@@ -2437,21 +2422,6 @@ impl Store {
             }
         }
 
-        if from_version < 20 {
-            self.conn.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS assignment_vetoes (
-                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-                    created_at  TEXT NOT NULL,
-                    origin      TEXT,
-                    PRIMARY KEY (item_id, category_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
-                    ON assignment_vetoes(item_id);
-                "#,
-            )?;
-        }
         if from_version < 11 {
             // Migrate when_date / done_date from "YYYY-MM-DD HH:MM:SS" to "YYYY-MM-DDTHH:MM:SS"
             self.conn.execute_batch(
@@ -2482,6 +2452,23 @@ impl Store {
         if !self.column_exists("views", "datebook_config_json")? {
             self.conn
                 .execute_batch("ALTER TABLE views ADD COLUMN datebook_config_json TEXT;")?;
+        }
+
+        // v19 → v20: negative assignments (vetoes)
+        if from_version < 20 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS assignment_vetoes (
+                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                    created_at  TEXT NOT NULL,
+                    origin      TEXT,
+                    PRIMARY KEY (item_id, category_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
+                    ON assignment_vetoes(item_id);
+                "#,
+            )?;
         }
 
         Ok(())

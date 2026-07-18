@@ -1895,6 +1895,14 @@ impl<'a> Aglet<'a> {
         applied
     }
 
+    fn item_exists(&self, item_id: ItemId) -> Result<bool> {
+        match self.store.get_item(item_id) {
+            Ok(_) => Ok(true),
+            Err(AgletError::NotFound { .. }) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
     fn apply_deferred_specials_inner(
         &self,
         item_id: ItemId,
@@ -1948,6 +1956,12 @@ impl<'a> Aglet<'a> {
             let cascade =
                 self.reprocess_with_options(item_id, false, evaluation_context.clone(), HashSet::new())?;
             merge_process_results(result, cascade);
+            // That cascade runs nested specials at depth+1 and may have
+            // deleted the item (e.g. a date condition now matches a category
+            // carrying a Delete action). Nothing left to apply if so.
+            if !self.item_exists(item_id)? {
+                return Ok(());
+            }
         }
 
         if let Some(trigger) = mark_done_by {
@@ -1959,6 +1973,10 @@ impl<'a> Aglet<'a> {
                 ));
                 let done = self.mark_item_done(item_id)?;
                 merge_process_results(result, done);
+                // mark_item_done reprocesses; a nested Delete may have fired.
+                if !self.item_exists(item_id)? {
+                    return Ok(());
+                }
             }
         }
 
@@ -5107,6 +5125,57 @@ mod tests {
 
     fn aglet_core_test_date_expr_tomorrow() -> crate::model::DateValueExpr {
         crate::model::DateValueExpr::Tomorrow
+    }
+
+    #[test]
+    fn set_when_cascade_delete_does_not_error_pending_specials() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        // Doomed: date condition matching today, carrying a Delete action.
+        let mut doomed = category("Doomed", false);
+        doomed.allow_delete_action = true;
+        doomed.conditions.push(Condition::Date {
+            source: aglet_core_test_when_source(),
+            matcher: crate::model::DateMatcher::Compare {
+                op: crate::model::DateCompareOp::AtOrAfter,
+                value: crate::model::DateValueExpr::Today,
+            },
+        });
+        doomed.actions.push(Action::Delete);
+        store.create_category(&doomed).unwrap();
+
+        // Trigger stamps When (making Doomed match in the follow-up cascade)
+        // AND requests MarkDone — which must not error after the nested
+        // cascade has already deleted the item.
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::SetWhen {
+            value: crate::model::DateValueExpr::Tomorrow,
+        });
+        trigger.actions.push(Action::MarkDone);
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("short-lived task".to_string());
+        aglet.create_item(&item).unwrap();
+
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .expect("pending MarkDone/Delete specials on a deleted item must not error");
+
+        assert!(
+            store.get_item(item.id).is_err(),
+            "item was deleted by the cascade"
+        );
+        let log = store.list_deleted_items().unwrap();
+        assert!(
+            log.iter().any(|entry| entry.item_id == item.id),
+            "cascade deletion is logged"
+        );
+    }
+
+    fn aglet_core_test_when_source() -> crate::model::DateSource {
+        crate::model::DateSource::When
     }
 
     #[test]
