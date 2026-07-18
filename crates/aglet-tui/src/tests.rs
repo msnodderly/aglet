@@ -16835,6 +16835,7 @@ fn inspect_assignment_rows_include_explanation_summary() {
             sticky: false,
             origin: Some("cat:Phone Calls".to_string()),
             explanation: Some(AssignmentExplanation::ImplicitMatch {
+                owner_category_name: String::new(),
                 matched_term: "call".to_string(),
                 matched_source: TextMatchSource::AlsoMatch,
             }),

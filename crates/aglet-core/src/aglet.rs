@@ -424,6 +424,55 @@ impl<'a> Aglet<'a> {
         self.process_category_change(category_id)
     }
 
+    /// Write a sticky Manual assignment: clears any veto, writes the row with
+    /// derived provenance, materializes subsumption ancestors, and returns
+    /// the action triggers for the follow-up reprocess — the category itself
+    /// when the assignment is new (a fresh assignment event), nothing when it
+    /// already existed. Exclusivity checks are the caller's responsibility.
+    ///
+    /// `upgrade_existing` selects the two manual-write semantics: direct
+    /// assignment upserts (re-assigning an auto-matched category upgrades it
+    /// to sticky Manual, numeric assignment updates the value); edit-through
+    /// paths skip categories that are already assigned so a section insert
+    /// never rewrites existing provenance.
+    fn write_manual_assignment(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        origin: Option<String>,
+        default_origin: &str,
+        numeric_value: Option<Decimal>,
+        upgrade_existing: bool,
+    ) -> Result<HashSet<CategoryId>> {
+        self.store.remove_assignment_veto(item_id, category_id)?;
+        let was_assigned = self
+            .store
+            .get_assignments_for_item(item_id)?
+            .contains_key(&category_id);
+        if was_assigned && !upgrade_existing {
+            return Ok(HashSet::new());
+        }
+        let assignment = Assignment {
+            source: AssignmentSource::Manual,
+            assigned_at: Timestamp::now(),
+            sticky: true,
+            origin: origin
+                .clone()
+                .or_else(|| Some(default_origin.to_string())),
+            explanation: Some(AssignmentExplanation::Manual { origin }),
+            numeric_value,
+        };
+        self.store.assign_item(item_id, category_id, &assignment)?;
+        self.assign_subsumption_for_category(item_id, category_id)?;
+        // A newly created assignment is an assignment event: the category's
+        // actions fire even though the user (not the engine) made it.
+        Ok(if was_assigned {
+            HashSet::new()
+        } else {
+            HashSet::from([category_id])
+        })
+    }
+
     pub fn assign_item_manual(
         &self,
         item_id: ItemId,
@@ -431,32 +480,14 @@ impl<'a> Aglet<'a> {
         origin: Option<String>,
     ) -> Result<ProcessItemResult> {
         self.enforce_manual_exclusive_siblings(item_id, category_id)?;
-        self.store.remove_assignment_veto(item_id, category_id)?;
-
-        let was_assigned = self
-            .store
-            .get_assignments_for_item(item_id)?
-            .contains_key(&category_id);
-        let assignment = Assignment {
-            source: AssignmentSource::Manual,
-            assigned_at: Timestamp::now(),
-            sticky: true,
-            origin: origin
-                .clone()
-                .or_else(|| Some(origin_const::MANUAL.to_string())),
-            explanation: Some(AssignmentExplanation::Manual { origin }),
-            numeric_value: None,
-        };
-
-        self.store.assign_item(item_id, category_id, &assignment)?;
-        self.assign_subsumption_for_category(item_id, category_id)?;
-        // A newly created assignment is an assignment event: the category's
-        // actions fire even though the user (not the engine) made it.
-        let triggers = if was_assigned {
-            HashSet::new()
-        } else {
-            HashSet::from([category_id])
-        };
+        let triggers = self.write_manual_assignment(
+            item_id,
+            category_id,
+            origin,
+            origin_const::MANUAL,
+            None,
+            true,
+        )?;
         let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
         self.prepend_assignment_event(
             &mut result,
@@ -554,30 +585,14 @@ impl<'a> Aglet<'a> {
         }
 
         self.enforce_manual_exclusive_siblings(item_id, category_id)?;
-        self.store.remove_assignment_veto(item_id, category_id)?;
-
-        let was_assigned = self
-            .store
-            .get_assignments_for_item(item_id)?
-            .contains_key(&category_id);
-        let assignment = Assignment {
-            source: AssignmentSource::Manual,
-            assigned_at: Timestamp::now(),
-            sticky: true,
-            origin: origin
-                .clone()
-                .or_else(|| Some(origin_const::MANUAL_NUMERIC.to_string())),
-            explanation: Some(AssignmentExplanation::Manual { origin }),
-            numeric_value: Some(numeric_value),
-        };
-
-        self.store.assign_item(item_id, category_id, &assignment)?;
-        self.assign_subsumption_for_category(item_id, category_id)?;
-        let triggers = if was_assigned {
-            HashSet::new()
-        } else {
-            HashSet::from([category_id])
-        };
+        let triggers = self.write_manual_assignment(
+            item_id,
+            category_id,
+            origin,
+            origin_const::MANUAL_NUMERIC,
+            Some(numeric_value),
+            true,
+        )?;
         let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
         self.prepend_assignment_event(
             &mut result,
@@ -829,28 +844,15 @@ impl<'a> Aglet<'a> {
         self.store.update_item(&item)?;
 
         let done_category_id = self.done_category_id()?;
-        let was_done_assigned = self
-            .store
-            .get_assignments_for_item(item_id)?
-            .contains_key(&done_category_id);
-        let assignment = Assignment {
-            source: AssignmentSource::Manual,
-            assigned_at: now,
-            sticky: true,
-            origin: Some(origin_const::MANUAL_DONE.to_string()),
-            explanation: Some(AssignmentExplanation::Manual {
-                origin: Some(origin_const::MANUAL_DONE.to_string()),
-            }),
-            numeric_value: None,
-        };
-        self.store
-            .assign_item(item_id, done_category_id, &assignment)?;
+        let triggers = self.write_manual_assignment(
+            item_id,
+            done_category_id,
+            Some(origin_const::MANUAL_DONE.to_string()),
+            origin_const::MANUAL_DONE,
+            None,
+            true,
+        )?;
         self.clear_claim_assignment_if_configured(item_id)?;
-        let triggers = if was_done_assigned {
-            HashSet::new()
-        } else {
-            HashSet::from([done_category_id])
-        };
         let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
 
         // Succession: generate next instance for recurring items
@@ -2473,34 +2475,17 @@ impl<'a> Aglet<'a> {
         origin: &str,
     ) -> Result<HashSet<CategoryId>> {
         let mut newly_assigned = HashSet::new();
-        if targets.is_empty() {
-            return Ok(newly_assigned);
-        }
-
-        let mut existing = self.store.get_assignments_for_item(item_id)?;
-        let assignment = Assignment {
-            source: AssignmentSource::Manual,
-            assigned_at: Timestamp::now(),
-            sticky: true,
-            origin: Some(origin.to_string()),
-            explanation: Some(AssignmentExplanation::Manual {
-                origin: Some(origin.to_string()),
-            }),
-            numeric_value: None,
-        };
-
         for category_id in targets {
-            self.store.remove_assignment_veto(item_id, *category_id)?;
-            if existing.contains_key(category_id) {
-                continue;
-            }
             self.enforce_manual_exclusive_siblings(item_id, *category_id)?;
-            self.store.assign_item(item_id, *category_id, &assignment)?;
-            self.assign_subsumption_for_category(item_id, *category_id)?;
-            newly_assigned.insert(*category_id);
-            existing = self.store.get_assignments_for_item(item_id)?;
+            newly_assigned.extend(self.write_manual_assignment(
+                item_id,
+                *category_id,
+                Some(origin.to_string()),
+                origin,
+                None,
+                false,
+            )?);
         }
-
         Ok(newly_assigned)
     }
 

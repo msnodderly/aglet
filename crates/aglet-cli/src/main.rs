@@ -2580,39 +2580,19 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                         .unwrap_or_else(|| "(deleted)".to_string())
                 };
                 for (i, condition) in category.conditions.iter().enumerate() {
-                    match condition {
-                        aglet_core::model::Condition::ImplicitString => {
-                            println!("  {}. ImplicitString", i + 1);
-                        }
-                        aglet_core::model::Condition::Profile { criteria } => {
-                            let trigger = criteria.format_trigger(&resolve);
-                            println!("  {}. [Profile] {} -> {}", i + 1, trigger, category.name);
-                        }
-                        aglet_core::model::Condition::Date { source, matcher } => {
-                            println!(
-                                "  {}. [Date] {} -> {}",
-                                i + 1,
-                                render_date_condition(*source, matcher),
-                                category.name
-                            );
-                        }
-                        aglet_core::model::Condition::Numeric {
-                            category_id,
-                            min,
-                            max,
-                            outside,
-                        } => {
-                            let target = resolve(*category_id);
-                            println!(
-                                "  {}. [Numeric] {} -> {}",
-                                i + 1,
-                                aglet_core::model::render_numeric_condition(
-                                    &target, *min, *max, *outside
-                                ),
-                                category.name
-                            );
-                        }
-                    }
+                    let kind = match condition {
+                        aglet_core::model::Condition::ImplicitString => "ImplicitString",
+                        aglet_core::model::Condition::Profile { .. } => "Profile",
+                        aglet_core::model::Condition::Date { .. } => "Date",
+                        aglet_core::model::Condition::Numeric { .. } => "Numeric",
+                    };
+                    println!(
+                        "  {}. [{}] {} -> {}",
+                        i + 1,
+                        kind,
+                        condition.render(&resolve),
+                        category.name
+                    );
                 }
             }
             if !category.actions.is_empty() {
@@ -3185,33 +3165,13 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 .update_category(&category)
                 .map_err(|e| e.to_string())?;
 
-            let desc = match &removed {
-                Condition::ImplicitString => "ImplicitString".to_string(),
-                Condition::Profile { criteria } => {
-                    let category_names = category_name_map(&categories);
-                    let resolve = |id: CategoryId| {
-                        category_names
-                            .get(&id)
-                            .cloned()
-                            .unwrap_or_else(|| "(deleted)".to_string())
-                    };
-                    criteria.format_trigger(&resolve)
-                }
-                Condition::Date { source, matcher } => render_date_condition(*source, matcher),
-                Condition::Numeric {
-                    category_id,
-                    min,
-                    max,
-                    outside,
-                } => {
-                    let category_names = category_name_map(&categories);
-                    let target = category_names
-                        .get(category_id)
-                        .cloned()
-                        .unwrap_or_else(|| "(deleted)".to_string());
-                    aglet_core::model::render_numeric_condition(&target, *min, *max, *outside)
-                }
-            };
+            let category_names = category_name_map(&categories);
+            let desc = removed.render(&|id: CategoryId| {
+                category_names
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| "(deleted)".to_string())
+            });
             println!(
                 "removed condition #{} ({}) from {} (processed_items={}, affected_items={})",
                 index, desc, name, result.processed_items, result.affected_items

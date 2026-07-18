@@ -31,17 +31,17 @@ then mechanical splits last so they don't pollute the semantic diffs.
       Agenda's "or one of its children" wording, and why.
 
 ### Consolidation
-- [ ] **B4 — Migrations become an ordered table.** `apply_migrations` iterates
+- [x] **B4 — Migrations become an ordered table.** `apply_migrations` iterates
       `MIGRATIONS: &[(i32, fn)]` in version order; idempotent column repairs
       move to a separate labeled repair pass. Existing migration tests stay
       green.
-- [ ] **B3 — One renderer per condition.** `Condition::render(&self, resolve)`
+- [x] **B3 — One renderer per condition.** `Condition::render(&self, resolve)`
       in model.rs; engine, CLI `category show`, and CLI `remove-condition`
       delegate. Delete the duplicated match arms.
-- [ ] **B2 — Origin derives from explanation.** `AssignmentExplanation::origin()`
+- [x] **B2 — Origin derives from explanation.** `AssignmentExplanation::origin()`
       returns the canonical origin string; writers stop hand-assembling the
       pair. Storage column unchanged (values identical), so no migration.
-- [ ] **C4 — One manual-assignment helper.** `assign_item_manual`,
+- [x] **C4 — One manual-assignment helper.** `assign_item_manual`,
       `assign_item_numeric_manual`, and `mark_item_done` share a
       `write_manual_assignment` helper (veto clear + was-assigned check +
       write + subsumption + trigger computation).

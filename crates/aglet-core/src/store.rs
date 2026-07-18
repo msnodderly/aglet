@@ -2224,21 +2224,199 @@ impl Store {
         Ok(())
     }
 
+    /// Versioned migrations in ascending order, followed by an idempotent
+    /// column-repair pass for DBs stamped with a current version by partial
+    /// development builds. Add new migrations to the END of the table with
+    /// the next schema version; keep bodies idempotent as defense in depth.
     fn apply_migrations(&self, from_version: i32) -> Result<()> {
-        if from_version < 2 && !self.column_exists("categories", "is_actionable")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN is_actionable INTEGER NOT NULL DEFAULT 1;",
-            )?;
-            self.conn.execute(
-                "UPDATE categories
-                 SET is_actionable = 0
-                 WHERE name IN ('When', 'Entry', 'Done') COLLATE NOCASE",
-                [],
-            )?;
+        type Migration = (i32, fn(&Store) -> Result<()>);
+        const MIGRATIONS: &[Migration] = &[
+            (2, Store::migrate_v2_actionable_flag),
+            (3, Store::migrate_v3_column_kinds),
+            (6, Store::migrate_v6_item_links),
+            (8, Store::migrate_v8_app_settings),
+            (11, Store::migrate_v11_suggestions_and_datetime_format),
+            (16, Store::migrate_v16_recurrence_columns),
+            (20, Store::migrate_v20_assignment_vetoes),
+        ];
+        for (version, migrate) in MIGRATIONS {
+            if from_version < *version {
+                migrate(self)?;
+            }
         }
-        // Always ensure item_column_label exists — idempotent column add
-        // guards against DBs that were stamped at version 3 by an earlier
-        // partial implementation before this column was added to the schema.
+        self.repair_missing_columns()
+    }
+
+    fn migrate_v2_actionable_flag(&self) -> Result<()> {
+        if self.column_exists("categories", "is_actionable")? {
+            return Ok(());
+        }
+        self.conn.execute_batch(
+            "ALTER TABLE categories ADD COLUMN is_actionable INTEGER NOT NULL DEFAULT 1;",
+        )?;
+        self.conn.execute(
+            "UPDATE categories
+             SET is_actionable = 0
+             WHERE name IN ('When', 'Entry', 'Done') COLLATE NOCASE",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn migrate_v3_column_kinds(&self) -> Result<()> {
+        // Inject kind field into existing columns_json.
+        // Find the When category ID, then tag columns whose heading matches it
+        // as When, all others as Standard.
+        let when_cat_id = self.get_category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
+        let mut stmt = self.conn.prepare("SELECT id, columns_json FROM views")?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        for (view_id, columns_json) in rows {
+            // Corrupt legacy row: treat as having no columns and skip the migration.
+            let mut columns: Vec<serde_json::Value> =
+                serde_json::from_str(&columns_json).unwrap_or_default();
+            let mut changed = false;
+            for col in columns.iter_mut() {
+                if col.get("kind").is_none() {
+                    let heading = col.get("heading").and_then(|h| h.as_str()).unwrap_or("");
+                    let is_when = when_cat_id
+                        .map(|wid| heading == wid.to_string())
+                        .unwrap_or(false);
+                    col.as_object_mut().unwrap().insert(
+                        "kind".to_string(),
+                        serde_json::Value::String(
+                            if is_when { "When" } else { "Standard" }.to_string(),
+                        ),
+                    );
+                    changed = true;
+                }
+            }
+            if changed {
+                let new_json = serde_json::to_string(&columns)
+                    .expect("Vec<serde_json::Value> is always serialisable");
+                self.conn.execute(
+                    "UPDATE views SET columns_json = ?1 WHERE id = ?2",
+                    params![new_json, view_id],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn migrate_v6_item_links(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS item_links (
+                item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                kind          TEXT NOT NULL,
+                created_at    TEXT NOT NULL,
+                origin        TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (item_id, other_item_id, kind),
+                CHECK (item_id <> other_item_id),
+                CHECK (kind IN ('depends-on', 'related')),
+                CHECK (kind <> 'related' OR item_id < other_item_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_item_links_item_kind
+                ON item_links(item_id, kind);
+            CREATE INDEX IF NOT EXISTS idx_item_links_other_kind
+                ON item_links(other_item_id, kind);
+            CREATE INDEX IF NOT EXISTS idx_item_links_kind
+                ON item_links(kind);
+            "#,
+        )?;
+        Ok(())
+    }
+
+    fn migrate_v8_app_settings(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            "#,
+        )?;
+        Ok(())
+    }
+
+    fn migrate_v11_suggestions_and_datetime_format(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS classification_suggestions (
+                id                 TEXT PRIMARY KEY,
+                item_id            TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                kind               TEXT NOT NULL,
+                category_id        TEXT,
+                when_value         TEXT,
+                provider_id        TEXT NOT NULL,
+                model              TEXT,
+                confidence         REAL,
+                rationale          TEXT,
+                status             TEXT NOT NULL,
+                context_hash       TEXT NOT NULL,
+                item_revision_hash TEXT NOT NULL,
+                created_at         TEXT NOT NULL,
+                decided_at         TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_classification_suggestions_item_id
+                ON classification_suggestions (item_id);
+            CREATE INDEX IF NOT EXISTS idx_classification_suggestions_status
+                ON classification_suggestions (status);
+            "#,
+        )?;
+        // Migrate when_date / done_date from "YYYY-MM-DD HH:MM:SS" to "YYYY-MM-DDTHH:MM:SS"
+        self.conn.execute_batch(
+            "UPDATE items SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
+             UPDATE items SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;
+             UPDATE deletion_log SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
+             UPDATE deletion_log SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_v16_recurrence_columns(&self) -> Result<()> {
+        if !self.column_exists("items", "recurrence_rule_json")? {
+            self.conn
+                .execute_batch("ALTER TABLE items ADD COLUMN recurrence_rule_json TEXT;")?;
+        }
+        if !self.column_exists("items", "recurrence_series_id")? {
+            self.conn
+                .execute_batch("ALTER TABLE items ADD COLUMN recurrence_series_id TEXT;")?;
+        }
+        if !self.column_exists("items", "recurrence_parent_item_id")? {
+            self.conn
+                .execute_batch("ALTER TABLE items ADD COLUMN recurrence_parent_item_id TEXT;")?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v20_assignment_vetoes(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS assignment_vetoes (
+                item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                created_at  TEXT NOT NULL,
+                origin      TEXT,
+                PRIMARY KEY (item_id, category_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
+                ON assignment_vetoes(item_id);
+            "#,
+        )?;
+        Ok(())
+    }
+
+    /// Idempotent column adds for DBs that were stamped with a current
+    /// schema version by earlier partial development builds while still
+    /// missing columns. Runs on every open, after versioned migrations.
+    fn repair_missing_columns(&self) -> Result<()> {
         if !self.column_exists("views", "item_column_label")? {
             self.conn
                 .execute_batch("ALTER TABLE views ADD COLUMN item_column_label TEXT;")?;
@@ -2318,159 +2496,10 @@ impl Store {
             self.conn
                 .execute_batch("ALTER TABLE assignments ADD COLUMN numeric_value TEXT;")?;
         }
-        if from_version < 6 {
-            self.conn.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS item_links (
-                    item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                    other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                    kind          TEXT NOT NULL,
-                    created_at    TEXT NOT NULL,
-                    origin        TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    PRIMARY KEY (item_id, other_item_id, kind),
-                    CHECK (item_id <> other_item_id),
-                    CHECK (kind IN ('depends-on', 'related')),
-                    CHECK (kind <> 'related' OR item_id < other_item_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_item_links_item_kind
-                    ON item_links(item_id, kind);
-                CREATE INDEX IF NOT EXISTS idx_item_links_other_kind
-                    ON item_links(other_item_id, kind);
-                CREATE INDEX IF NOT EXISTS idx_item_links_kind
-                    ON item_links(kind);
-                "#,
-            )?;
-        }
-        if from_version < 8 {
-            self.conn.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS app_settings (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-                "#,
-            )?;
-        }
-        if from_version < 11 {
-            self.conn.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS classification_suggestions (
-                    id                 TEXT PRIMARY KEY,
-                    item_id            TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                    kind               TEXT NOT NULL,
-                    category_id        TEXT,
-                    when_value         TEXT,
-                    provider_id        TEXT NOT NULL,
-                    model              TEXT,
-                    confidence         REAL,
-                    rationale          TEXT,
-                    status             TEXT NOT NULL,
-                    context_hash       TEXT NOT NULL,
-                    item_revision_hash TEXT NOT NULL,
-                    created_at         TEXT NOT NULL,
-                    decided_at         TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_classification_suggestions_item_id
-                    ON classification_suggestions (item_id);
-                CREATE INDEX IF NOT EXISTS idx_classification_suggestions_status
-                    ON classification_suggestions (status);
-                "#,
-            )?;
-        }
-
-        if from_version < 3 {
-            // Inject kind field into existing columns_json.
-            // Find the When category ID, then tag columns whose heading matches it
-            // as When, all others as Standard.
-            let when_cat_id = self.get_category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
-            let mut stmt = self.conn.prepare("SELECT id, columns_json FROM views")?;
-            let rows: Vec<(String, String)> = stmt
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-
-            for (view_id, columns_json) in rows {
-                // Corrupt legacy row: treat as having no columns and skip the migration.
-                let mut columns: Vec<serde_json::Value> =
-                    serde_json::from_str(&columns_json).unwrap_or_default();
-                let mut changed = false;
-                for col in columns.iter_mut() {
-                    if col.get("kind").is_none() {
-                        let heading = col.get("heading").and_then(|h| h.as_str()).unwrap_or("");
-                        let is_when = when_cat_id
-                            .map(|wid| heading == wid.to_string())
-                            .unwrap_or(false);
-                        col.as_object_mut().unwrap().insert(
-                            "kind".to_string(),
-                            serde_json::Value::String(
-                                if is_when { "When" } else { "Standard" }.to_string(),
-                            ),
-                        );
-                        changed = true;
-                    }
-                }
-                if changed {
-                    let new_json = serde_json::to_string(&columns)
-                        .expect("Vec<serde_json::Value> is always serialisable");
-                    self.conn.execute(
-                        "UPDATE views SET columns_json = ?1 WHERE id = ?2",
-                        params![new_json, view_id],
-                    )?;
-                }
-            }
-        }
-
-        if from_version < 11 {
-            // Migrate when_date / done_date from "YYYY-MM-DD HH:MM:SS" to "YYYY-MM-DDTHH:MM:SS"
-            self.conn.execute_batch(
-                "UPDATE items SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
-                 UPDATE items SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;
-                 UPDATE deletion_log SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
-                 UPDATE deletion_log SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;",
-            )?;
-        }
-
-        if from_version < 16 {
-            if !self.column_exists("items", "recurrence_rule_json")? {
-                self.conn
-                    .execute_batch("ALTER TABLE items ADD COLUMN recurrence_rule_json TEXT;")?;
-            }
-            if !self.column_exists("items", "recurrence_series_id")? {
-                self.conn
-                    .execute_batch("ALTER TABLE items ADD COLUMN recurrence_series_id TEXT;")?;
-            }
-            if !self.column_exists("items", "recurrence_parent_item_id")? {
-                self.conn.execute_batch(
-                    "ALTER TABLE items ADD COLUMN recurrence_parent_item_id TEXT;",
-                )?;
-            }
-        }
-
-        // v17 → v18: datebook config on views
         if !self.column_exists("views", "datebook_config_json")? {
             self.conn
                 .execute_batch("ALTER TABLE views ADD COLUMN datebook_config_json TEXT;")?;
         }
-
-        // v19 → v20: negative assignments (vetoes)
-        if from_version < 20 {
-            self.conn.execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS assignment_vetoes (
-                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-                    created_at  TEXT NOT NULL,
-                    origin      TEXT,
-                    PRIMARY KEY (item_id, category_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
-                    ON assignment_vetoes(item_id);
-                "#,
-            )?;
-        }
-
         Ok(())
     }
 
@@ -3767,6 +3796,7 @@ mod tests {
             sticky: false,
             origin: Some("cat:Phone Calls".to_string()),
             explanation: Some(AssignmentExplanation::ImplicitMatch {
+                owner_category_name: String::new(),
                 matched_term: "call".to_string(),
                 matched_source: TextMatchSource::AlsoMatch,
             }),

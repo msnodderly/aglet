@@ -359,6 +359,10 @@ pub enum AssignmentExplanation {
     ImplicitMatch {
         matched_term: String,
         matched_source: TextMatchSource,
+        /// Name of the category the text matched into. Added 2026-07 so the
+        /// origin string is derivable; empty on rows written before then.
+        #[serde(default)]
+        owner_category_name: String,
     },
     ProfileCondition {
         owner_category_name: String,
@@ -401,12 +405,60 @@ pub enum AssignmentExplanation {
 }
 
 impl AssignmentExplanation {
+    /// Canonical `origin` string for this explanation — the single source the
+    /// writers derive [`Assignment::origin`] from, so the two provenance
+    /// fields cannot drift. Returns `None` for [`Self::AutoClassified`],
+    /// whose origin encodes the candidate kind and stays caller-supplied.
+    pub fn origin(&self) -> Option<String> {
+        match self {
+            Self::Manual { origin } => {
+                Some(origin.clone().unwrap_or_else(|| origin::MANUAL.to_string()))
+            }
+            Self::ImplicitMatch {
+                owner_category_name,
+                ..
+            } => Some(format!("cat:{owner_category_name}")),
+            Self::ProfileCondition {
+                owner_category_name,
+                ..
+            } => Some(format!("profile:{owner_category_name}")),
+            Self::DateCondition {
+                owner_category_name,
+                ..
+            } => Some(format!("match:date:{owner_category_name}")),
+            Self::NumericCondition {
+                owner_category_name,
+                ..
+            } => Some(format!("match:numeric:{owner_category_name}")),
+            Self::ConditionGroup {
+                owner_category_name,
+                ..
+            } => Some(format!("match:conditions:all:{owner_category_name}")),
+            Self::Action {
+                trigger_category_name,
+                ..
+            } => Some(format!("action:{trigger_category_name}")),
+            Self::Subsumption {
+                via_child_category_name,
+                ..
+            } => Some(format!(
+                "{}:{via_child_category_name}",
+                origin::SUBSUMPTION
+            )),
+            Self::SuggestionAccepted { provider_id, .. } => {
+                Some(format!("suggestion:accepted:{provider_id}"))
+            }
+            Self::AutoClassified { .. } => None,
+        }
+    }
+
     pub fn summary(&self) -> String {
         match self {
             Self::Manual { .. } => "Assigned manually".to_string(),
             Self::ImplicitMatch {
                 matched_term,
                 matched_source,
+                ..
             } => match matched_source {
                 TextMatchSource::CategoryName => {
                     format!("Matched category name \"{matched_term}\"")
@@ -502,6 +554,7 @@ impl AssignmentExplanation {
             Self::ImplicitMatch {
                 matched_term,
                 matched_source,
+                ..
             } => match matched_source {
                 TextMatchSource::CategoryName => {
                     format!("Text no longer matched category name \"{matched_term}\"")
@@ -706,6 +759,27 @@ pub enum Condition {
         #[serde(default)]
         outside: bool,
     },
+}
+
+impl Condition {
+    /// Human-readable rule text, e.g. "Bug + Core", "When before today",
+    /// "Cost >= 100". `resolve` maps a category id to its display name.
+    /// The single renderer used by engine explanations and the CLI.
+    pub fn render(&self, resolve: &impl Fn(CategoryId) -> String) -> String {
+        match self {
+            Condition::ImplicitString => "ImplicitString".to_string(),
+            Condition::Profile { criteria } => criteria.format_trigger(resolve),
+            Condition::Date { source, matcher } => {
+                crate::date_rules::render_date_condition(*source, matcher)
+            }
+            Condition::Numeric {
+                category_id,
+                min,
+                max,
+                outside,
+            } => render_numeric_condition(&resolve(*category_id), *min, *max, *outside),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

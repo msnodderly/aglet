@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use jiff::Timestamp;
 
-use crate::date_rules::{item_matches_date_condition, render_date_condition, EvaluationContext};
+use crate::date_rules::{item_matches_date_condition, EvaluationContext};
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
+    Action, Assignment, AssignmentActionKind, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition,
     ConditionMatchMode, Item, ItemId, Query, TextMatchSource,
 };
@@ -159,6 +159,20 @@ impl ActionFiring {
 struct MatchReason {
     explanation: AssignmentExplanation,
     origin: String,
+}
+
+impl MatchReason {
+    /// The origin string is derived from the explanation — one provenance
+    /// source, two stored fields.
+    fn from_explanation(explanation: AssignmentExplanation) -> Self {
+        let origin = explanation
+            .origin()
+            .expect("engine match explanations always derive an origin");
+        Self {
+            explanation,
+            origin,
+        }
+    }
 }
 
 /// Process one item through fixed-point category evaluation.
@@ -482,13 +496,13 @@ fn evaluate_category_match(
                 crate::matcher::ImplicitMatchSource::CategoryName => TextMatchSource::CategoryName,
                 crate::matcher::ImplicitMatchSource::AlsoMatch => TextMatchSource::AlsoMatch,
             };
-            return Some(MatchReason {
-                origin: match_origin_implicit(&category.name),
-                explanation: AssignmentExplanation::ImplicitMatch {
+            return Some(MatchReason::from_explanation(
+                AssignmentExplanation::ImplicitMatch {
                     matched_term: matched.matched_term,
                     matched_source,
+                    owner_category_name: category.name.clone(),
                 },
-            });
+            ));
         }
     }
 
@@ -498,9 +512,8 @@ fn evaluate_category_match(
                 match condition {
                     Condition::Profile { criteria } => {
                         if profile_matches(criteria, assignments) {
-                            return Some(MatchReason {
-                                origin: match_origin_profile(&category.name),
-                                explanation: AssignmentExplanation::ProfileCondition {
+                            return Some(MatchReason::from_explanation(
+                                AssignmentExplanation::ProfileCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
                                     rendered_rule: render_condition_rule(
@@ -508,7 +521,7 @@ fn evaluate_category_match(
                                         categories_by_id,
                                     ),
                                 },
-                            });
+                            ));
                         }
                     }
                     Condition::Date { source, matcher } => {
@@ -518,9 +531,8 @@ fn evaluate_category_match(
                             matcher,
                             &options.evaluation_context,
                         ) {
-                            return Some(MatchReason {
-                                origin: format!("match:date:{}", category.name),
-                                explanation: AssignmentExplanation::DateCondition {
+                            return Some(MatchReason::from_explanation(
+                                AssignmentExplanation::DateCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
                                     rendered_rule: render_condition_rule(
@@ -528,7 +540,7 @@ fn evaluate_category_match(
                                         categories_by_id,
                                     ),
                                 },
-                            });
+                            ));
                         }
                     }
                     Condition::Numeric {
@@ -539,9 +551,8 @@ fn evaluate_category_match(
                     } => {
                         if numeric_condition_matches(*category_id, *min, *max, *outside, assignments)
                         {
-                            return Some(MatchReason {
-                                origin: format!("match:numeric:{}", category.name),
-                                explanation: AssignmentExplanation::NumericCondition {
+                            return Some(MatchReason::from_explanation(
+                                AssignmentExplanation::NumericCondition {
                                     owner_category_name: category.name.clone(),
                                     condition_index,
                                     rendered_rule: render_condition_rule(
@@ -549,7 +560,7 @@ fn evaluate_category_match(
                                         categories_by_id,
                                     ),
                                 },
-                            });
+                            ));
                         }
                     }
                     Condition::ImplicitString => {}
@@ -576,13 +587,13 @@ fn evaluate_category_match(
                             TextMatchSource::AlsoMatch
                         }
                     };
-                    return Some(MatchReason {
-                        origin: match_origin_implicit(&category.name),
-                        explanation: AssignmentExplanation::ImplicitMatch {
+                    return Some(MatchReason::from_explanation(
+                        AssignmentExplanation::ImplicitMatch {
                             matched_term: matched.matched_term,
                             matched_source,
+                            owner_category_name: category.name.clone(),
                         },
-                    });
+                    ));
                 }
                 if explicit_conditions.iter().all(|condition| {
                     condition_matches(condition, item, assignments, categories_by_id, options)
@@ -594,14 +605,13 @@ fn evaluate_category_match(
                             .iter()
                             .map(|condition| render_condition_rule(condition, categories_by_id)),
                     );
-                    return Some(MatchReason {
-                        origin: format!("match:conditions:all:{}", category.name),
-                        explanation: AssignmentExplanation::ConditionGroup {
+                    return Some(MatchReason::from_explanation(
+                        AssignmentExplanation::ConditionGroup {
                             owner_category_name: category.name.clone(),
                             match_mode: ConditionMatchMode::All,
                             rendered_rules,
                         },
-                    });
+                    ));
                 }
                 return None;
             }
@@ -681,28 +691,12 @@ fn render_condition_rule(
     condition: &Condition,
     categories_by_id: &HashMap<CategoryId, &Category>,
 ) -> String {
-    match condition {
-        Condition::Profile { criteria } => criteria.format_trigger(&|category_id| {
-            categories_by_id
-                .get(&category_id)
-                .map(|candidate| candidate.name.clone())
-                .unwrap_or_else(|| category_id.to_string())
-        }),
-        Condition::Date { source, matcher } => render_date_condition(*source, matcher),
-        Condition::Numeric {
-            category_id,
-            min,
-            max,
-            outside,
-        } => {
-            let name = categories_by_id
-                .get(category_id)
-                .map(|candidate| candidate.name.clone())
-                .unwrap_or_else(|| category_id.to_string());
-            crate::model::render_numeric_condition(&name, *min, *max, *outside)
-        }
-        Condition::ImplicitString => "ImplicitString".to_string(),
-    }
+    condition.render(&|category_id| {
+        categories_by_id
+            .get(&category_id)
+            .map(|candidate| candidate.name.clone())
+            .unwrap_or_else(|| category_id.to_string())
+    })
 }
 
 fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignment>) -> bool {
@@ -783,17 +777,18 @@ fn fire_queued_actions(
                         }
                         enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
 
+                        let explanation = AssignmentExplanation::Action {
+                            trigger_category_name: category.name.clone(),
+                            kind: AssignmentActionKind::Assign,
+                        };
                         let assigned = assign_if_unassigned(
                             item_id,
                             *target_id,
                             AssignmentTemplate {
                                 source: AssignmentSource::Action,
                                 sticky: true,
-                                origin: Some(format!("action:{}", category.name)),
-                                explanation: Some(AssignmentExplanation::Action {
-                                    trigger_category_name: category.name.clone(),
-                                    kind: AssignmentActionKind::Assign,
-                                }),
+                                origin: explanation.origin(),
+                                explanation: Some(explanation),
                                 numeric_value: None,
                             },
                             original_assignments,
@@ -855,17 +850,18 @@ fn fire_queued_actions(
                     }
                     enforce_mutual_exclusion(*target, categories_by_id, assignments)?;
 
+                    let explanation = AssignmentExplanation::Action {
+                        trigger_category_name: category.name.clone(),
+                        kind: AssignmentActionKind::Assign,
+                    };
                     let assigned = assign_if_unassigned(
                         item_id,
                         *target,
                         AssignmentTemplate {
                             source: AssignmentSource::Action,
                             sticky: true,
-                            origin: Some(format!("action:{}", category.name)),
-                            explanation: Some(AssignmentExplanation::Action {
-                                trigger_category_name: category.name.clone(),
-                                kind: AssignmentActionKind::Assign,
-                            }),
+                            origin: explanation.origin(),
+                            explanation: Some(explanation),
                             numeric_value: Some(*value),
                         },
                         original_assignments,
@@ -1066,7 +1062,6 @@ fn assign_subsumption_ancestors(
         return;
     };
 
-    let subsumption_origin = Some(format!("{}:{}", origin_const::SUBSUMPTION, category.name));
     let mut current_parent = category.parent;
     let mut visited = HashSet::new();
 
@@ -1085,16 +1080,19 @@ fn assign_subsumption_ancestors(
                 let assignment = original_assignments
                     .get(&ancestor_id)
                     .cloned()
-                    .unwrap_or_else(|| Assignment {
-                        source: AssignmentSource::Subsumption,
-                        assigned_at: Timestamp::now(),
-                        sticky: false,
-                        origin: subsumption_origin.clone(),
-                        explanation: Some(AssignmentExplanation::Subsumption {
+                    .unwrap_or_else(|| {
+                        let explanation = AssignmentExplanation::Subsumption {
                             parent_category_name: parent_name,
                             via_child_category_name: category.name.clone(),
-                        }),
-                        numeric_value: None,
+                        };
+                        Assignment {
+                            source: AssignmentSource::Subsumption,
+                            assigned_at: Timestamp::now(),
+                            sticky: false,
+                            origin: explanation.origin(),
+                            explanation: Some(explanation),
+                            numeric_value: None,
+                        }
                     });
                 entry.insert(assignment);
                 seen_pairs.insert(pair);
@@ -1208,14 +1206,6 @@ fn sync_assignments(
     }
 
     Ok(())
-}
-
-fn match_origin_implicit(category_name: &str) -> String {
-    format!("cat:{category_name}")
-}
-
-fn match_origin_profile(category_name: &str) -> String {
-    format!("profile:{category_name}")
 }
 
 fn pass_cap_error(item_id: ItemId) -> AgletError {
