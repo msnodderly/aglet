@@ -21,7 +21,7 @@ use crate::model::{
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 19;
+const SCHEMA_VERSION: i32 = 20;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS categories (
     conditions_json        TEXT NOT NULL DEFAULT '[]',
     actions_json           TEXT NOT NULL DEFAULT '[]',
     value_kind             TEXT NOT NULL DEFAULT 'Tag',
-    numeric_format_json    TEXT NOT NULL DEFAULT 'null'
+    numeric_format_json    TEXT NOT NULL DEFAULT 'null',
+    allow_delete_action    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS assignments (
@@ -132,7 +133,16 @@ CREATE TABLE IF NOT EXISTS item_links (
     CHECK (kind <> 'related' OR item_id < other_item_id)
 );
 
+CREATE TABLE IF NOT EXISTS assignment_vetoes (
+    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL,
+    origin      TEXT,
+    PRIMARY KEY (item_id, category_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_assignments_item ON assignments(item_id);
+CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item ON assignment_vetoes(item_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_category ON assignments(category_id);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_items_when_date ON items(when_date);
@@ -668,8 +678,8 @@ impl Store {
                     id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
                     enable_semantic_classification, match_category_name, also_match_json, note,
                     created_at, modified_at, condition_match_mode, sort_order, conditions_json,
-                    actions_json, value_kind, numeric_format_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                    actions_json, value_kind, numeric_format_json, allow_delete_action
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                 params![
                     category.id.to_string(),
                     category.name,
@@ -689,6 +699,7 @@ impl Store {
                     actions_json,
                     Self::category_value_kind_to_db(category.value_kind),
                     numeric_format_json,
+                    category.allow_delete_action as i32,
                 ],
             )
             .map_err(|err| Self::map_category_write_error(err, &category.name))?;
@@ -701,7 +712,7 @@ impl Store {
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
                     enable_semantic_classification, match_category_name, also_match_json, note,
                     created_at, modified_at, condition_match_mode, conditions_json, actions_json,
-                    sort_order, value_kind, numeric_format_json
+                    sort_order, value_kind, numeric_format_json, allow_delete_action
              FROM categories WHERE id = ?1",
         )?;
         let (mut category, _) = stmt
@@ -790,8 +801,9 @@ impl Store {
                      conditions_json = ?12,
                      actions_json = ?13,
                      value_kind = ?14,
-                     numeric_format_json = ?15
-                 WHERE id = ?16",
+                     numeric_format_json = ?15,
+                     allow_delete_action = ?16
+                 WHERE id = ?17",
                 params![
                     category.name,
                     category.parent.map(|id| id.to_string()),
@@ -808,6 +820,7 @@ impl Store {
                     actions_json,
                     Self::category_value_kind_to_db(category.value_kind),
                     numeric_format_json,
+                    category.allow_delete_action as i32,
                     category.id.to_string(),
                 ],
             )
@@ -934,7 +947,7 @@ impl Store {
             "SELECT id, name, parent_id, is_exclusive, is_actionable, enable_implicit_string,
                     enable_semantic_classification, match_category_name, also_match_json, note,
                     created_at, modified_at, condition_match_mode, conditions_json, actions_json,
-                    sort_order, value_kind, numeric_format_json
+                    sort_order, value_kind, numeric_format_json, allow_delete_action
              FROM categories
              ORDER BY sort_order ASC, name COLLATE NOCASE ASC",
         )?;
@@ -1663,6 +1676,54 @@ impl Store {
         Ok(())
     }
 
+    /// Record a negative assignment (Agenda's `-`): the engine must never
+    /// auto-assign this item to this category again. Idempotent.
+    pub fn add_assignment_veto(
+        &self,
+        item_id: ItemId,
+        category_id: CategoryId,
+        origin: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO assignment_vetoes (item_id, category_id, created_at, origin)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                item_id.to_string(),
+                category_id.to_string(),
+                Timestamp::now().to_string(),
+                origin,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Clear a negative assignment. Returns Ok even if no veto existed.
+    pub fn remove_assignment_veto(&self, item_id: ItemId, category_id: CategoryId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM assignment_vetoes WHERE item_id = ?1 AND category_id = ?2",
+            params![item_id.to_string(), category_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// All categories the user has vetoed for this item.
+    pub fn get_vetoes_for_item(&self, item_id: ItemId) -> Result<HashSet<CategoryId>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT category_id FROM assignment_vetoes WHERE item_id = ?1")?;
+        let rows = stmt.query_map(params![item_id.to_string()], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut vetoes = HashSet::new();
+        for row in rows {
+            let id_str = row?;
+            if let Ok(id) = Uuid::parse_str(&id_str) {
+                vetoes.insert(id);
+            }
+        }
+        Ok(vetoes)
+    }
+
     /// Get all assignments for an item as a HashMap.
     pub fn get_assignments_for_item(
         &self,
@@ -1691,6 +1752,7 @@ impl Store {
         let sort_order: i64 = row.get(15)?;
         let value_kind_str: String = row.get(16)?;
         let numeric_format_json: String = row.get(17)?;
+        let allow_delete_action: i32 = row.get(18)?;
 
         // Corrupt or legacy category row: fall back to no conditions/actions
         // so the category still loads without its rules rather than failing.
@@ -1722,6 +1784,7 @@ impl Store {
                 actions,
                 value_kind,
                 numeric_format,
+                allow_delete_action: allow_delete_action != 0,
             },
             sort_order,
         ))
@@ -2216,6 +2279,11 @@ impl Store {
                 "ALTER TABLE categories ADD COLUMN value_kind TEXT NOT NULL DEFAULT 'Tag';",
             )?;
         }
+        if !self.column_exists("categories", "allow_delete_action")? {
+            self.conn.execute_batch(
+                "ALTER TABLE categories ADD COLUMN allow_delete_action INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
         if !self.column_exists("categories", "numeric_format_json")? {
             self.conn.execute_batch(
                 "ALTER TABLE categories ADD COLUMN numeric_format_json TEXT NOT NULL DEFAULT 'null';",
@@ -2384,6 +2452,23 @@ impl Store {
         if !self.column_exists("views", "datebook_config_json")? {
             self.conn
                 .execute_batch("ALTER TABLE views ADD COLUMN datebook_config_json TEXT;")?;
+        }
+
+        // v19 → v20: negative assignments (vetoes)
+        if from_version < 20 {
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS assignment_vetoes (
+                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                    created_at  TEXT NOT NULL,
+                    origin      TEXT,
+                    PRIMARY KEY (item_id, category_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
+                    ON assignment_vetoes(item_id);
+                "#,
+            )?;
         }
 
         Ok(())

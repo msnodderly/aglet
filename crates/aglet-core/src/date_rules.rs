@@ -231,6 +231,15 @@ fn item_date_value(item: &Item, source: DateSource, ctx: &EvaluationContext) -> 
     }
 }
 
+/// Resolve a date expression to a concrete civil DateTime against the
+/// evaluation context; bare dates resolve to midnight.
+pub fn resolve_date_value_expr(value: &DateValueExpr, ctx: &EvaluationContext) -> DateTime {
+    match resolve_value(value, ctx) {
+        ResolvedValue::Date(date) => at_midnight(date),
+        ResolvedValue::DateTime(datetime) => datetime,
+    }
+}
+
 fn resolve_value(value: &DateValueExpr, ctx: &EvaluationContext) -> ResolvedValue {
     match value {
         DateValueExpr::Today => ResolvedValue::Date(ctx.today()),

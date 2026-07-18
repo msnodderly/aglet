@@ -1192,3 +1192,29 @@ Rationale:
   cannot persist exactly.
 - Keeps section/unmatched workflows anchored in the manager instead of forcing a
   separate top-level editor path.
+
+---
+
+## 45. Remove actions may clear any assignment, including manual ones; user vetoes are the counterweight
+
+**Date**: 2026-07-17
+
+A category's `Remove` action clears the target assignment regardless of its
+source — manual assignments included. This is the Lotus Agenda behavior
+("Remove assignment from... all items that are assigned to the current
+category") and it is what makes the canonical workflow work: a `Done`
+category with a Remove→`Inbox` action must clear `Inbox` even though the
+user filed the item there by hand.
+
+The user's protection against unwanted automation is the **negative
+assignment (veto)**: manually unassigning an automatically assigned category
+records a per-item veto that blocks the engine from re-assigning it (Agenda's
+`-` marker). Rules can be strong because the user's "no" is stronger.
+
+Alternatives considered and rejected:
+
+- *Remove never clears manual assignments* (Travel Planner's guard): safer
+  default, but it breaks Done-style cleanup rules on manually filed items and
+  makes rule behavior depend on invisible provenance.
+- *Per-action `force` flag*: more machinery for a distinction users would
+  have to configure and remember.

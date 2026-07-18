@@ -21,12 +21,30 @@ pub struct DeferredRemoval {
     pub triggered_by: CategoryId,
 }
 
+/// Item-mutating action effects (SetWhen / MarkDone / Delete) collected during
+/// the cascade and applied by the Aglet layer once the engine run completes,
+/// mirroring how Remove actions are deferred. Keeping the engine's passes
+/// monotonic over assignments preserves the termination guarantees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredSpecial {
+    pub triggered_by: CategoryId,
+    pub kind: SpecialActionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpecialActionKind {
+    SetWhen(crate::model::DateValueExpr),
+    MarkDone,
+    Delete,
+}
+
 #[derive(Debug, Default)]
 pub struct ProcessItemResult {
     pub new_assignments: HashSet<CategoryId>,
     pub removed_assignments: HashSet<CategoryId>,
     pub assignment_events: Vec<AssignmentEvent>,
     pub deferred_removals: Vec<DeferredRemoval>,
+    pub deferred_specials: Vec<DeferredSpecial>,
     pub semantic_candidates_seen: usize,
     pub semantic_candidates_queued_review: usize,
     pub semantic_candidates_skipped_already_assigned: usize,
@@ -50,6 +68,7 @@ struct PassResult {
     new_assignments: HashSet<CategoryId>,
     assignment_events: Vec<AssignmentEvent>,
     deferred_removals: Vec<DeferredRemoval>,
+    deferred_specials: Vec<DeferredSpecial>,
     changed: bool,
 }
 
@@ -61,6 +80,12 @@ struct HierarchyPassInput<'a> {
     categories: &'a [Category],
     categories_by_id: &'a HashMap<CategoryId, &'a Category>,
     original_assignments: &'a HashMap<CategoryId, Assignment>,
+    /// Categories the user has negatively assigned (Agenda's `-`): the engine
+    /// never auto-assigns these, whether by condition match or by action.
+    /// Subsumption is exempt — an assigned descendant still implies its
+    /// ancestors, matching the hierarchy invariant that an ancestor cannot be
+    /// unassigned while a descendant remains.
+    vetoes: &'a HashSet<CategoryId>,
     options: ProcessOptions,
 }
 
@@ -76,12 +101,19 @@ struct AssignmentTemplate {
     sticky: bool,
     origin: Option<String>,
     explanation: Option<AssignmentExplanation>,
+    numeric_value: Option<rust_decimal::Decimal>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProcessOptions {
     pub enable_implicit_string: bool,
     pub evaluation_context: EvaluationContext,
+    /// Categories whose assignment was just created by the caller (manual entry,
+    /// accepted suggestion, auto-classification, ...) before this processing run.
+    /// The engine treats each as a fresh assignment event and fires that
+    /// category's actions, mirroring Agenda's rule that actions fire on any
+    /// assignment "including an explicit assignment by the user".
+    pub pending_action_triggers: HashSet<CategoryId>,
 }
 
 impl Default for ProcessOptions {
@@ -89,6 +121,28 @@ impl Default for ProcessOptions {
         Self {
             enable_implicit_string: true,
             evaluation_context: EvaluationContext::now(),
+            pending_action_triggers: HashSet::new(),
+        }
+    }
+}
+
+/// Run-scoped queue of assignment events whose actions still need to fire.
+///
+/// Actions fire on the *event* of an assignment becoming new-to-store, no matter
+/// who created it: a condition match, another category's Assign action (chaining),
+/// or an external write seeded via [`ProcessOptions::pending_action_triggers`].
+/// Each category's actions fire at most once per processing run, which bounds
+/// cascades independently of the pass cap.
+#[derive(Debug, Default)]
+struct ActionFiring {
+    queue: Vec<CategoryId>,
+    fired: HashSet<CategoryId>,
+}
+
+impl ActionFiring {
+    fn enqueue(&mut self, category_id: CategoryId) {
+        if !self.fired.contains(&category_id) && !self.queue.contains(&category_id) {
+            self.queue.push(category_id);
         }
     }
 }
@@ -190,6 +244,7 @@ fn process_item_inner(
     options: ProcessOptions,
 ) -> Result<ProcessItemResult> {
     let item = store.get_item(item_id)?;
+    let vetoes = store.get_vetoes_for_item(item_id)?;
     let categories = store.get_hierarchy()?;
     let categories_by_id: HashMap<CategoryId, &Category> = categories
         .iter()
@@ -214,6 +269,13 @@ fn process_item_inner(
     );
 
     let mut result = ProcessItemResult::default();
+    let mut firing = ActionFiring::default();
+    for category_id in &options.pending_action_triggers {
+        // Only categories actually assigned right now count as assignment events.
+        if assignments.contains_key(category_id) {
+            firing.enqueue(*category_id);
+        }
+    }
     let pass_input = HierarchyPassInput {
         classifier,
         item: &item,
@@ -222,11 +284,13 @@ fn process_item_inner(
         categories: &categories,
         categories_by_id: &categories_by_id,
         original_assignments: &original_assignments,
+        vetoes: &vetoes,
         options,
     };
 
     for pass in 1..=MAX_PASSES {
-        let pass_result = run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs)?;
+        let pass_result =
+            run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs, &mut firing)?;
 
         let changed = pass_result.changed;
 
@@ -237,6 +301,9 @@ fn process_item_inner(
         result
             .deferred_removals
             .extend(pass_result.deferred_removals);
+        result
+            .deferred_specials
+            .extend(pass_result.deferred_specials);
 
         if !changed {
             apply_deferred_removals_to_assignments(&result.deferred_removals, &mut assignments);
@@ -282,10 +349,24 @@ fn run_hierarchy_pass(
     input: &HierarchyPassInput<'_>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+    firing: &mut ActionFiring,
 ) -> Result<PassResult> {
     let mut pass_result = PassResult::default();
 
+    // Fire actions for assignment events seeded before this pass (external
+    // writes on the first pass, or events left over from a previous pass).
+    fire_queued_actions(
+        &ActionContext::from_pass_input(input),
+        assignments,
+        seen_pairs,
+        firing,
+        &mut pass_result,
+    )?;
+
     for category in input.categories {
+        if input.vetoes.contains(&category.id) {
+            continue;
+        }
         let Some(reason) = evaluate_category_match(
             category,
             input.item,
@@ -315,6 +396,7 @@ fn run_hierarchy_pass(
                 sticky: false,
                 origin: Some(reason.origin.clone()),
                 explanation: Some(reason.explanation.clone()),
+                numeric_value: None,
             },
             input.original_assignments,
             assignments,
@@ -341,13 +423,12 @@ fn run_hierarchy_pass(
                 category_name: category.name.clone(),
                 summary: reason.explanation.summary(),
             });
-            fire_actions(
-                input.item_id,
-                category,
-                input.categories_by_id,
-                input.original_assignments,
+            firing.enqueue(category.id);
+            fire_queued_actions(
+                &ActionContext::from_pass_input(input),
                 assignments,
                 seen_pairs,
+                firing,
                 &mut pass_result,
             )?;
         }
@@ -365,13 +446,25 @@ fn evaluate_category_match(
     categories_by_id: &HashMap<CategoryId, &Category>,
     options: &ProcessOptions,
 ) -> Option<MatchReason> {
-    if options.enable_implicit_string && category.enable_implicit_string {
-        if let Some(matched) = classifier.classify(
+    let implicit_enabled = options.enable_implicit_string && category.enable_implicit_string;
+    let implicit_match = if implicit_enabled {
+        classifier.classify(
             item_text,
             &category.name,
             category.match_category_name,
             &category.also_match,
-        ) {
+        )
+    } else {
+        None
+    };
+
+    // `condition_match_mode` governs how all of a category's matching signals
+    // combine, the implicit text condition included: Any ORs the text match
+    // with each explicit condition; All requires text (when enabled) AND every
+    // explicit condition — Agenda's "combine text and assignment conditions"
+    // setting.
+    if category.condition_match_mode == ConditionMatchMode::Any {
+        if let Some(matched) = implicit_match {
             let matched_source = match matched.source {
                 crate::matcher::ImplicitMatchSource::CategoryName => TextMatchSource::CategoryName,
                 crate::matcher::ImplicitMatchSource::AlsoMatch => TextMatchSource::AlsoMatch,
@@ -425,6 +518,27 @@ fn evaluate_category_match(
                             });
                         }
                     }
+                    Condition::Numeric {
+                        category_id,
+                        min,
+                        max,
+                        outside,
+                    } => {
+                        if numeric_condition_matches(*category_id, *min, *max, *outside, assignments)
+                        {
+                            return Some(MatchReason {
+                                origin: format!("match:numeric:{}", category.name),
+                                explanation: AssignmentExplanation::NumericCondition {
+                                    owner_category_name: category.name.clone(),
+                                    condition_index,
+                                    rendered_rule: render_condition_rule(
+                                        condition,
+                                        categories_by_id,
+                                    ),
+                                },
+                            });
+                        }
+                    }
                     Condition::ImplicitString => {}
                 }
             }
@@ -435,6 +549,50 @@ fn evaluate_category_match(
                 .iter()
                 .filter(|condition| !matches!(condition, Condition::ImplicitString))
                 .collect();
+
+            if implicit_enabled {
+                // Text is a required conjunct in this run.
+                let matched = implicit_match?;
+                if explicit_conditions.is_empty() {
+                    // Conjunction of one: a plain text match.
+                    let matched_source = match matched.source {
+                        crate::matcher::ImplicitMatchSource::CategoryName => {
+                            TextMatchSource::CategoryName
+                        }
+                        crate::matcher::ImplicitMatchSource::AlsoMatch => {
+                            TextMatchSource::AlsoMatch
+                        }
+                    };
+                    return Some(MatchReason {
+                        origin: match_origin_implicit(&category.name),
+                        explanation: AssignmentExplanation::ImplicitMatch {
+                            matched_term: matched.matched_term,
+                            matched_source,
+                        },
+                    });
+                }
+                if explicit_conditions.iter().all(|condition| {
+                    condition_matches(condition, item, assignments, categories_by_id, options)
+                }) {
+                    let mut rendered_rules =
+                        vec![format!("text ~ \"{}\"", matched.matched_term)];
+                    rendered_rules.extend(
+                        explicit_conditions
+                            .iter()
+                            .map(|condition| render_condition_rule(condition, categories_by_id)),
+                    );
+                    return Some(MatchReason {
+                        origin: format!("match:conditions:all:{}", category.name),
+                        explanation: AssignmentExplanation::ConditionGroup {
+                            owner_category_name: category.name.clone(),
+                            match_mode: ConditionMatchMode::All,
+                            rendered_rules,
+                        },
+                    });
+                }
+                return None;
+            }
+
             if !explicit_conditions.is_empty()
                 && explicit_conditions.iter().all(|condition| {
                     condition_matches(condition, item, assignments, categories_by_id, options)
@@ -471,8 +629,39 @@ fn condition_matches(
         Condition::Date { source, matcher } => {
             item_matches_date_condition(item, *source, matcher, &options.evaluation_context)
         }
+        Condition::Numeric {
+            category_id,
+            min,
+            max,
+            outside,
+        } => numeric_condition_matches(*category_id, *min, *max, *outside, assignments),
         Condition::ImplicitString => false,
     }
+}
+
+/// Agenda's numeric condition. The item must be assigned to the numeric
+/// category; with bounds, its value must fall inside [min, max] (or outside,
+/// when `outside` is set). An assignment without a value only satisfies the
+/// bare "assigned" form (no bounds, not `outside`).
+fn numeric_condition_matches(
+    category_id: CategoryId,
+    min: Option<rust_decimal::Decimal>,
+    max: Option<rust_decimal::Decimal>,
+    outside: bool,
+    assignments: &HashMap<CategoryId, Assignment>,
+) -> bool {
+    let Some(assignment) = assignments.get(&category_id) else {
+        return false;
+    };
+    let Some(value) = assignment.numeric_value else {
+        return min.is_none() && max.is_none() && !outside;
+    };
+    if min.is_none() && max.is_none() {
+        // A plain assignment test; "outside" of an unbounded range is empty.
+        return !outside;
+    }
+    let inside = min.is_none_or(|bound| value >= bound) && max.is_none_or(|bound| value <= bound);
+    inside != outside
 }
 
 fn render_condition_rule(
@@ -487,6 +676,18 @@ fn render_condition_rule(
                 .unwrap_or_else(|| category_id.to_string())
         }),
         Condition::Date { source, matcher } => render_date_condition(*source, matcher),
+        Condition::Numeric {
+            category_id,
+            min,
+            max,
+            outside,
+        } => {
+            let name = categories_by_id
+                .get(category_id)
+                .map(|candidate| candidate.name.clone())
+                .unwrap_or_else(|| category_id.to_string());
+            crate::model::render_numeric_condition(&name, *min, *max, *outside)
+        }
         Condition::ImplicitString => "ImplicitString".to_string(),
     }
 }
@@ -504,30 +705,146 @@ fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignmen
         }
 }
 
-fn fire_actions(
+/// Immutable context shared by every action firing in one processing run.
+struct ActionContext<'a> {
     item_id: ItemId,
-    category: &Category,
-    categories_by_id: &HashMap<CategoryId, &Category>,
-    original_assignments: &HashMap<CategoryId, Assignment>,
+    categories_by_id: &'a HashMap<CategoryId, &'a Category>,
+    original_assignments: &'a HashMap<CategoryId, Assignment>,
+    vetoes: &'a HashSet<CategoryId>,
+}
+
+impl<'a> ActionContext<'a> {
+    fn from_pass_input(input: &'a HierarchyPassInput<'a>) -> Self {
+        Self {
+            item_id: input.item_id,
+            categories_by_id: input.categories_by_id,
+            original_assignments: input.original_assignments,
+            vetoes: input.vetoes,
+        }
+    }
+}
+
+/// Drain the assignment-event queue, firing each queued category's actions.
+///
+/// Assign actions that create new-to-store assignments enqueue their targets in
+/// turn, so chains (A's action assigns B, B's action assigns C) resolve here in
+/// one drain. The `fired` set guarantees each category's actions run at most
+/// once per processing run.
+fn fire_queued_actions(
+    ctx: &ActionContext<'_>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+    firing: &mut ActionFiring,
     pass_result: &mut PassResult,
 ) -> Result<()> {
-    for action in &category.actions {
-        match action {
-            Action::Assign { targets } => {
-                for target_id in targets {
-                    if !can_assign(item_id, *target_id, assignments, seen_pairs) {
+    let ActionContext {
+        item_id,
+        categories_by_id,
+        original_assignments,
+        vetoes,
+    } = *ctx;
+    while let Some(category_id) = firing.queue.pop() {
+        if !firing.fired.insert(category_id) {
+            continue;
+        }
+        let Some(category) = categories_by_id.get(&category_id).copied() else {
+            continue;
+        };
+
+        for action in &category.actions {
+            match action {
+                Action::Assign { targets } => {
+                    for target_id in targets {
+                        if vetoes.contains(target_id) {
+                            continue;
+                        }
+                        if !can_assign(item_id, *target_id, assignments, seen_pairs) {
+                            continue;
+                        }
+                        if has_blocking_exclusive_sibling(
+                            *target_id,
+                            categories_by_id,
+                            assignments,
+                        ) {
+                            continue;
+                        }
+                        enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
+
+                        let assigned = assign_if_unassigned(
+                            item_id,
+                            *target_id,
+                            AssignmentTemplate {
+                                source: AssignmentSource::Action,
+                                sticky: true,
+                                origin: Some(format!("action:{}", category.name)),
+                                explanation: Some(AssignmentExplanation::Action {
+                                    trigger_category_name: category.name.clone(),
+                                    kind: AssignmentActionKind::Assign,
+                                }),
+                                numeric_value: None,
+                            },
+                            original_assignments,
+                            assignments,
+                            seen_pairs,
+                        );
+                        if assigned.inserted {
+                            pass_result.changed = true;
+                            assign_subsumption_ancestors(
+                                item_id,
+                                *target_id,
+                                categories_by_id,
+                                original_assignments,
+                                assignments,
+                                seen_pairs,
+                            );
+                            if assigned.new_to_store {
+                                pass_result.new_assignments.insert(*target_id);
+                                let target_name = categories_by_id
+                                    .get(target_id)
+                                    .map(|category| category.name.clone())
+                                    .unwrap_or_else(|| target_id.to_string());
+                                pass_result.assignment_events.push(AssignmentEvent {
+                                    kind: AssignmentEventKind::Assigned,
+                                    category_id: *target_id,
+                                    category_name: target_name,
+                                    summary: format!("Assigned by action on {}", category.name),
+                                });
+                                firing.enqueue(*target_id);
+                            }
+                        }
+                    }
+                }
+                Action::Remove { targets } => {
+                    for target_id in targets {
+                        pass_result.deferred_removals.push(DeferredRemoval {
+                            target: *target_id,
+                            triggered_by: category.id,
+                        });
+                    }
+                }
+                Action::AssignNumeric { target, value } => {
+                    if vetoes.contains(target) {
                         continue;
                     }
-                    if has_blocking_exclusive_sibling(*target_id, categories_by_id, assignments) {
+                    // Only meaningful for numeric targets; skip quietly if the
+                    // target category changed kind after the action was authored.
+                    let target_is_numeric = categories_by_id.get(target).is_some_and(|target| {
+                        target.value_kind == crate::model::CategoryValueKind::Numeric
+                    });
+                    if !target_is_numeric {
                         continue;
                     }
-                    enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
+                    if !can_assign(item_id, *target, assignments, seen_pairs) {
+                        continue;
+                    }
+                    if has_blocking_exclusive_sibling(*target, categories_by_id, assignments) {
+                        continue;
+                    }
+                    enforce_mutual_exclusion(*target, categories_by_id, assignments)?;
 
                     let assigned = assign_if_unassigned(
                         item_id,
-                        *target_id,
+                        *target,
                         AssignmentTemplate {
                             source: AssignmentSource::Action,
                             sticky: true,
@@ -536,6 +853,7 @@ fn fire_actions(
                                 trigger_category_name: category.name.clone(),
                                 kind: AssignmentActionKind::Assign,
                             }),
+                            numeric_value: Some(*value),
                         },
                         original_assignments,
                         assignments,
@@ -545,34 +863,52 @@ fn fire_actions(
                         pass_result.changed = true;
                         assign_subsumption_ancestors(
                             item_id,
-                            *target_id,
+                            *target,
                             categories_by_id,
                             original_assignments,
                             assignments,
                             seen_pairs,
                         );
                         if assigned.new_to_store {
-                            pass_result.new_assignments.insert(*target_id);
+                            pass_result.new_assignments.insert(*target);
                             let target_name = categories_by_id
-                                .get(target_id)
+                                .get(target)
                                 .map(|category| category.name.clone())
-                                .unwrap_or_else(|| target_id.to_string());
+                                .unwrap_or_else(|| target.to_string());
                             pass_result.assignment_events.push(AssignmentEvent {
                                 kind: AssignmentEventKind::Assigned,
-                                category_id: *target_id,
+                                category_id: *target,
                                 category_name: target_name,
-                                summary: format!("Assigned by action on {}", category.name),
+                                summary: format!(
+                                    "Assigned with value {value} by action on {}",
+                                    category.name
+                                ),
                             });
+                            firing.enqueue(*target);
                         }
                     }
                 }
-            }
-            Action::Remove { targets } => {
-                for target_id in targets {
-                    pass_result.deferred_removals.push(DeferredRemoval {
-                        target: *target_id,
+                Action::SetWhen { value } => {
+                    pass_result.deferred_specials.push(DeferredSpecial {
                         triggered_by: category.id,
+                        kind: SpecialActionKind::SetWhen(value.clone()),
                     });
+                }
+                Action::MarkDone => {
+                    pass_result.deferred_specials.push(DeferredSpecial {
+                        triggered_by: category.id,
+                        kind: SpecialActionKind::MarkDone,
+                    });
+                }
+                Action::Delete => {
+                    // Guardrail: the flag is checked at fire time, so revoking
+                    // it disarms existing Delete actions immediately.
+                    if category.allow_delete_action {
+                        pass_result.deferred_specials.push(DeferredSpecial {
+                            triggered_by: category.id,
+                            kind: SpecialActionKind::Delete,
+                        });
+                    }
                 }
             }
         }
@@ -623,7 +959,7 @@ fn assign_if_unassigned(
             sticky: template.sticky,
             origin: template.origin,
             explanation: template.explanation,
-            numeric_value: None,
+            numeric_value: template.numeric_value,
         });
     assignments.insert(category_id, assignment);
     seen_pairs.insert(pair);
@@ -1021,6 +1357,283 @@ mod tests {
         EvaluationContext::from_zoned(zoned.parse::<Zoned>().unwrap())
     }
 
+
+    #[test]
+    fn all_mode_requires_text_and_explicit_conditions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let bug = category("Bug", true);
+        create_category(&store, &bug);
+
+        let mut escalated = category("Escalated", true);
+        escalated.condition_match_mode = ConditionMatchMode::All;
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, bug.id);
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        create_category(&store, &escalated);
+
+        // Text matches "escalated" but the Bug condition does not hold.
+        let text_only = create_item(&store, "escalated paperwork");
+        process_item(&store, &classifier, text_only.id).unwrap();
+        let assignments = store.get_assignments_for_item(text_only.id).unwrap();
+        assert!(
+            !assignments.contains_key(&escalated.id),
+            "All mode: text match alone must not assign"
+        );
+
+        // Bug condition holds but the text does not match.
+        let condition_only = create_item(&store, "bug in parser");
+        process_item(&store, &classifier, condition_only.id).unwrap();
+        let assignments = store.get_assignments_for_item(condition_only.id).unwrap();
+        assert!(assignments.contains_key(&bug.id));
+        assert!(
+            !assignments.contains_key(&escalated.id),
+            "All mode: conditions alone must not assign when text matching is enabled"
+        );
+
+        // Both hold.
+        let both = create_item(&store, "escalated bug in parser");
+        process_item(&store, &classifier, both.id).unwrap();
+        let assignments = store.get_assignments_for_item(both.id).unwrap();
+        assert!(
+            assignments.contains_key(&escalated.id),
+            "All mode: text AND conditions assign"
+        );
+    }
+
+    #[test]
+    fn all_mode_without_implicit_uses_explicit_conditions_only() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let bug = category("Bug", true);
+        create_category(&store, &bug);
+
+        let mut escalated = category("Escalated", false);
+        escalated.condition_match_mode = ConditionMatchMode::All;
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, bug.id);
+        escalated.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        create_category(&store, &escalated);
+
+        let item = create_item(&store, "bug in parser");
+        process_item(&store, &classifier, item.id).unwrap();
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&escalated.id),
+            "text matching disabled: All mode is the conjunction of explicit conditions"
+        );
+    }
+
+    #[test]
+    fn all_mode_with_no_explicit_conditions_is_plain_text_match() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut meetings = category("Meetings", true);
+        meetings.condition_match_mode = ConditionMatchMode::All;
+        create_category(&store, &meetings);
+
+        let item = create_item(&store, "Team meetings tomorrow");
+        process_item(&store, &classifier, item.id).unwrap();
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&meetings.id),
+            "All mode with no explicit conditions degenerates to the text condition"
+        );
+    }
+
+
+    #[test]
+    fn numeric_condition_matches_value_in_range() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = crate::model::CategoryValueKind::Numeric;
+        create_category(&store, &cost);
+
+        let mut big_ticket = category("Big ticket", false);
+        big_ticket.conditions.push(Condition::Numeric {
+            category_id: cost.id,
+            min: Some(rust_decimal::Decimal::new(100, 0)),
+            max: None,
+            outside: false,
+        });
+        create_category(&store, &big_ticket);
+
+        let expensive = create_item(&store, "buy a boat");
+        store
+            .assign_item(
+                expensive.id,
+                cost.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(500, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, expensive.id).unwrap();
+        let assignments = store.get_assignments_for_item(expensive.id).unwrap();
+        assert!(
+            assignments.contains_key(&big_ticket.id),
+            "value 500 >= 100 should assign Big ticket"
+        );
+        let explanation = assignments
+            .get(&big_ticket.id)
+            .unwrap()
+            .explanation
+            .as_ref()
+            .unwrap()
+            .summary();
+        assert!(
+            explanation.contains("Cost >= 100"),
+            "explanation should render the rule: {explanation}"
+        );
+
+        let cheap = create_item(&store, "buy a coffee");
+        store
+            .assign_item(
+                cheap.id,
+                cost.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(5, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, cheap.id).unwrap();
+        let assignments = store.get_assignments_for_item(cheap.id).unwrap();
+        assert!(
+            !assignments.contains_key(&big_ticket.id),
+            "value 5 must not match Cost >= 100"
+        );
+    }
+
+    #[test]
+    fn numeric_condition_outside_range_and_auto_break() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut qty = category("Qty", false);
+        qty.value_kind = crate::model::CategoryValueKind::Numeric;
+        create_category(&store, &qty);
+
+        let mut unusual = category("Unusual", false);
+        unusual.conditions.push(Condition::Numeric {
+            category_id: qty.id,
+            min: Some(rust_decimal::Decimal::new(1, 0)),
+            max: Some(rust_decimal::Decimal::new(10, 0)),
+            outside: true,
+        });
+        create_category(&store, &unusual);
+
+        let item = create_item(&store, "order widgets");
+        store
+            .assign_item(
+                item.id,
+                qty.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(50, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, item.id).unwrap();
+        assert!(store
+            .get_assignments_for_item(item.id)
+            .unwrap()
+            .contains_key(&unusual.id));
+
+        // Bring the value into range; the derived assignment auto-breaks.
+        store
+            .assign_item(
+                item.id,
+                qty.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(5, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, item.id).unwrap();
+        assert!(
+            !store
+                .get_assignments_for_item(item.id)
+                .unwrap()
+                .contains_key(&unusual.id),
+            "numeric-condition assignments are live: they break when the value moves in range"
+        );
+    }
+
+    #[test]
+    fn numeric_condition_bare_assignment_test() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = crate::model::CategoryValueKind::Numeric;
+        create_category(&store, &cost);
+
+        let mut priced = category("Priced", false);
+        priced.conditions.push(Condition::Numeric {
+            category_id: cost.id,
+            min: None,
+            max: None,
+            outside: false,
+        });
+        create_category(&store, &priced);
+
+        let no_value = create_item(&store, "no cost here");
+        process_item(&store, &classifier, no_value.id).unwrap();
+        assert!(!store
+            .get_assignments_for_item(no_value.id)
+            .unwrap()
+            .contains_key(&priced.id));
+
+        let valued = create_item(&store, "priced thing");
+        store
+            .assign_item(
+                valued.id,
+                cost.id,
+                &Assignment {
+                    source: AssignmentSource::Manual,
+                    assigned_at: Timestamp::now(),
+                    sticky: true,
+                    origin: None,
+                    explanation: None,
+                    numeric_value: Some(rust_decimal::Decimal::new(1, 0)),
+                },
+            )
+            .unwrap();
+        process_item(&store, &classifier, valued.id).unwrap();
+        assert!(store
+            .get_assignments_for_item(valued.id)
+            .unwrap()
+            .contains_key(&priced.id));
+    }
+
     #[test]
     fn process_item_single_pass_convergence() {
         let store = Store::open_memory().unwrap();
@@ -1140,6 +1753,7 @@ mod tests {
             ProcessOptions {
                 enable_implicit_string: false,
                 evaluation_context: EvaluationContext::now(),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1181,6 +1795,7 @@ mod tests {
                 evaluation_context: EvaluationContext::for_date(
                     jiff::civil::Date::new(2026, 2, 16).unwrap(),
                 ),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1225,6 +1840,7 @@ mod tests {
                 evaluation_context: evaluation_context_at(
                     "2026-02-16T12:00:00-08:00[America/Los_Angeles]",
                 ),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1263,6 +1879,7 @@ mod tests {
                 evaluation_context: EvaluationContext::for_date(
                     jiff::civil::Date::new(2026, 2, 16).unwrap(),
                 ),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1418,11 +2035,18 @@ mod tests {
             categories: &categories,
             categories_by_id: &categories_by_id,
             original_assignments: &HashMap::new(),
+            vetoes: &HashSet::new(),
             options: ProcessOptions::default(),
         };
 
         let pass_result =
-            run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs).unwrap();
+            run_hierarchy_pass(
+                &pass_input,
+                &mut assignments,
+                &mut seen_pairs,
+                &mut super::ActionFiring::default(),
+            )
+            .unwrap();
 
         assert!(pass_result.new_assignments.contains(&alpha.id));
         assert!(!pass_result.new_assignments.contains(&projects.id));

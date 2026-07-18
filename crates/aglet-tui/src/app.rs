@@ -1360,6 +1360,7 @@ impl App {
             Some(AssignmentExplanation::ImplicitMatch { .. }) => Some("auto-match"),
             Some(AssignmentExplanation::ProfileCondition { .. }) => Some("profile"),
             Some(AssignmentExplanation::DateCondition { .. }) => Some("date"),
+            Some(AssignmentExplanation::NumericCondition { .. }) => Some("numeric"),
             Some(AssignmentExplanation::ConditionGroup { .. }) => Some("rules"),
             Some(AssignmentExplanation::Action { .. }) => Some("action"),
             Some(AssignmentExplanation::Subsumption { .. }) => Some("inherited"),
@@ -1411,6 +1412,10 @@ impl App {
                 ..
             }
             | AssignmentExplanation::DateCondition {
+                owner_category_name,
+                ..
+            }
+            | AssignmentExplanation::NumericCondition {
                 owner_category_name,
                 ..
             }
