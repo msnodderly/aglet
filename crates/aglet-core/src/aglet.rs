@@ -25,7 +25,7 @@ use crate::engine::{
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
+    origin as origin_const, Action, Assignment, AssignmentEvent,
     AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
     CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
     RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
@@ -166,6 +166,7 @@ impl<'a> Aglet<'a> {
             ProcessOptions {
                 enable_implicit_string: false,
                 evaluation_context,
+                ..ProcessOptions::default()
             },
         )
     }
@@ -389,6 +390,10 @@ impl<'a> Aglet<'a> {
     ) -> Result<ProcessItemResult> {
         self.enforce_manual_exclusive_siblings(item_id, category_id)?;
 
+        let was_assigned = self
+            .store
+            .get_assignments_for_item(item_id)?
+            .contains_key(&category_id);
         let assignment = Assignment {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
@@ -402,7 +407,14 @@ impl<'a> Aglet<'a> {
 
         self.store.assign_item(item_id, category_id, &assignment)?;
         self.assign_subsumption_for_category(item_id, category_id)?;
-        let mut result = self.reprocess_existing_item(item_id)?;
+        // A newly created assignment is an assignment event: the category's
+        // actions fire even though the user (not the engine) made it.
+        let triggers = if was_assigned {
+            HashSet::new()
+        } else {
+            HashSet::from([category_id])
+        };
+        let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
         self.prepend_assignment_event(
             &mut result,
             AssignmentEventKind::Assigned,
@@ -500,6 +512,10 @@ impl<'a> Aglet<'a> {
 
         self.enforce_manual_exclusive_siblings(item_id, category_id)?;
 
+        let was_assigned = self
+            .store
+            .get_assignments_for_item(item_id)?
+            .contains_key(&category_id);
         let assignment = Assignment {
             source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
@@ -513,7 +529,12 @@ impl<'a> Aglet<'a> {
 
         self.store.assign_item(item_id, category_id, &assignment)?;
         self.assign_subsumption_for_category(item_id, category_id)?;
-        let mut result = self.reprocess_existing_item(item_id)?;
+        let triggers = if was_assigned {
+            HashSet::new()
+        } else {
+            HashSet::from([category_id])
+        };
+        let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
         self.prepend_assignment_event(
             &mut result,
             AssignmentEventKind::Assigned,
@@ -579,8 +600,8 @@ impl<'a> Aglet<'a> {
     ) -> Result<ProcessItemResult> {
         let targets = Self::section_insert_targets(view, section);
 
-        self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
-        self.reprocess_existing_item(item_id)
+        let triggers = self.assign_manual_categories(item_id, &targets, "edit:section.insert")?;
+        self.reprocess_existing_item_with_triggers(item_id, triggers)
     }
 
     pub fn insert_item_in_unmatched(
@@ -589,8 +610,9 @@ impl<'a> Aglet<'a> {
         view: &View,
     ) -> Result<ProcessItemResult> {
         let view_include: HashSet<CategoryId> = view.criteria.and_category_ids().collect();
-        self.assign_manual_categories(item_id, &view_include, "edit:view.insert")?;
-        self.reprocess_existing_item(item_id)
+        let triggers =
+            self.assign_manual_categories(item_id, &view_include, "edit:view.insert")?;
+        self.reprocess_existing_item_with_triggers(item_id, triggers)
     }
 
     pub fn remove_item_from_section(
@@ -619,8 +641,8 @@ impl<'a> Aglet<'a> {
         let to_assign = Self::section_insert_targets(view, to_section);
 
         self.unassign_categories(item_id, &to_unassign)?;
-        self.assign_manual_categories(item_id, &to_assign, "edit:section.move")?;
-        self.reprocess_existing_item(item_id)
+        let triggers = self.assign_manual_categories(item_id, &to_assign, "edit:section.move")?;
+        self.reprocess_existing_item_with_triggers(item_id, triggers)
     }
 
     /// Compute the net category changes that would result from moving an item
@@ -751,6 +773,10 @@ impl<'a> Aglet<'a> {
         self.store.update_item(&item)?;
 
         let done_category_id = self.done_category_id()?;
+        let was_done_assigned = self
+            .store
+            .get_assignments_for_item(item_id)?
+            .contains_key(&done_category_id);
         let assignment = Assignment {
             source: AssignmentSource::Manual,
             assigned_at: now,
@@ -764,7 +790,12 @@ impl<'a> Aglet<'a> {
         self.store
             .assign_item(item_id, done_category_id, &assignment)?;
         self.clear_claim_assignment_if_configured(item_id)?;
-        let mut result = self.reprocess_existing_item(item_id)?;
+        let triggers = if was_done_assigned {
+            HashSet::new()
+        } else {
+            HashSet::from([done_category_id])
+        };
+        let mut result = self.reprocess_existing_item_with_triggers(item_id, triggers)?;
 
         // Succession: generate next instance for recurring items
         if let Some(ref rule) = item.recurrence_rule {
@@ -1023,7 +1054,11 @@ impl<'a> Aglet<'a> {
         let mut result = self.apply_suggestion_assignment(&suggestion)?;
         self.store
             .set_suggestion_status(suggestion_id, SuggestionStatus::Accepted)?;
-        merge_process_results(&mut result, self.process_cascades(suggestion.item_id)?);
+        let triggers = result.new_assignments.clone();
+        merge_process_results(
+            &mut result,
+            self.process_cascades_with_triggers(suggestion.item_id, triggers)?,
+        );
         self.debug_log_process_result("suggestion.accept", suggestion.item_id, &result);
         Ok(result)
     }
@@ -1198,7 +1233,8 @@ impl<'a> Aglet<'a> {
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
         if !cfg.should_run_continuously() || !cfg.run_on_item_save {
-            let result = self.reprocess_with_options(item_id, false, evaluation_context)?;
+            let result =
+                self.reprocess_with_options(item_id, false, evaluation_context, HashSet::new())?;
             self.debug_log_process_result("item.process", item_id, &result);
             return Ok(result);
         }
@@ -1209,7 +1245,8 @@ impl<'a> Aglet<'a> {
             self.classification_service_cheap(reference_date, &cfg, text_changed)
         };
         if !service.has_providers() {
-            let result = self.reprocess_with_options(item_id, false, evaluation_context)?;
+            let result =
+                self.reprocess_with_options(item_id, false, evaluation_context, HashSet::new())?;
             self.debug_log_process_result("item.process", item_id, &result);
             return Ok(result);
         }
@@ -1282,7 +1319,11 @@ impl<'a> Aglet<'a> {
         result.semantic_candidates_skipped_unavailable +=
             review_result.semantic_skipped_unavailable;
 
-        merge_process_results(&mut result, self.process_cascades(item_id)?);
+        let triggers = result.new_assignments.clone();
+        merge_process_results(
+            &mut result,
+            self.process_cascades_with_triggers(item_id, triggers)?,
+        );
         self.debug_log_process_result("item.process", item_id, &result);
         Ok(result)
     }
@@ -1624,6 +1665,7 @@ impl<'a> Aglet<'a> {
             ProcessOptions {
                 enable_implicit_string,
                 evaluation_context: EvaluationContext::now(),
+                ..ProcessOptions::default()
             },
         )
     }
@@ -1712,12 +1754,32 @@ impl<'a> Aglet<'a> {
     }
 
     fn reprocess_existing_item(&self, item_id: ItemId) -> Result<ProcessItemResult> {
-        let cfg = self.store.get_classification_config()?;
-        self.reprocess_with_implicit(item_id, self.should_reprocess_with_implicit(&cfg))
+        self.reprocess_existing_item_with_triggers(item_id, HashSet::new())
     }
 
-    fn process_cascades(&self, item_id: ItemId) -> Result<ProcessItemResult> {
-        self.reprocess_with_implicit(item_id, false)
+    /// Reprocess after an external assignment write. `action_triggers` names the
+    /// categories whose assignment the caller just created; the engine fires
+    /// their actions as assignment events.
+    fn reprocess_existing_item_with_triggers(
+        &self,
+        item_id: ItemId,
+        action_triggers: HashSet<CategoryId>,
+    ) -> Result<ProcessItemResult> {
+        let cfg = self.store.get_classification_config()?;
+        self.reprocess_with_options(
+            item_id,
+            self.should_reprocess_with_implicit(&cfg),
+            EvaluationContext::now(),
+            action_triggers,
+        )
+    }
+
+    fn process_cascades_with_triggers(
+        &self,
+        item_id: ItemId,
+        action_triggers: HashSet<CategoryId>,
+    ) -> Result<ProcessItemResult> {
+        self.reprocess_with_options(item_id, false, EvaluationContext::now(), action_triggers)
     }
 
     fn reprocess_with_options(
@@ -1725,6 +1787,7 @@ impl<'a> Aglet<'a> {
         item_id: ItemId,
         enable_implicit_string: bool,
         evaluation_context: EvaluationContext,
+        pending_action_triggers: HashSet<CategoryId>,
     ) -> Result<ProcessItemResult> {
         process_item_with_options(
             self.store,
@@ -1733,6 +1796,7 @@ impl<'a> Aglet<'a> {
             ProcessOptions {
                 enable_implicit_string,
                 evaluation_context,
+                pending_action_triggers,
             },
         )
     }
@@ -1896,14 +1960,6 @@ impl<'a> Aglet<'a> {
         .any(|reserved_name| reserved_name.eq_ignore_ascii_case(name))
     }
 
-    fn reprocess_with_implicit(
-        &self,
-        item_id: ItemId,
-        enable_implicit_string: bool,
-    ) -> Result<ProcessItemResult> {
-        self.reprocess_with_options(item_id, enable_implicit_string, EvaluationContext::now())
-    }
-
     fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {
         cfg.should_run_continuously() && cfg.literal_mode == LiteralClassificationMode::AutoApply
     }
@@ -1962,10 +2018,6 @@ impl<'a> Aglet<'a> {
                         }
                         .summary(),
                     });
-                    merge_process_results(
-                        &mut result,
-                        self.apply_actions_for_category(item_id, *category_id)?,
-                    );
                 }
                 Ok(result)
             }
@@ -2038,10 +2090,6 @@ impl<'a> Aglet<'a> {
                         }
                         .summary(),
                     });
-                    merge_process_results(
-                        &mut result,
-                        self.apply_actions_for_category(suggestion.item_id, category_id)?,
-                    );
                 }
                 Ok(result)
             }
@@ -2138,80 +2186,17 @@ impl<'a> Aglet<'a> {
         Ok(true)
     }
 
-    fn apply_actions_for_category(
-        &self,
-        item_id: ItemId,
-        category_id: CategoryId,
-    ) -> Result<ProcessItemResult> {
-        let category = self.store.get_category(category_id)?;
-        let mut result = ProcessItemResult::default();
-
-        for action in &category.actions {
-            match action {
-                Action::Assign { targets } => {
-                    for target_id in targets {
-                        if self.apply_category_assignment(
-                            item_id,
-                            *target_id,
-                            AssignmentSource::Action,
-                            Some(format!("action:{}", category.name)),
-                            Some(AssignmentExplanation::Action {
-                                trigger_category_name: category.name.clone(),
-                                kind: AssignmentActionKind::Assign,
-                            }),
-                            false,
-                        )? {
-                            result.new_assignments.insert(*target_id);
-                            result.assignment_events.push(AssignmentEvent {
-                                kind: AssignmentEventKind::Assigned,
-                                category_id: *target_id,
-                                category_name: self.category_name_or_id(*target_id),
-                                summary: format!("Assigned by action on {}", category.name),
-                            });
-                        }
-                    }
-                }
-                Action::Remove { targets } => {
-                    for target_id in targets {
-                        let existing_assignments = self.store.get_assignments_for_item(item_id)?;
-                        if let Some(existing) = existing_assignments.get(target_id) {
-                            self.store.unassign_item(item_id, *target_id)?;
-                            result
-                                .deferred_removals
-                                .push(crate::engine::DeferredRemoval {
-                                    target: *target_id,
-                                    triggered_by: category_id,
-                                });
-                            result.removed_assignments.insert(*target_id);
-                            result.assignment_events.push(AssignmentEvent {
-                                kind: AssignmentEventKind::Removed,
-                                category_id: *target_id,
-                                category_name: self.store.get_category(*target_id)?.name,
-                                summary: existing
-                                    .explanation
-                                    .as_ref()
-                                    .map(|explanation| explanation.removal_summary())
-                                    .unwrap_or_else(|| {
-                                        format!("Removed by action on {}", category.name)
-                                    }),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
+    /// Returns the categories that were newly assigned (assignment events the
+    /// caller should pass as action triggers to the follow-up reprocess).
     fn assign_manual_categories(
         &self,
         item_id: ItemId,
         targets: &HashSet<CategoryId>,
         origin: &str,
-    ) -> Result<()> {
+    ) -> Result<HashSet<CategoryId>> {
+        let mut newly_assigned = HashSet::new();
         if targets.is_empty() {
-            return Ok(());
+            return Ok(newly_assigned);
         }
 
         let mut existing = self.store.get_assignments_for_item(item_id)?;
@@ -2233,10 +2218,11 @@ impl<'a> Aglet<'a> {
             self.enforce_manual_exclusive_siblings(item_id, *category_id)?;
             self.store.assign_item(item_id, *category_id, &assignment)?;
             self.assign_subsumption_for_category(item_id, *category_id)?;
+            newly_assigned.insert(*category_id);
             existing = self.store.get_assignments_for_item(item_id)?;
         }
 
-        Ok(())
+        Ok(newly_assigned)
     }
 
     fn enforce_manual_exclusive_siblings(
@@ -4343,6 +4329,239 @@ mod tests {
 
         let loaded = store.get_item(item.id).unwrap();
         assert_eq!(loaded.text, "Trigger this chain");
+    }
+
+    #[test]
+    fn manual_assignment_fires_category_actions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let archive = category("Archive", false);
+        store.create_category(&archive).unwrap();
+
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::Assign {
+            targets: HashSet::from([archive.id]),
+        });
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("plain unrelated text".to_string());
+        aglet.create_item(&item).unwrap();
+
+        let result = aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&trigger.id));
+        assert!(
+            assignments.contains_key(&archive.id),
+            "actions fire on manual assignment, per the Agenda paradigm"
+        );
+        assert_eq!(
+            assignments.get(&archive.id).unwrap().source,
+            AssignmentSource::Action
+        );
+        assert!(result.new_assignments.contains(&archive.id));
+    }
+
+    #[test]
+    fn manual_numeric_assignment_fires_category_actions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let big_ticket = category("Big ticket", false);
+        store.create_category(&big_ticket).unwrap();
+
+        let mut cost = category("Cost", false);
+        cost.value_kind = CategoryValueKind::Numeric;
+        cost.actions.push(Action::Assign {
+            targets: HashSet::from([big_ticket.id]),
+        });
+        store.create_category(&cost).unwrap();
+
+        let item = Item::new("buy a boat".to_string());
+        aglet.create_item(&item).unwrap();
+
+        aglet
+            .assign_item_numeric_manual(item.id, cost.id, Decimal::new(500, 0), None)
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&big_ticket.id),
+            "numeric manual assignment is an assignment event"
+        );
+    }
+
+    #[test]
+    fn mark_item_done_fires_done_category_actions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let archive = category("Archive", false);
+        store.create_category(&archive).unwrap();
+
+        let done_id = category_id_by_name(&store, RESERVED_CATEGORY_NAME_DONE).unwrap();
+        let mut done = store.get_category(done_id).unwrap();
+        done.actions.push(Action::Assign {
+            targets: HashSet::from([archive.id]),
+        });
+        store.update_category(&done).unwrap();
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+
+        let item = Item::new("finish the report".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        aglet.mark_item_done(item.id).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            assignments.contains_key(&archive.id),
+            "Done category actions fire when the user marks an item done"
+        );
+    }
+
+    #[test]
+    fn action_chain_cascades_through_targets_on_create() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let charlie = category("Charlie", false);
+        store.create_category(&charlie).unwrap();
+
+        let mut bravo = category("Bravo", false);
+        bravo.actions.push(Action::Assign {
+            targets: HashSet::from([charlie.id]),
+        });
+        store.create_category(&bravo).unwrap();
+
+        let mut alpha = category("Alpha", true);
+        alpha.actions.push(Action::Assign {
+            targets: HashSet::from([bravo.id]),
+        });
+        store.create_category(&alpha).unwrap();
+
+        let item = Item::new("alpha task".to_string());
+        aglet.create_item(&item).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&alpha.id));
+        assert!(assignments.contains_key(&bravo.id));
+        assert!(
+            assignments.contains_key(&charlie.id),
+            "an action-created assignment is itself an assignment event; chains cascade"
+        );
+    }
+
+    #[test]
+    fn manual_assignment_action_chain_cascades() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let charlie = category("Charlie", false);
+        store.create_category(&charlie).unwrap();
+
+        let mut bravo = category("Bravo", false);
+        bravo.actions.push(Action::Assign {
+            targets: HashSet::from([charlie.id]),
+        });
+        store.create_category(&bravo).unwrap();
+
+        let mut alpha = category("Alpha", false);
+        alpha.actions.push(Action::Assign {
+            targets: HashSet::from([bravo.id]),
+        });
+        store.create_category(&alpha).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, alpha.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(assignments.contains_key(&bravo.id));
+        assert!(assignments.contains_key(&charlie.id));
+    }
+
+    #[test]
+    fn reassigning_existing_category_does_not_refire_actions() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let archive = category("Archive", false);
+        store.create_category(&archive).unwrap();
+
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::Assign {
+            targets: HashSet::from([archive.id]),
+        });
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+        aglet.unassign_item_manual(item.id, archive.id).unwrap();
+
+        // Re-assigning the already-assigned trigger is not a new assignment
+        // event, so its actions must not re-fire.
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&archive.id),
+            "actions are edge-triggered: no new assignment event, no re-fire"
+        );
+    }
+
+    #[test]
+    fn item_edit_does_not_refire_actions_for_existing_assignments() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let archive = category("Archive", false);
+        store.create_category(&archive).unwrap();
+
+        let mut trigger = category("Trigger", false);
+        trigger.actions.push(Action::Assign {
+            targets: HashSet::from([archive.id]),
+        });
+        store.create_category(&trigger).unwrap();
+
+        let item = Item::new("plain task".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, trigger.id, Some("manual:test".to_string()))
+            .unwrap();
+        aglet.unassign_item_manual(item.id, archive.id).unwrap();
+
+        let mut updated = store.get_item(item.id).unwrap();
+        updated.text = "edited task".to_string();
+        updated.modified_at = Timestamp::now();
+        aglet.update_item(&updated).unwrap();
+
+        let assignments = store.get_assignments_for_item(item.id).unwrap();
+        assert!(
+            !assignments.contains_key(&archive.id),
+            "editing an item must not re-fire actions for assignments that already existed"
+        );
     }
 
     #[test]

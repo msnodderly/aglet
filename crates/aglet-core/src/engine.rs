@@ -82,6 +82,12 @@ struct AssignmentTemplate {
 pub struct ProcessOptions {
     pub enable_implicit_string: bool,
     pub evaluation_context: EvaluationContext,
+    /// Categories whose assignment was just created by the caller (manual entry,
+    /// accepted suggestion, auto-classification, ...) before this processing run.
+    /// The engine treats each as a fresh assignment event and fires that
+    /// category's actions, mirroring Agenda's rule that actions fire on any
+    /// assignment "including an explicit assignment by the user".
+    pub pending_action_triggers: HashSet<CategoryId>,
 }
 
 impl Default for ProcessOptions {
@@ -89,6 +95,28 @@ impl Default for ProcessOptions {
         Self {
             enable_implicit_string: true,
             evaluation_context: EvaluationContext::now(),
+            pending_action_triggers: HashSet::new(),
+        }
+    }
+}
+
+/// Run-scoped queue of assignment events whose actions still need to fire.
+///
+/// Actions fire on the *event* of an assignment becoming new-to-store, no matter
+/// who created it: a condition match, another category's Assign action (chaining),
+/// or an external write seeded via [`ProcessOptions::pending_action_triggers`].
+/// Each category's actions fire at most once per processing run, which bounds
+/// cascades independently of the pass cap.
+#[derive(Debug, Default)]
+struct ActionFiring {
+    queue: Vec<CategoryId>,
+    fired: HashSet<CategoryId>,
+}
+
+impl ActionFiring {
+    fn enqueue(&mut self, category_id: CategoryId) {
+        if !self.fired.contains(&category_id) && !self.queue.contains(&category_id) {
+            self.queue.push(category_id);
         }
     }
 }
@@ -214,6 +242,13 @@ fn process_item_inner(
     );
 
     let mut result = ProcessItemResult::default();
+    let mut firing = ActionFiring::default();
+    for category_id in &options.pending_action_triggers {
+        // Only categories actually assigned right now count as assignment events.
+        if assignments.contains_key(category_id) {
+            firing.enqueue(*category_id);
+        }
+    }
     let pass_input = HierarchyPassInput {
         classifier,
         item: &item,
@@ -226,7 +261,8 @@ fn process_item_inner(
     };
 
     for pass in 1..=MAX_PASSES {
-        let pass_result = run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs)?;
+        let pass_result =
+            run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs, &mut firing)?;
 
         let changed = pass_result.changed;
 
@@ -282,8 +318,21 @@ fn run_hierarchy_pass(
     input: &HierarchyPassInput<'_>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+    firing: &mut ActionFiring,
 ) -> Result<PassResult> {
     let mut pass_result = PassResult::default();
+
+    // Fire actions for assignment events seeded before this pass (external
+    // writes on the first pass, or events left over from a previous pass).
+    fire_queued_actions(
+        input.item_id,
+        input.categories_by_id,
+        input.original_assignments,
+        assignments,
+        seen_pairs,
+        firing,
+        &mut pass_result,
+    )?;
 
     for category in input.categories {
         let Some(reason) = evaluate_category_match(
@@ -341,13 +390,14 @@ fn run_hierarchy_pass(
                 category_name: category.name.clone(),
                 summary: reason.explanation.summary(),
             });
-            fire_actions(
+            firing.enqueue(category.id);
+            fire_queued_actions(
                 input.item_id,
-                category,
                 input.categories_by_id,
                 input.original_assignments,
                 assignments,
                 seen_pairs,
+                firing,
                 &mut pass_result,
             )?;
         }
@@ -504,75 +554,95 @@ fn profile_matches(criteria: &Query, assignments: &HashMap<CategoryId, Assignmen
         }
 }
 
-fn fire_actions(
+/// Drain the assignment-event queue, firing each queued category's actions.
+///
+/// Assign actions that create new-to-store assignments enqueue their targets in
+/// turn, so chains (A's action assigns B, B's action assigns C) resolve here in
+/// one drain. The `fired` set guarantees each category's actions run at most
+/// once per processing run.
+fn fire_queued_actions(
     item_id: ItemId,
-    category: &Category,
     categories_by_id: &HashMap<CategoryId, &Category>,
     original_assignments: &HashMap<CategoryId, Assignment>,
     assignments: &mut HashMap<CategoryId, Assignment>,
     seen_pairs: &mut HashSet<(ItemId, CategoryId)>,
+    firing: &mut ActionFiring,
     pass_result: &mut PassResult,
 ) -> Result<()> {
-    for action in &category.actions {
-        match action {
-            Action::Assign { targets } => {
-                for target_id in targets {
-                    if !can_assign(item_id, *target_id, assignments, seen_pairs) {
-                        continue;
-                    }
-                    if has_blocking_exclusive_sibling(*target_id, categories_by_id, assignments) {
-                        continue;
-                    }
-                    enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
+    while let Some(category_id) = firing.queue.pop() {
+        if !firing.fired.insert(category_id) {
+            continue;
+        }
+        let Some(category) = categories_by_id.get(&category_id).copied() else {
+            continue;
+        };
 
-                    let assigned = assign_if_unassigned(
-                        item_id,
-                        *target_id,
-                        AssignmentTemplate {
-                            source: AssignmentSource::Action,
-                            sticky: true,
-                            origin: Some(format!("action:{}", category.name)),
-                            explanation: Some(AssignmentExplanation::Action {
-                                trigger_category_name: category.name.clone(),
-                                kind: AssignmentActionKind::Assign,
-                            }),
-                        },
-                        original_assignments,
-                        assignments,
-                        seen_pairs,
-                    );
-                    if assigned.inserted {
-                        pass_result.changed = true;
-                        assign_subsumption_ancestors(
-                            item_id,
+        for action in &category.actions {
+            match action {
+                Action::Assign { targets } => {
+                    for target_id in targets {
+                        if !can_assign(item_id, *target_id, assignments, seen_pairs) {
+                            continue;
+                        }
+                        if has_blocking_exclusive_sibling(
                             *target_id,
                             categories_by_id,
+                            assignments,
+                        ) {
+                            continue;
+                        }
+                        enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
+
+                        let assigned = assign_if_unassigned(
+                            item_id,
+                            *target_id,
+                            AssignmentTemplate {
+                                source: AssignmentSource::Action,
+                                sticky: true,
+                                origin: Some(format!("action:{}", category.name)),
+                                explanation: Some(AssignmentExplanation::Action {
+                                    trigger_category_name: category.name.clone(),
+                                    kind: AssignmentActionKind::Assign,
+                                }),
+                            },
                             original_assignments,
                             assignments,
                             seen_pairs,
                         );
-                        if assigned.new_to_store {
-                            pass_result.new_assignments.insert(*target_id);
-                            let target_name = categories_by_id
-                                .get(target_id)
-                                .map(|category| category.name.clone())
-                                .unwrap_or_else(|| target_id.to_string());
-                            pass_result.assignment_events.push(AssignmentEvent {
-                                kind: AssignmentEventKind::Assigned,
-                                category_id: *target_id,
-                                category_name: target_name,
-                                summary: format!("Assigned by action on {}", category.name),
-                            });
+                        if assigned.inserted {
+                            pass_result.changed = true;
+                            assign_subsumption_ancestors(
+                                item_id,
+                                *target_id,
+                                categories_by_id,
+                                original_assignments,
+                                assignments,
+                                seen_pairs,
+                            );
+                            if assigned.new_to_store {
+                                pass_result.new_assignments.insert(*target_id);
+                                let target_name = categories_by_id
+                                    .get(target_id)
+                                    .map(|category| category.name.clone())
+                                    .unwrap_or_else(|| target_id.to_string());
+                                pass_result.assignment_events.push(AssignmentEvent {
+                                    kind: AssignmentEventKind::Assigned,
+                                    category_id: *target_id,
+                                    category_name: target_name,
+                                    summary: format!("Assigned by action on {}", category.name),
+                                });
+                                firing.enqueue(*target_id);
+                            }
                         }
                     }
                 }
-            }
-            Action::Remove { targets } => {
-                for target_id in targets {
-                    pass_result.deferred_removals.push(DeferredRemoval {
-                        target: *target_id,
-                        triggered_by: category.id,
-                    });
+                Action::Remove { targets } => {
+                    for target_id in targets {
+                        pass_result.deferred_removals.push(DeferredRemoval {
+                            target: *target_id,
+                            triggered_by: category.id,
+                        });
+                    }
                 }
             }
         }
@@ -1140,6 +1210,7 @@ mod tests {
             ProcessOptions {
                 enable_implicit_string: false,
                 evaluation_context: EvaluationContext::now(),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1181,6 +1252,7 @@ mod tests {
                 evaluation_context: EvaluationContext::for_date(
                     jiff::civil::Date::new(2026, 2, 16).unwrap(),
                 ),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1225,6 +1297,7 @@ mod tests {
                 evaluation_context: evaluation_context_at(
                     "2026-02-16T12:00:00-08:00[America/Los_Angeles]",
                 ),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1263,6 +1336,7 @@ mod tests {
                 evaluation_context: EvaluationContext::for_date(
                     jiff::civil::Date::new(2026, 2, 16).unwrap(),
                 ),
+                ..ProcessOptions::default()
             },
         )
         .unwrap();
@@ -1422,7 +1496,13 @@ mod tests {
         };
 
         let pass_result =
-            run_hierarchy_pass(&pass_input, &mut assignments, &mut seen_pairs).unwrap();
+            run_hierarchy_pass(
+                &pass_input,
+                &mut assignments,
+                &mut seen_pairs,
+                &mut super::ActionFiring::default(),
+            )
+            .unwrap();
 
         assert!(pass_result.new_assignments.contains(&alpha.id));
         assert!(!pass_result.new_assignments.contains(&projects.id));
