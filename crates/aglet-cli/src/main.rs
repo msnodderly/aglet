@@ -2659,6 +2659,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::Delete { name } => {
@@ -2682,6 +2683,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 "renamed {} -> {} (processed_items={}, affected_items={})",
                 name, new_name, result.processed_items, result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::Reparent { name, parent, root } => {
@@ -2707,6 +2709,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 "reparented {} under {} (processed_items={}, affected_items={})",
                 name, new_parent, result.processed_items, result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::Update {
@@ -2764,6 +2767,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::Assign {
@@ -2894,6 +2898,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::Unassign {
@@ -3022,6 +3027,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 "added profile condition #{} to {} (processed_items={}, affected_items={})",
                 condition_index, name, result.processed_items, result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::AddDateCondition {
@@ -3066,6 +3072,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::AddNumericCondition {
@@ -3125,6 +3132,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::SetConditionMode { name, mode } => {
@@ -3145,6 +3153,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::RemoveCondition { name, index } => {
@@ -3176,6 +3185,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 "removed condition #{} ({}) from {} (processed_items={}, affected_items={})",
                 index, desc, name, result.processed_items, result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::AddAction {
@@ -3256,6 +3266,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 result.processed_items,
                 result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
         CategoryCommand::SetAllowDelete { name, enabled } => {
@@ -3298,6 +3309,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 "removed action #{} ({}) from {} (processed_items={}, affected_items={})",
                 index, desc, name, result.processed_items, result.affected_items
             );
+            print_bulk_warnings(&result);
             Ok(())
         }
     }
@@ -4038,6 +4050,12 @@ fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
 }
 
 fn print_process_warnings(result: &aglet_core::engine::ProcessItemResult) {
+    for warning in &result.warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
+fn print_bulk_warnings(result: &aglet_core::engine::EvaluateAllItemsResult) {
     for warning in &result.warnings {
         eprintln!("warning: {warning}");
     }

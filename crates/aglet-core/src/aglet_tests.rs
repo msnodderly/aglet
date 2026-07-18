@@ -2536,6 +2536,65 @@
     }
 
     #[test]
+    fn bulk_run_depth_cap_warning_reaches_bulk_result() {
+        let store = Store::open_memory().unwrap();
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let date_cat = |name: &str, day: i32, next_day: i32| {
+            let mut cat = category(name, false);
+            cat.conditions.push(Condition::Date {
+                source: crate::model::DateSource::When,
+                matcher: crate::model::DateMatcher::Compare {
+                    op: crate::model::DateCompareOp::On,
+                    value: crate::model::DateValueExpr::DaysFromToday(day),
+                },
+            });
+            cat.actions.push(Action::SetWhen {
+                value: crate::model::DateValueExpr::DaysFromToday(next_day),
+            });
+            cat
+        };
+        store.create_category(&date_cat("Hop1", 1, 2)).unwrap();
+        store.create_category(&date_cat("Hop2", 2, 3)).unwrap();
+        store.create_category(&date_cat("Hop3", 3, 4)).unwrap();
+        store.create_category(&date_cat("Hop4", 4, 5)).unwrap();
+
+        let work = category("Work", false);
+        store.create_category(&work).unwrap();
+        let kick = category("Kick", false);
+        store.create_category(&kick).unwrap();
+
+        let item = Item::new("cascade bait".to_string());
+        aglet.create_item(&item).unwrap();
+        aglet
+            .assign_item_manual(item.id, work.id, Some("manual:test".to_string()))
+            .unwrap();
+
+        // Author the rule action-first, then the condition: the condition
+        // update triggers the bulk run that assigns Kick and fires SetWhen,
+        // whose cascade hits the depth cap.
+        let mut kick = store.get_category(kick.id).unwrap();
+        kick.actions.push(Action::SetWhen {
+            value: crate::model::DateValueExpr::DaysFromToday(1),
+        });
+        store.update_category(&kick).unwrap();
+        let mut kick = store.get_category(kick.id).unwrap();
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, work.id);
+        kick.conditions.push(Condition::Profile {
+            criteria: Box::new(criteria),
+        });
+        let result = aglet.update_category(&kick).unwrap();
+
+        assert!(
+            result.warnings.iter().any(|warning| warning.contains("cut short")),
+            "bulk runs must surface depth-cap warnings, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
     fn end_to_end_workflow_runs_automatically() {
         let store = Store::open_memory().unwrap();
         let classifier = SubstringClassifier;

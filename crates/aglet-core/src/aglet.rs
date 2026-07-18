@@ -1738,6 +1738,12 @@ impl<'a> Aglet<'a> {
             }
             let mut item_result = ProcessItemResult::default();
             self.apply_deferred_specials(item_id, &specials, evaluation_context, &mut item_result)?;
+            result.warnings.extend(
+                item_result
+                    .warnings
+                    .into_iter()
+                    .map(|warning| format!("item {item_id}: {warning}")),
+            );
         }
         Ok(())
     }

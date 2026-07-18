@@ -70,6 +70,9 @@ pub struct EvaluateAllItemsResult {
     /// The engine cannot apply these itself; the Aglet layer must apply them
     /// after the bulk run, exactly as it does for single-item processing.
     pub deferred_specials: Vec<(ItemId, DeferredSpecial)>,
+    /// Warnings from applying those effects (e.g. depth-capped cascades),
+    /// filled in by the Aglet layer so bulk rule edits surface them too.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Default)]

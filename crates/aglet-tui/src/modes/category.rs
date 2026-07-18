@@ -3427,6 +3427,9 @@ impl App {
             "Action {} (processed={}, affected={})  a:add  Enter:edit  x:delete  Esc:close",
             action, result.processed_items, result.affected_items
         );
+        if let Some(warning) = result.warnings.first() {
+            self.status = format!("{}  Warning: {warning}", self.status);
+        }
         Ok(true)
     }
 
