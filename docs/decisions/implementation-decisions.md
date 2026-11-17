@@ -1,5 +1,36 @@
 # Decisions
 
+## 2026-11-17
+
+Context: `docs/plans/codebase-review-and-simplification-plan.md`, phases 1 and 3.
+
+### Bulk writes run in one transaction; nested calls become savepoints
+
+`Store::with_immediate_transaction` opens `BEGIN IMMEDIATE` at top level and a
+savepoint when a transaction is already open (`Connection::is_autocommit`).
+`Aglet::transaction` wraps it. Category-change and temporal re-evaluation and
+CSV import run inside one. Reason: per-item commits made a 2,000-item import
+take 26 s on btrfs and left partial results on failure. Consequence: a failure
+on any item now rolls back every item in that bulk run.
+
+### LLM classification runs after the import transaction commits
+
+CSV import saves rows with `create_item_cheap` inside the transaction, then
+calls `Aglet::classify_item_semantic_after_save` per item after commit.
+Reason: the write lock must not be held across network calls. Known gap: a
+MarkDone action fired during bulk re-evaluation on a recurring item still
+classifies the successor, including the LLM, inside the transaction.
+
+### One OpenAI-compatible client for all semantic providers
+
+Ollama, OpenRouter, and OpenAI share `ChatEndpoint`, `ChatTransport`,
+`ReqwestChatTransport`, and `SemanticProvider`.
+`ClassificationConfig::semantic_endpoint` maps the stored per-provider
+settings onto an endpoint, so the persisted config format is unchanged.
+User-facing error wording is unified: timeouts now mention Global Settings
+for every provider, "not reachable" applies to keyless endpoints (Ollama),
+and "invalid API key" to keyed ones.
+
 ## 2026-02-22
 
 ### Phase 0 scope: state extraction only, no UX change
