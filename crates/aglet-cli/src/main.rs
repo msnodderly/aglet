@@ -2175,17 +2175,16 @@ fn build_numeric_filters(
 }
 
 fn parse_arg_pairs(args: &[String], flag_name: &str) -> Result<Vec<(String, String)>, String> {
-    let mut out = Vec::new();
-    let chunks = args.chunks_exact(2);
-    if !chunks.remainder().is_empty() {
+    let (pairs, remainder) = args.as_chunks::<2>();
+    if !remainder.is_empty() {
         return Err(format!(
             "invalid {flag_name} arguments: expected repeated <CATEGORY> <VALUE> pairs"
         ));
     }
-    for pair in chunks {
-        out.push((pair[0].clone(), pair[1].clone()));
-    }
-    Ok(out)
+    Ok(pairs
+        .iter()
+        .map(|[category, value]| (category.clone(), value.clone()))
+        .collect())
 }
 
 fn resolve_numeric_filter_category(
