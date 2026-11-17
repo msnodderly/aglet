@@ -7,9 +7,9 @@ use crate::date_rules::{item_matches_date_condition, EvaluationContext};
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    Action, Assignment, AssignmentActionKind, AssignmentEvent,
-    AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition,
-    ConditionMatchMode, Item, ItemId, Query, TextMatchSource,
+    Action, Assignment, AssignmentActionKind, AssignmentEvent, AssignmentEventKind,
+    AssignmentExplanation, AssignmentSource, Category, CategoryId, Condition, ConditionMatchMode,
+    Item, ItemId, Query, TextMatchSource,
 };
 use crate::store::Store;
 
@@ -691,8 +691,13 @@ fn evaluate_category_match(
                         max,
                         outside,
                     } => {
-                        if numeric_condition_matches(*category_id, *min, *max, *outside, assignments)
-                        {
+                        if numeric_condition_matches(
+                            *category_id,
+                            *min,
+                            *max,
+                            *outside,
+                            assignments,
+                        ) {
                             return Some(MatchReason::from_explanation(
                                 AssignmentExplanation::NumericCondition {
                                     owner_category_name: category.name.clone(),
@@ -740,8 +745,7 @@ fn evaluate_category_match(
                 if explicit_conditions.iter().all(|condition| {
                     condition_matches(condition, item, assignments, categories_by_id, options)
                 }) {
-                    let mut rendered_rules =
-                        vec![format!("text ~ \"{}\"", matched.matched_term)];
+                    let mut rendered_rules = vec![format!("text ~ \"{}\"", matched.matched_term)];
                     rendered_rules.extend(
                         explicit_conditions
                             .iter()
@@ -910,11 +914,8 @@ fn fire_queued_actions(
                         if !can_assign(item_id, *target_id, assignments, seen_pairs) {
                             continue;
                         }
-                        if has_blocking_exclusive_sibling(
-                            *target_id,
-                            categories_by_id,
-                            assignments,
-                        ) {
+                        if has_blocking_exclusive_sibling(*target_id, categories_by_id, assignments)
+                        {
                             continue;
                         }
                         enforce_mutual_exclusion(*target_id, categories_by_id, assignments)?;
@@ -1502,7 +1503,6 @@ mod tests {
         EvaluationContext::from_zoned(zoned.parse::<Zoned>().unwrap())
     }
 
-
     #[test]
     fn all_mode_requires_text_and_explicit_conditions() {
         let store = Store::open_memory().unwrap();
@@ -1592,7 +1592,6 @@ mod tests {
             "All mode with no explicit conditions degenerates to the text condition"
         );
     }
-
 
     #[test]
     fn numeric_condition_matches_value_in_range() {
@@ -2184,14 +2183,13 @@ mod tests {
             options: ProcessOptions::default(),
         };
 
-        let pass_result =
-            run_hierarchy_pass(
-                &pass_input,
-                &mut assignments,
-                &mut seen_pairs,
-                &mut super::ActionFiring::default(),
-            )
-            .unwrap();
+        let pass_result = run_hierarchy_pass(
+            &pass_input,
+            &mut assignments,
+            &mut seen_pairs,
+            &mut super::ActionFiring::default(),
+        )
+        .unwrap();
 
         assert!(pass_result.new_assignments.contains(&alpha.id));
         assert!(!pass_result.new_assignments.contains(&projects.id));

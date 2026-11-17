@@ -1344,9 +1344,6 @@ impl App {
             .and_then(|item| item.assignments.get(&category_id))
     }
 
-
-
-
     /// Short "(via …)" source label for a derived (non-manual) assignment on
     /// the selected item, e.g. `via Sheffield Financial` for subsumption or
     /// `via "maybe"` for an implicit text match (UX audit P2-4).

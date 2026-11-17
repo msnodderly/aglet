@@ -1731,9 +1731,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT category_id FROM assignment_vetoes WHERE item_id = ?1")?;
-        let rows = stmt.query_map(params![item_id.to_string()], |row| {
-            row.get::<_, String>(0)
-        })?;
+        let rows = stmt.query_map(params![item_id.to_string()], |row| row.get::<_, String>(0))?;
         let mut vetoes = HashSet::new();
         for row in rows {
             let id_str = row?;
