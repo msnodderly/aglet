@@ -186,6 +186,10 @@ Done when: the existing `blocked_item_ids_matches_single_item_checks` test
 passes unchanged, and refresh time on the 2,000-item fixture is recorded before
 and after in the PR.
 
+Status: done 2026-11-17. `App::refresh` on 2,000 items with 400 dependency
+links, debug build: 606 ms to 76 ms. `claimable_item_ids` got the same
+treatment, since the ready queue calls it on every refresh.
+
 ### Phase 3. Core and CLI consolidation
 
 One PR per item. None changes stored data.
