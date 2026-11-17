@@ -20,7 +20,23 @@ use crate::model::{
 use crate::store::Store;
 
 pub const CLASSIFICATION_CONFIG_KEY: &str = "classification.config.v1";
-pub const CLASSIFICATION_DEBUG_LOG_PATH: &str = "/tmp/aglet-classification-debug.log";
+/// Where `--debug` classification logging goes. Under the platform temp
+/// directory so it also works where `/tmp` does not exist.
+pub fn classification_debug_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("aglet-classification-debug.log")
+}
+
+/// Append one timestamped line to the classification debug log. Failures
+/// are ignored: debug logging must never break classification.
+pub fn append_classification_debug_log(message: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(classification_debug_log_path())
+    {
+        let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
+    }
+}
 pub const PROVIDER_ID_IMPLICIT_STRING: &str = "implicit_string";
 pub const PROVIDER_ID_WHEN_PARSER: &str = "when_parser";
 pub const PROVIDER_ID_OLLAMA_OPENAI_COMPAT: &str = "ollama_openai_compat";
@@ -285,14 +301,6 @@ impl Default for OpenRouterProviderSettings {
     }
 }
 
-impl OpenRouterProviderSettings {
-    pub fn api_key(&self) -> Option<String> {
-        std::env::var("OPENROUTER_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OpenAiProviderSettings {
     pub model: String,
@@ -305,14 +313,6 @@ impl Default for OpenAiProviderSettings {
             model: "gpt-5.4-nano".to_string(),
             timeout_secs: 60,
         }
-    }
-}
-
-impl OpenAiProviderSettings {
-    pub fn api_key(&self) -> Option<String> {
-        std::env::var("OPENAI_API_KEY")
-            .ok()
-            .filter(|k| !k.trim().is_empty())
     }
 }
 
@@ -476,13 +476,86 @@ pub struct ProviderClassificationResult {
     pub debug_summary: Option<String>,
 }
 
-pub trait OllamaTransport: Send + Sync {
+/// A fully resolved OpenAI-compatible chat-completions endpoint. Ollama,
+/// OpenRouter, and OpenAI all speak this protocol and differ only in the
+/// values held here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatEndpoint {
+    /// Recorded on suggestions as their provider id.
+    pub provider_id: &'static str,
+    /// Name used in user-facing messages.
+    pub label: &'static str,
+    pub base_url: String,
+    /// Environment variable holding the API key; `None` for keyless endpoints.
+    pub api_key_env: Option<&'static str>,
+    pub model: String,
+    pub timeout_secs: u64,
+    /// Ask the server to constrain its reply to a JSON object.
+    pub json_response_format: bool,
+}
+
+impl ChatEndpoint {
+    /// The API key from the environment, if this endpoint needs one and it is set.
+    pub fn api_key(&self) -> Option<String> {
+        std::env::var(self.api_key_env?)
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+    }
+}
+
+impl ClassificationConfig {
+    /// The endpoint for the configured semantic provider.
+    pub fn semantic_endpoint(&self) -> ChatEndpoint {
+        match self.semantic_provider {
+            SemanticProviderKind::Ollama => ChatEndpoint {
+                provider_id: PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
+                label: "Ollama",
+                base_url: self.ollama.base_url.clone(),
+                api_key_env: None,
+                model: self.ollama.model.clone(),
+                timeout_secs: self.ollama.timeout_secs,
+                json_response_format: true,
+            },
+            SemanticProviderKind::OpenRouter => ChatEndpoint {
+                provider_id: PROVIDER_ID_OPENROUTER,
+                label: "OpenRouter",
+                base_url: OPENROUTER_BASE_URL.to_string(),
+                api_key_env: Some("OPENROUTER_API_KEY"),
+                model: self.openrouter.model.clone(),
+                timeout_secs: self.openrouter.timeout_secs,
+                json_response_format: false,
+            },
+            SemanticProviderKind::OpenAi => ChatEndpoint {
+                provider_id: PROVIDER_ID_OPENAI,
+                label: "OpenAI",
+                base_url: OPENAI_BASE_URL.to_string(),
+                api_key_env: Some("OPENAI_API_KEY"),
+                model: self.openai.model.clone(),
+                timeout_secs: self.openai.timeout_secs,
+                json_response_format: false,
+            },
+        }
+    }
+}
+
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatCompletion {
+    pub content: String,
+    pub usage: Option<OpenAiUsage>,
+}
+
+/// Sends one chat-completions request. The seam tests use to fake the LLM.
+pub trait ChatTransport: Send + Sync {
     fn complete(
         &self,
-        settings: &OllamaProviderSettings,
+        endpoint: &ChatEndpoint,
+        api_key: Option<&str>,
         system_prompt: &str,
         user_prompt: &str,
-    ) -> Result<Option<String>>;
+    ) -> Result<Option<ChatCompletion>>;
 }
 
 #[derive(Debug, Deserialize)]
@@ -525,121 +598,58 @@ pub fn list_ollama_models(settings: &OllamaProviderSettings) -> Result<Vec<Strin
 }
 
 #[derive(Debug, Default)]
-pub struct ReqwestOllamaTransport;
+pub struct ReqwestChatTransport;
 
-impl OllamaTransport for ReqwestOllamaTransport {
+impl ChatTransport for ReqwestChatTransport {
     fn complete(
         &self,
-        settings: &OllamaProviderSettings,
+        endpoint: &ChatEndpoint,
+        api_key: Option<&str>,
         system_prompt: &str,
         user_prompt: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<ChatCompletion>> {
+        let storage_error = |err: reqwest::Error| AgletError::StorageError {
+            source: Box::new(err),
+        };
         let client = Client::builder()
-            .timeout(Duration::from_secs(settings.timeout_secs))
+            .timeout(Duration::from_secs(endpoint.timeout_secs))
             .build()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let url = format!(
-            "{}/chat/completions",
-            settings.base_url.trim_end_matches('/')
-        );
-        let body = json!({
-            "model": settings.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"}
-        });
-        let response =
-            client
-                .post(url)
-                .json(&body)
-                .send()
-                .map_err(|err| AgletError::StorageError {
-                    source: Box::new(err),
-                })?;
-        let response = response
-            .error_for_status()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let parsed: OpenAiChatCompletionResponse =
-            response.json().map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        Ok(parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message.content.trim().to_string())
-            .filter(|content| !content.is_empty()))
-    }
-}
-
-pub trait OpenRouterTransport: Send + Sync {
-    fn complete(
-        &self,
-        settings: &OpenRouterProviderSettings,
-        api_key: &str,
-        system_prompt: &str,
-        user_prompt: &str,
-    ) -> Result<Option<String>>;
-}
-
-#[derive(Debug, Default)]
-pub struct ReqwestOpenRouterTransport;
-
-const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
-
-impl OpenRouterTransport for ReqwestOpenRouterTransport {
-    fn complete(
-        &self,
-        settings: &OpenRouterProviderSettings,
-        api_key: &str,
-        system_prompt: &str,
-        user_prompt: &str,
-    ) -> Result<Option<String>> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(settings.timeout_secs))
-            .build()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let url = format!("{OPENROUTER_BASE_URL}/chat/completions");
-        let body = json!({
-            "model": settings.model,
+            .map_err(storage_error)?;
+        let mut body = json!({
+            "model": endpoint.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.2
         });
-        let response = client
-            .post(url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .json(&body)
+        if endpoint.json_response_format {
+            body["response_format"] = json!({"type": "json_object"});
+        }
+        let mut request = client
+            .post(format!(
+                "{}/chat/completions",
+                endpoint.base_url.trim_end_matches('/')
+            ))
+            .json(&body);
+        if let Some(api_key) = api_key {
+            request = request.header("Authorization", format!("Bearer {api_key}"));
+        }
+        let OpenAiChatCompletionResponse { choices, usage } = request
             .send()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let response = response
+            .map_err(storage_error)?
             .error_for_status()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let parsed: OpenAiChatCompletionResponse =
-            response.json().map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        Ok(parsed
-            .choices
+            .map_err(storage_error)?
+            .json()
+            .map_err(storage_error)?;
+        Ok(choices
             .into_iter()
             .next()
-            .map(|choice| choice.message.content.trim().to_string())
-            .filter(|content| !content.is_empty()))
+            .map(|choice| ChatCompletion {
+                content: choice.message.content.trim().to_string(),
+                usage,
+            })
+            .filter(|completion| !completion.content.is_empty()))
     }
 }
 
@@ -680,79 +690,6 @@ pub struct OpenAiPromptTokensDetails {
 pub struct OpenAiCompletionTokensDetails {
     #[serde(default)]
     pub reasoning_tokens: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenAiCompletion {
-    pub content: String,
-    pub usage: Option<OpenAiUsage>,
-}
-
-pub trait OpenAiTransport: Send + Sync {
-    fn complete(
-        &self,
-        settings: &OpenAiProviderSettings,
-        api_key: &str,
-        system_prompt: &str,
-        user_prompt: &str,
-    ) -> Result<Option<OpenAiCompletion>>;
-}
-
-#[derive(Debug, Default)]
-pub struct ReqwestOpenAiTransport;
-
-const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-
-impl OpenAiTransport for ReqwestOpenAiTransport {
-    fn complete(
-        &self,
-        settings: &OpenAiProviderSettings,
-        api_key: &str,
-        system_prompt: &str,
-        user_prompt: &str,
-    ) -> Result<Option<OpenAiCompletion>> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(settings.timeout_secs))
-            .build()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let url = format!("{OPENAI_BASE_URL}/chat/completions");
-        let body = json!({
-            "model": settings.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0.2
-        });
-        let response = client
-            .post(url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .json(&body)
-            .send()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let response = response
-            .error_for_status()
-            .map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let parsed: OpenAiChatCompletionResponse =
-            response.json().map_err(|err| AgletError::StorageError {
-                source: Box::new(err),
-            })?;
-        let OpenAiChatCompletionResponse { choices, usage } = parsed;
-        Ok(choices
-            .into_iter()
-            .next()
-            .map(|choice| OpenAiCompletion {
-                content: choice.message.content.trim().to_string(),
-                usage: usage.clone(),
-            })
-            .filter(|completion| !completion.content.is_empty()))
-    }
 }
 
 pub struct ImplicitStringProvider<'a> {
@@ -844,288 +781,104 @@ impl ClassificationProvider for WhenParserProvider {
     }
 }
 
-pub struct OllamaProvider<'a> {
-    pub settings: &'a OllamaProviderSettings,
-    pub transport: &'a dyn OllamaTransport,
+/// LLM classification over any OpenAI-compatible endpoint.
+pub struct SemanticProvider<'a> {
+    pub endpoint: ChatEndpoint,
+    pub transport: &'a dyn ChatTransport,
     pub debug: bool,
 }
 
-impl ClassificationProvider for OllamaProvider<'_> {
+impl SemanticProvider<'_> {
+    fn skipped(reason: String) -> Result<ProviderClassificationResult> {
+        Ok(ProviderClassificationResult {
+            candidates: Vec::new(),
+            debug_summary: Some(reason),
+        })
+    }
+
+    /// Turn a transport failure into a message a user can act on.
+    fn describe_transport_error(&self, err: &AgletError) -> String {
+        let ChatEndpoint {
+            label,
+            timeout_secs,
+            ..
+        } = &self.endpoint;
+        let err = err.to_string();
+        if err.contains("timed out") || err.contains("Timeout") {
+            return format!(
+                "{label} timed out ({timeout_secs}s) — try a smaller model or increase timeout in Global Settings"
+            );
+        }
+        match self.endpoint.api_key_env {
+            Some(env) if err.contains("401") || err.contains("Unauthorized") => {
+                format!("{label}: invalid API key — check ${env}")
+            }
+            None if err.to_ascii_lowercase().contains("connection refused") => format!(
+                "{label} not reachable at {} — is it running?",
+                self.endpoint.base_url
+            ),
+            _ => format!("{label} error: {err}"),
+        }
+    }
+}
+
+impl ClassificationProvider for SemanticProvider<'_> {
     fn id(&self) -> &'static str {
-        PROVIDER_ID_OLLAMA_OPENAI_COMPAT
+        self.endpoint.provider_id
     }
 
     fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
-        let debug = self.debug;
-        let dbg = |msg: &str| {
-            if !debug {
-                return;
-            }
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/aglet-ollama-debug.log")
-            {
-                let _ = writeln!(f, "[{}] {msg}", jiff::Zoned::now());
+        let endpoint = &self.endpoint;
+        let dbg = |message: &str| {
+            if self.debug {
+                append_classification_debug_log(&format!("{}: {message}", endpoint.label));
             }
         };
 
+        let api_key = endpoint.api_key();
+        if let (Some(env), None) = (endpoint.api_key_env, &api_key) {
+            dbg(&format!("no API key: {env} not set"));
+            return Self::skipped(format!("{}: {env} not set", endpoint.label));
+        }
+
         dbg(&format!(
-            "classify called: enabled={} model={:?} base_url={:?} semantic_cats={}",
-            self.settings.enabled,
-            self.settings.model,
-            self.settings.base_url,
+            "classify called: model={:?} base_url={:?} semantic_cats={}",
+            endpoint.model,
+            endpoint.base_url,
             request.semantic_candidate_categories.len()
         ));
-
-        if self.settings.model.trim().is_empty()
-            || self.settings.base_url.trim().is_empty()
+        if endpoint.model.trim().is_empty()
+            || endpoint.base_url.trim().is_empty()
             || request.semantic_candidate_categories.is_empty()
         {
             dbg("early return: precondition failed");
             return Ok(ProviderClassificationResult::default());
         }
 
-        let system_prompt = SEMANTIC_SYSTEM_PROMPT;
         let user_prompt = build_semantic_user_prompt(request);
         dbg(&format!("user_prompt:\n{user_prompt}"));
-        let content = match self
-            .transport
-            .complete(self.settings, system_prompt, &user_prompt)
-        {
-            Ok(content) => content,
+        let completion = match self.transport.complete(
+            endpoint,
+            api_key.as_deref(),
+            SEMANTIC_SYSTEM_PROMPT,
+            &user_prompt,
+        ) {
+            Ok(completion) => completion,
             Err(err) => {
-                let err_str = format!("{err}");
-                dbg(&format!("transport error: {err_str}"));
-                let detail = if err_str.contains("timed out") || err_str.contains("Timeout") {
-                    format!(
-                        "Ollama timed out ({}s) — try a smaller model or increase timeout in Global Settings",
-                        self.settings.timeout_secs
-                    )
-                } else if err_str.contains("Connection refused")
-                    || err_str.contains("connection refused")
-                {
-                    format!(
-                        "Ollama not reachable at {} — is it running?",
-                        self.settings.base_url
-                    )
-                } else {
-                    format!("Ollama error: {err_str}")
-                };
-                return Ok(ProviderClassificationResult {
-                    candidates: Vec::new(),
-                    debug_summary: Some(detail),
-                });
+                dbg(&format!("transport error: {err}"));
+                return Self::skipped(self.describe_transport_error(&err));
             }
         };
-        let Some(content) = content else {
-            dbg("empty response from transport");
-            return Ok(ProviderClassificationResult {
-                candidates: Vec::new(),
-                debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
-            });
-        };
-
-        dbg(&format!("ollama response: {content}"));
-
-        let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
-        dbg(&format!(
-            "parse result: {} candidates, debug={:?}",
-            result.candidates.len(),
-            result.debug_summary
-        ));
-        Ok(result)
-    }
-}
-
-pub struct OpenRouterProvider<'a> {
-    pub settings: &'a OpenRouterProviderSettings,
-    pub transport: &'a dyn OpenRouterTransport,
-    pub debug: bool,
-}
-
-impl ClassificationProvider for OpenRouterProvider<'_> {
-    fn id(&self) -> &'static str {
-        PROVIDER_ID_OPENROUTER
-    }
-
-    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
-        let debug = self.debug;
-        let dbg = |msg: &str| {
-            if !debug {
-                return;
-            }
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/aglet-openrouter-debug.log")
-            {
-                let _ = writeln!(f, "[{}] {msg}", jiff::Zoned::now());
-            }
-        };
-
-        let api_key = match self.settings.api_key() {
-            Some(key) => key,
-            None => {
-                dbg("no API key: OPENROUTER_API_KEY not set");
-                return Ok(ProviderClassificationResult {
-                    candidates: Vec::new(),
-                    debug_summary: Some("OpenRouter: OPENROUTER_API_KEY not set".to_string()),
-                });
-            }
-        };
-
-        dbg(&format!(
-            "classify called: model={:?} semantic_cats={}",
-            self.settings.model,
-            request.semantic_candidate_categories.len()
-        ));
-
-        if self.settings.model.trim().is_empty() || request.semantic_candidate_categories.is_empty()
-        {
-            dbg("early return: precondition failed");
-            return Ok(ProviderClassificationResult::default());
-        }
-
-        let system_prompt = SEMANTIC_SYSTEM_PROMPT;
-        let user_prompt = build_semantic_user_prompt(request);
-        dbg(&format!("user_prompt:\n{user_prompt}"));
-        let content =
-            match self
-                .transport
-                .complete(self.settings, &api_key, system_prompt, &user_prompt)
-            {
-                Ok(content) => content,
-                Err(err) => {
-                    let err_str = format!("{err}");
-                    dbg(&format!("transport error: {err_str}"));
-                    let detail = if err_str.contains("timed out") || err_str.contains("Timeout") {
-                        format!(
-                            "OpenRouter timed out ({}s) — try a smaller model or increase timeout",
-                            self.settings.timeout_secs
-                        )
-                    } else if err_str.contains("401") || err_str.contains("Unauthorized") {
-                        "OpenRouter: invalid API key — check $OPENROUTER_API_KEY".to_string()
-                    } else {
-                        format!("OpenRouter error: {err_str}")
-                    };
-                    return Ok(ProviderClassificationResult {
-                        candidates: Vec::new(),
-                        debug_summary: Some(detail),
-                    });
-                }
-            };
-        let Some(content) = content else {
-            dbg("empty response from transport");
-            return Ok(ProviderClassificationResult {
-                candidates: Vec::new(),
-                debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
-            });
-        };
-
-        dbg(&format!("openrouter response: {content}"));
-
-        let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
-        dbg(&format!(
-            "parse result: {} candidates, debug={:?}",
-            result.candidates.len(),
-            result.debug_summary
-        ));
-        Ok(result)
-    }
-}
-
-pub struct OpenAiProvider<'a> {
-    pub settings: &'a OpenAiProviderSettings,
-    pub transport: &'a dyn OpenAiTransport,
-    pub debug: bool,
-}
-
-impl ClassificationProvider for OpenAiProvider<'_> {
-    fn id(&self) -> &'static str {
-        PROVIDER_ID_OPENAI
-    }
-
-    fn classify(&self, request: &ClassificationRequest) -> Result<ProviderClassificationResult> {
-        let debug = self.debug;
-        let dbg = |msg: &str| {
-            if !debug {
-                return;
-            }
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/aglet-openai-debug.log")
-            {
-                let _ = writeln!(f, "[{}] {msg}", jiff::Zoned::now());
-            }
-        };
-
-        let api_key = match self.settings.api_key() {
-            Some(key) => key,
-            None => {
-                dbg("no API key: OPENAI_API_KEY not set");
-                return Ok(ProviderClassificationResult {
-                    candidates: Vec::new(),
-                    debug_summary: Some("OpenAI: OPENAI_API_KEY not set".to_string()),
-                });
-            }
-        };
-
-        dbg(&format!(
-            "classify called: model={:?} semantic_cats={}",
-            self.settings.model,
-            request.semantic_candidate_categories.len()
-        ));
-
-        if self.settings.model.trim().is_empty() || request.semantic_candidate_categories.is_empty()
-        {
-            dbg("early return: precondition failed");
-            return Ok(ProviderClassificationResult::default());
-        }
-
-        let system_prompt = SEMANTIC_SYSTEM_PROMPT;
-        let user_prompt = build_semantic_user_prompt(request);
-        dbg(&format!("user_prompt:\n{user_prompt}"));
-        let completion =
-            match self
-                .transport
-                .complete(self.settings, &api_key, system_prompt, &user_prompt)
-            {
-                Ok(completion) => completion,
-                Err(err) => {
-                    let err_str = format!("{err}");
-                    dbg(&format!("transport error: {err_str}"));
-                    let detail = if err_str.contains("timed out") || err_str.contains("Timeout") {
-                        format!(
-                            "OpenAI timed out ({}s) — try a smaller model or increase timeout",
-                            self.settings.timeout_secs
-                        )
-                    } else if err_str.contains("401") || err_str.contains("Unauthorized") {
-                        "OpenAI: invalid API key — check $OPENAI_API_KEY".to_string()
-                    } else {
-                        format!("OpenAI error: {err_str}")
-                    };
-                    return Ok(ProviderClassificationResult {
-                        candidates: Vec::new(),
-                        debug_summary: Some(detail),
-                    });
-                }
-            };
         let Some(completion) = completion else {
             dbg("empty response from transport");
-            return Ok(ProviderClassificationResult {
-                candidates: Vec::new(),
-                debug_summary: Some(format!("semantic[{}]: empty response", self.settings.model)),
-            });
+            return Self::skipped(format!("semantic[{}]: empty response", endpoint.model));
         };
 
-        log_openai_completion_debug(&dbg, &completion);
+        log_completion_usage_debug(&dbg, &completion);
+        dbg(&format!("response: {}", completion.content));
 
-        let content = completion.content;
-        dbg(&format!("openai response: {content}"));
-
-        let result = parse_semantic_suggestions(request, &content, &self.settings.model, self.id());
+        let result =
+            parse_semantic_suggestions(request, &completion.content, &endpoint.model, self.id());
         dbg(&format!(
             "parse result: {} candidates, debug={:?}",
             result.candidates.len(),
@@ -1269,12 +1022,9 @@ fn format_openai_usage_summary(usage: &OpenAiUsage) -> String {
     )
 }
 
-fn log_openai_completion_debug(mut dbg: impl FnMut(&str), completion: &OpenAiCompletion) {
+fn log_completion_usage_debug(mut dbg: impl FnMut(&str), completion: &ChatCompletion) {
     if let Some(usage) = completion.usage.as_ref() {
-        dbg(&format!(
-            "openai usage: {}",
-            format_openai_usage_summary(usage)
-        ));
+        dbg(&format!("usage: {}", format_openai_usage_summary(usage)));
     }
 }
 
@@ -1370,11 +1120,59 @@ pub struct BackgroundClassificationJob {
     pub item_revision_hash: String,
     pub request: ClassificationRequest,
     pub config: ClassificationConfig,
-    pub ollama_transport: Arc<dyn OllamaTransport>,
-    pub openrouter_transport: Arc<dyn OpenRouterTransport>,
-    pub openai_transport: Arc<dyn OpenAiTransport>,
+    pub transport: Arc<dyn ChatTransport>,
     pub reference_date: Date,
     pub debug: bool,
+}
+
+impl BackgroundClassificationJob {
+    /// Run every enabled provider against the prepared request. Touches no
+    /// Store, so it is safe on a worker thread.
+    pub fn run(&self) -> Result<(Vec<ClassificationCandidate>, Vec<String>)> {
+        let classifier = crate::matcher::SubstringClassifier;
+        let providers = classification_providers(
+            &self.config,
+            &classifier,
+            Some(WhenParserProvider {
+                parser: BasicDateParser::default(),
+                reference_date: self.reference_date,
+            }),
+            Some(self.transport.as_ref()),
+            self.debug,
+        );
+        execute_providers(&providers, &self.request)
+    }
+}
+
+/// Build the provider list a config asks for. `when_parser` and `transport`
+/// are `None` when the caller wants to leave date parsing or the LLM out.
+pub fn classification_providers<'a>(
+    cfg: &ClassificationConfig,
+    classifier: &'a dyn Classifier,
+    when_parser: Option<WhenParserProvider>,
+    transport: Option<&'a dyn ChatTransport>,
+    debug: bool,
+) -> Vec<Box<dyn ClassificationProvider + 'a>> {
+    let mut providers: Vec<Box<dyn ClassificationProvider + 'a>> = Vec::new();
+    let literal = cfg.literal_mode != LiteralClassificationMode::Off;
+    if literal && cfg.provider_enabled(PROVIDER_ID_IMPLICIT_STRING) {
+        providers.push(Box::new(ImplicitStringProvider { classifier }));
+    }
+    if let Some(when_parser) = when_parser {
+        if literal && cfg.provider_enabled(PROVIDER_ID_WHEN_PARSER) {
+            providers.push(Box::new(when_parser));
+        }
+    }
+    if let Some(transport) = transport {
+        if cfg.semantic_mode == SemanticClassificationMode::SuggestReview {
+            providers.push(Box::new(SemanticProvider {
+                endpoint: cfg.semantic_endpoint(),
+                transport,
+                debug,
+            }));
+        }
+    }
+    providers
 }
 
 pub struct ClassificationService<'a> {
@@ -1540,24 +1338,28 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct FakeOllamaTransport {
+    struct FakeChatTransport {
         response: Option<String>,
         fail: bool,
     }
 
-    impl OllamaTransport for FakeOllamaTransport {
+    impl ChatTransport for FakeChatTransport {
         fn complete(
             &self,
-            _settings: &OllamaProviderSettings,
+            _endpoint: &ChatEndpoint,
+            _api_key: Option<&str>,
             _system_prompt: &str,
             _user_prompt: &str,
-        ) -> Result<Option<String>> {
+        ) -> Result<Option<ChatCompletion>> {
             if self.fail {
                 return Err(AgletError::StorageError {
                     source: Box::new(std::io::Error::other("boom")),
                 });
             }
-            Ok(self.response.clone())
+            Ok(self.response.clone().map(|content| ChatCompletion {
+                content,
+                usage: None,
+            }))
         }
     }
 
@@ -1834,8 +1636,8 @@ mod tests {
     }
 
     #[test]
-    fn log_openai_completion_debug_emits_usage_summary() {
-        let completion = OpenAiCompletion {
+    fn log_completion_usage_debug_emits_usage_summary() {
+        let completion = ChatCompletion {
             content: "{\"suggestions\":[]}".to_string(),
             usage: Some(OpenAiUsage {
                 prompt_tokens: 200,
@@ -1850,12 +1652,12 @@ mod tests {
             }),
         };
         let mut messages = Vec::new();
-        log_openai_completion_debug(|msg: &str| messages.push(msg.to_string()), &completion);
+        log_completion_usage_debug(|msg: &str| messages.push(msg.to_string()), &completion);
 
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0],
-            "openai usage: prompt_tokens=200 cached_tokens=150 completion_tokens=20 reasoning_tokens=4 total_tokens=220"
+            "usage: prompt_tokens=200 cached_tokens=150 completion_tokens=20 reasoning_tokens=4 total_tokens=220"
         );
     }
 
@@ -1887,12 +1689,16 @@ mod tests {
             enabled: true,
             ..OllamaProviderSettings::default()
         };
-        let transport = FakeOllamaTransport {
+        let transport = FakeChatTransport {
             response: Some("not json".to_string()),
             fail: false,
         };
-        let provider = OllamaProvider {
-            settings: &settings,
+        let provider = SemanticProvider {
+            endpoint: ClassificationConfig {
+                ollama: settings.clone(),
+                ..ClassificationConfig::default()
+            }
+            .semantic_endpoint(),
             transport: &transport,
             debug: false,
         };
@@ -1935,15 +1741,19 @@ mod tests {
             model: "mistral".to_string(),
             ..OllamaProviderSettings::default()
         };
-        let transport = FakeOllamaTransport {
+        let transport = FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Travel","confidence":0.91,"rationale":"travel planning task"}]}"#
                     .to_string(),
             ),
             fail: false,
         };
-        let provider = OllamaProvider {
-            settings: &settings,
+        let provider = SemanticProvider {
+            endpoint: ClassificationConfig {
+                ollama: settings.clone(),
+                ..ClassificationConfig::default()
+            }
+            .semantic_endpoint(),
             transport: &transport,
             debug: false,
         };
@@ -1995,12 +1805,16 @@ mod tests {
             enabled: true,
             ..OllamaProviderSettings::default()
         };
-        let transport = FakeOllamaTransport {
+        let transport = FakeChatTransport {
             response: None,
             fail: true,
         };
-        let provider = OllamaProvider {
-            settings: &settings,
+        let provider = SemanticProvider {
+            endpoint: ClassificationConfig {
+                ollama: settings.clone(),
+                ..ClassificationConfig::default()
+            }
+            .semantic_endpoint(),
             transport: &transport,
             debug: false,
         };

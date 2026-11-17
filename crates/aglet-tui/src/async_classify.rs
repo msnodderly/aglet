@@ -2,14 +2,8 @@ use std::sync::mpsc;
 use std::thread;
 
 use aglet_core::classification::{
-    execute_providers, BackgroundClassificationJob, ClassificationCandidate,
-    ClassificationProvider, ImplicitStringProvider, LiteralClassificationMode, OllamaProvider,
-    OpenAiProvider, OpenRouterProvider, SemanticClassificationMode, SemanticProviderKind,
-    WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH, PROVIDER_ID_IMPLICIT_STRING,
-    PROVIDER_ID_WHEN_PARSER,
+    append_classification_debug_log, BackgroundClassificationJob, ClassificationCandidate,
 };
-use aglet_core::dates::BasicDateParser;
-use aglet_core::matcher::SubstringClassifier;
 use aglet_core::model::ItemId;
 
 /// Result of a background classification job.
@@ -70,54 +64,7 @@ fn run_classification_job(job: &BackgroundClassificationJob) -> ClassifyResult {
             job.request.semantic_candidate_categories.len()
         ),
     );
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let classifier = SubstringClassifier;
-        let parser = BasicDateParser::default();
-        let mut providers: Vec<Box<dyn ClassificationProvider>> = Vec::new();
-
-        if job.config.literal_mode != LiteralClassificationMode::Off
-            && job.config.provider_enabled(PROVIDER_ID_IMPLICIT_STRING)
-        {
-            providers.push(Box::new(ImplicitStringProvider {
-                classifier: &classifier,
-            }));
-        }
-        if job.config.literal_mode != LiteralClassificationMode::Off
-            && job.config.provider_enabled(PROVIDER_ID_WHEN_PARSER)
-        {
-            providers.push(Box::new(WhenParserProvider {
-                parser,
-                reference_date: job.reference_date,
-            }));
-        }
-        if job.config.semantic_mode == SemanticClassificationMode::SuggestReview {
-            match job.config.semantic_provider {
-                SemanticProviderKind::Ollama => {
-                    providers.push(Box::new(OllamaProvider {
-                        settings: &job.config.ollama,
-                        transport: job.ollama_transport.as_ref(),
-                        debug: job.debug,
-                    }));
-                }
-                SemanticProviderKind::OpenRouter => {
-                    providers.push(Box::new(OpenRouterProvider {
-                        settings: &job.config.openrouter,
-                        transport: job.openrouter_transport.as_ref(),
-                        debug: job.debug,
-                    }));
-                }
-                SemanticProviderKind::OpenAi => {
-                    providers.push(Box::new(OpenAiProvider {
-                        settings: &job.config.openai,
-                        transport: job.openai_transport.as_ref(),
-                        debug: job.debug,
-                    }));
-                }
-            }
-        }
-
-        execute_providers(&providers, &job.request)
-    }));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run()));
 
     match result {
         Ok(Ok((candidates, debug_summaries))) => {
@@ -174,16 +121,7 @@ fn run_classification_job(job: &BackgroundClassificationJob) -> ClassifyResult {
 }
 
 fn append_debug_log(enabled: bool, message: &str) {
-    if !enabled {
-        return;
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(CLASSIFICATION_DEBUG_LOG_PATH)
-    {
-        use std::io::Write;
-
-        let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
+    if enabled {
+        append_classification_debug_log(message);
     }
 }

@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -7,14 +6,12 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::classification::{
-    BackgroundClassificationJob, ClassificationCandidate, ClassificationConfig,
-    ClassificationService, ClassificationSuggestion, ImplicitStringProvider,
-    LiteralClassificationMode, OllamaProvider, OllamaTransport, OpenAiProvider, OpenAiTransport,
-    OpenRouterProvider, OpenRouterTransport, ReqwestOllamaTransport, ReqwestOpenAiTransport,
-    ReqwestOpenRouterTransport, SemanticClassificationMode, SemanticProviderKind, SuggestionStatus,
-    WhenParserProvider, CLASSIFICATION_DEBUG_LOG_PATH, PROVIDER_ID_IMPLICIT_STRING,
-    PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI, PROVIDER_ID_OPENROUTER,
-    PROVIDER_ID_WHEN_PARSER,
+    append_classification_debug_log, classification_providers, BackgroundClassificationJob,
+    ChatTransport, ClassificationCandidate, ClassificationConfig, ClassificationService,
+    ClassificationSuggestion, LiteralClassificationMode, ReqwestChatTransport,
+    SemanticClassificationMode, SemanticProvider, SuggestionStatus, WhenParserProvider,
+    PROVIDER_ID_IMPLICIT_STRING, PROVIDER_ID_OLLAMA_OPENAI_COMPAT, PROVIDER_ID_OPENAI,
+    PROVIDER_ID_OPENROUTER, PROVIDER_ID_WHEN_PARSER,
 };
 use crate::date_rules::{category_uses_date_conditions, EvaluationContext};
 use crate::dates::BasicDateParser;
@@ -42,9 +39,8 @@ pub struct Aglet<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
     date_parser: BasicDateParser,
-    ollama_transport: Arc<dyn OllamaTransport>,
-    openrouter_transport: Arc<dyn OpenRouterTransport>,
-    openai_transport: Arc<dyn OpenAiTransport>,
+    /// Sends LLM requests; tests substitute a fake.
+    chat_transport: Arc<dyn ChatTransport>,
     debug: bool,
     /// Recursion depth for applying special action effects (SetWhen/MarkDone/
     /// Delete): each application reprocesses the item, which may produce more
@@ -97,13 +93,7 @@ struct ReviewQueueChoice {
 
 impl<'a> Aglet<'a> {
     pub fn new(store: &'a Store, classifier: &'a dyn Classifier) -> Self {
-        Self::with_transports(
-            store,
-            classifier,
-            Arc::new(ReqwestOllamaTransport),
-            Arc::new(ReqwestOpenRouterTransport),
-            Arc::new(ReqwestOpenAiTransport),
-        )
+        Self::with_chat_transport(store, classifier, Arc::new(ReqwestChatTransport))
     }
 
     pub fn with_debug(store: &'a Store, classifier: &'a dyn Classifier, debug: bool) -> Self {
@@ -112,34 +102,16 @@ impl<'a> Aglet<'a> {
         aglet
     }
 
-    pub fn with_ollama_transport(
+    pub fn with_chat_transport(
         store: &'a Store,
         classifier: &'a dyn Classifier,
-        ollama_transport: Arc<dyn OllamaTransport>,
-    ) -> Self {
-        Self::with_transports(
-            store,
-            classifier,
-            ollama_transport,
-            Arc::new(ReqwestOpenRouterTransport),
-            Arc::new(ReqwestOpenAiTransport),
-        )
-    }
-
-    pub fn with_transports(
-        store: &'a Store,
-        classifier: &'a dyn Classifier,
-        ollama_transport: Arc<dyn OllamaTransport>,
-        openrouter_transport: Arc<dyn OpenRouterTransport>,
-        openai_transport: Arc<dyn OpenAiTransport>,
+        chat_transport: Arc<dyn ChatTransport>,
     ) -> Self {
         Self {
             store,
             classifier,
             date_parser: BasicDateParser::default(),
-            ollama_transport,
-            openrouter_transport,
-            openai_transport,
+            chat_transport,
             debug: false,
             specials_depth: std::cell::Cell::new(0),
         }
@@ -1150,7 +1122,7 @@ impl<'a> Aglet<'a> {
         let Some(provider) = self.semantic_provider(&cfg) else {
             return Ok(0);
         };
-        let service = ClassificationService::new(self.store, vec![provider]);
+        let service = ClassificationService::new(self.store, vec![Box::new(provider)]);
         let (_item, item_revision_hash, candidates, _debug) =
             service.collect_candidates(item_id)?;
         self.apply_classification_results(item_id, &item_revision_hash, &candidates)
@@ -1274,9 +1246,7 @@ impl<'a> Aglet<'a> {
             item_revision_hash: revision_hash,
             request,
             config: cfg,
-            ollama_transport: Arc::clone(&self.ollama_transport),
-            openrouter_transport: Arc::clone(&self.openrouter_transport),
-            openai_transport: Arc::clone(&self.openai_transport),
+            transport: Arc::clone(&self.chat_transport),
             reference_date,
             debug: self.debug,
         }))
@@ -1801,66 +1771,31 @@ impl<'a> Aglet<'a> {
         allow_when_parser: bool,
         include_semantic: bool,
     ) -> ClassificationService<'b> {
-        let mut providers = Vec::new();
-        if cfg.literal_mode != LiteralClassificationMode::Off
-            && cfg.provider_enabled(PROVIDER_ID_IMPLICIT_STRING)
-        {
-            providers.push(Box::new(ImplicitStringProvider {
-                classifier: self.classifier,
-            }) as _);
-        }
-        if allow_when_parser
-            && cfg.literal_mode != LiteralClassificationMode::Off
-            && cfg.provider_enabled(PROVIDER_ID_WHEN_PARSER)
-        {
-            providers.push(Box::new(WhenParserProvider {
+        let providers = classification_providers(
+            cfg,
+            self.classifier,
+            allow_when_parser.then_some(WhenParserProvider {
                 parser: self.date_parser,
                 reference_date,
-            }) as _);
-        }
-        if include_semantic {
-            providers.extend(self.semantic_provider(cfg));
-        }
+            }),
+            include_semantic.then_some(self.chat_transport.as_ref()),
+            self.debug,
+        );
         ClassificationService::new(self.store, providers)
     }
 
     /// The configured LLM provider, or `None` when semantic mode is off.
-    fn semantic_provider<'b>(
-        &'b self,
-        cfg: &'b ClassificationConfig,
-    ) -> Option<Box<dyn crate::classification::ClassificationProvider + 'b>> {
-        if cfg.semantic_mode != SemanticClassificationMode::SuggestReview {
-            return None;
-        }
-        Some(match cfg.semantic_provider {
-            SemanticProviderKind::Ollama => Box::new(OllamaProvider {
-                settings: &cfg.ollama,
-                transport: self.ollama_transport.as_ref(),
-                debug: self.debug,
-            }),
-            SemanticProviderKind::OpenRouter => Box::new(OpenRouterProvider {
-                settings: &cfg.openrouter,
-                transport: self.openrouter_transport.as_ref(),
-                debug: self.debug,
-            }),
-            SemanticProviderKind::OpenAi => Box::new(OpenAiProvider {
-                settings: &cfg.openai,
-                transport: self.openai_transport.as_ref(),
-                debug: self.debug,
-            }),
+    fn semantic_provider(&self, cfg: &ClassificationConfig) -> Option<SemanticProvider<'_>> {
+        (cfg.semantic_mode == SemanticClassificationMode::SuggestReview).then(|| SemanticProvider {
+            endpoint: cfg.semantic_endpoint(),
+            transport: self.chat_transport.as_ref(),
+            debug: self.debug,
         })
     }
 
     fn debug_log(&self, message: &str) {
-        if !self.debug {
-            return;
-        }
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(CLASSIFICATION_DEBUG_LOG_PATH)
-        {
-            let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
+        if self.debug {
+            append_classification_debug_log(message);
         }
     }
 

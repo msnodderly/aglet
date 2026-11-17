@@ -666,15 +666,8 @@ impl App {
     }
 
     fn debug_log_classification(&self, aglet: &Aglet<'_>, message: &str) {
-        if !aglet.debug_enabled() {
-            return;
-        }
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(aglet_core::classification::CLASSIFICATION_DEBUG_LOG_PATH)
-        {
-            let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
+        if aglet.debug_enabled() {
+            aglet_core::classification::append_classification_debug_log(message);
         }
     }
 
