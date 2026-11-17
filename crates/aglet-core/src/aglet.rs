@@ -165,17 +165,34 @@ impl<'a> Aglet<'a> {
         &self,
         evaluation_context: EvaluationContext,
     ) -> Result<EvaluateAllItemsResult> {
-        let mut result = reevaluate_all_items_with_options(
-            self.store,
-            self.classifier,
-            ProcessOptions {
-                enable_implicit_string: false,
-                evaluation_context: evaluation_context.clone(),
-                ..ProcessOptions::default()
-            },
-        )?;
-        self.apply_bulk_deferred_specials(&mut result, &evaluation_context)?;
-        Ok(result)
+        self.transaction(|| {
+            let mut result = reevaluate_all_items_with_options(
+                self.store,
+                self.classifier,
+                ProcessOptions {
+                    enable_implicit_string: false,
+                    evaluation_context: evaluation_context.clone(),
+                    ..ProcessOptions::default()
+                },
+            )?;
+            self.apply_bulk_deferred_specials(&mut result, &evaluation_context)?;
+            Ok(result)
+        })
+    }
+
+    /// Run `f` as one atomic unit: all of its writes commit together, or none
+    /// do if it returns an error. Use this around loops that create or change
+    /// many items; without it each item is its own durable commit, which is
+    /// slow on real disks and leaves partial results behind on failure.
+    /// Nests safely inside itself.
+    pub fn transaction<T, E>(
+        &self,
+        f: impl FnOnce() -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<AgletError>,
+    {
+        self.store.with_immediate_transaction(|_| f())
     }
 
     pub fn debug_enabled(&self) -> bool {
@@ -1121,6 +1138,24 @@ impl<'a> Aglet<'a> {
         self.apply_classification_results(item_id, &item_revision_hash, &candidates)
     }
 
+    /// The LLM half of an item save, for callers that saved with a `_cheap`
+    /// method: runs only the semantic provider, under the same config gates as
+    /// a full save. Call it outside any transaction, since it makes a network
+    /// request. Returns the number of suggestions queued for review.
+    pub fn classify_item_semantic_after_save(&self, item_id: ItemId) -> Result<usize> {
+        let cfg = self.store.get_classification_config()?;
+        if !cfg.should_run_continuously() || !cfg.run_on_item_save {
+            return Ok(0);
+        }
+        let Some(provider) = self.semantic_provider(&cfg) else {
+            return Ok(0);
+        };
+        let service = ClassificationService::new(self.store, vec![provider]);
+        let (_item, item_revision_hash, candidates, _debug) =
+            service.collect_candidates(item_id)?;
+        self.apply_classification_results(item_id, &item_revision_hash, &candidates)
+    }
+
     /// Apply pre-computed classification candidates for an item.
     /// Supersedes old suggestions for this revision, then upserts new ones
     /// based on the current classification config disposition.
@@ -1690,18 +1725,22 @@ impl<'a> Aglet<'a> {
             && cfg.run_on_category_change
             && cfg.literal_mode == LiteralClassificationMode::AutoApply;
         let evaluation_context = EvaluationContext::now();
-        let mut result = evaluate_all_items_with_options(
-            self.store,
-            self.classifier,
-            category_id,
-            ProcessOptions {
-                enable_implicit_string,
-                evaluation_context: evaluation_context.clone(),
-                ..ProcessOptions::default()
-            },
-        )?;
-        self.apply_bulk_deferred_specials(&mut result, &evaluation_context)?;
-        Ok(result)
+        // One transaction for the whole re-evaluation: a failure on any item
+        // leaves every item as it was.
+        self.transaction(|| {
+            let mut result = evaluate_all_items_with_options(
+                self.store,
+                self.classifier,
+                category_id,
+                ProcessOptions {
+                    enable_implicit_string,
+                    evaluation_context: evaluation_context.clone(),
+                    ..ProcessOptions::default()
+                },
+            )?;
+            self.apply_bulk_deferred_specials(&mut result, &evaluation_context)?;
+            Ok(result)
+        })
     }
 
     /// Apply the special-action effects a bulk evaluation produced, item by
@@ -1779,32 +1818,37 @@ impl<'a> Aglet<'a> {
                 reference_date,
             }) as _);
         }
-        if include_semantic && cfg.semantic_mode == SemanticClassificationMode::SuggestReview {
-            match cfg.semantic_provider {
-                SemanticProviderKind::Ollama => {
-                    providers.push(Box::new(OllamaProvider {
-                        settings: &cfg.ollama,
-                        transport: self.ollama_transport.as_ref(),
-                        debug: self.debug,
-                    }) as _);
-                }
-                SemanticProviderKind::OpenRouter => {
-                    providers.push(Box::new(OpenRouterProvider {
-                        settings: &cfg.openrouter,
-                        transport: self.openrouter_transport.as_ref(),
-                        debug: self.debug,
-                    }) as _);
-                }
-                SemanticProviderKind::OpenAi => {
-                    providers.push(Box::new(OpenAiProvider {
-                        settings: &cfg.openai,
-                        transport: self.openai_transport.as_ref(),
-                        debug: self.debug,
-                    }) as _);
-                }
-            }
+        if include_semantic {
+            providers.extend(self.semantic_provider(cfg));
         }
         ClassificationService::new(self.store, providers)
+    }
+
+    /// The configured LLM provider, or `None` when semantic mode is off.
+    fn semantic_provider<'b>(
+        &'b self,
+        cfg: &'b ClassificationConfig,
+    ) -> Option<Box<dyn crate::classification::ClassificationProvider + 'b>> {
+        if cfg.semantic_mode != SemanticClassificationMode::SuggestReview {
+            return None;
+        }
+        Some(match cfg.semantic_provider {
+            SemanticProviderKind::Ollama => Box::new(OllamaProvider {
+                settings: &cfg.ollama,
+                transport: self.ollama_transport.as_ref(),
+                debug: self.debug,
+            }),
+            SemanticProviderKind::OpenRouter => Box::new(OpenRouterProvider {
+                settings: &cfg.openrouter,
+                transport: self.openrouter_transport.as_ref(),
+                debug: self.debug,
+            }),
+            SemanticProviderKind::OpenAi => Box::new(OpenAiProvider {
+                settings: &cfg.openai,
+                transport: self.openai_transport.as_ref(),
+                debug: self.debug,
+            }),
+        })
     }
 
     fn debug_log(&self, message: &str) {
