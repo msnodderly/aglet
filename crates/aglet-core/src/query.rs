@@ -1,12 +1,140 @@
 use jiff::civil::{Date, DateTime};
 use jiff::Span;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use crate::model::{
-    month_name, weekday_name, AssignmentSource, Category, CategoryId, DateSource, DatebookAnchor,
-    DatebookConfig, DatebookInterval, DatebookPeriod, Item, Query, Section, View, WhenBucket,
-    RESERVED_CATEGORY_NAMES,
+    month_name, weekday_name, AssignmentSource, Category, CategoryId, CategoryValueKind,
+    DateSource, DatebookAnchor, DatebookConfig, DatebookInterval, DatebookPeriod, Item, Query,
+    Section, View, WhenBucket, RESERVED_CATEGORY_NAMES,
 };
+
+/// Category id to name, for rendering assignments.
+pub fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
+    categories
+        .iter()
+        .map(|category| (category.id, category.name.clone()))
+        .collect()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortField {
+    ItemText,
+    WhenDate,
+    /// A numeric category sorts by its value. Any other category sorts by
+    /// the names of the item's assigned children, or by the category's own
+    /// name when it has no children.
+    Category(CategoryId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SortKey {
+    pub field: SortField,
+    pub direction: SortDirection,
+}
+
+/// Order two items by `keys`; the first key that tells them apart wins.
+/// Items with no value for a key sort last in both directions. Shared by the
+/// CLI `--sort` flag and TUI column sorting.
+pub fn compare_items_by_sort_keys(
+    left: &Item,
+    right: &Item,
+    keys: &[SortKey],
+    categories: &[Category],
+) -> Ordering {
+    keys.iter()
+        .map(|key| compare_items_by_sort_key(left, right, *key, categories))
+        .find(|order| *order != Ordering::Equal)
+        .unwrap_or(Ordering::Equal)
+}
+
+fn compare_items_by_sort_key(
+    left: &Item,
+    right: &Item,
+    key: SortKey,
+    categories: &[Category],
+) -> Ordering {
+    match key.field {
+        SortField::ItemText => compare_present(
+            left.text.to_ascii_lowercase(),
+            right.text.to_ascii_lowercase(),
+            key.direction,
+        ),
+        SortField::WhenDate => compare_optional(left.when_date, right.when_date, key.direction),
+        SortField::Category(category_id) => {
+            let Some(category) = categories.iter().find(|c| c.id == category_id) else {
+                return Ordering::Equal;
+            };
+            if category.value_kind == CategoryValueKind::Numeric {
+                let value = |item: &Item| {
+                    item.assignments
+                        .get(&category_id)
+                        .and_then(|assignment| assignment.numeric_value)
+                };
+                compare_optional(value(left), value(right), key.direction)
+            } else {
+                compare_optional(
+                    category_sort_text(left, category, categories),
+                    category_sort_text(right, category, categories),
+                    key.direction,
+                )
+            }
+        }
+    }
+}
+
+/// The lowercase text an item sorts by under a tag category.
+fn category_sort_text(item: &Item, category: &Category, categories: &[Category]) -> Option<String> {
+    if category.children.is_empty() {
+        return item
+            .assignments
+            .contains_key(&category.id)
+            .then(|| category.name.to_ascii_lowercase());
+    }
+    let mut names: Vec<String> = category
+        .children
+        .iter()
+        .filter(|child_id| item.assignments.contains_key(child_id))
+        .map(|child_id| {
+            categories
+                .iter()
+                .find(|candidate| candidate.id == *child_id)
+                .map(|candidate| candidate.name.to_ascii_lowercase())
+                .unwrap_or_else(|| child_id.to_string())
+        })
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    names.sort();
+    Some(names.join(", "))
+}
+
+fn compare_optional<T: Ord>(
+    left: Option<T>,
+    right: Option<T>,
+    direction: SortDirection,
+) -> Ordering {
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(left), Some(right)) => compare_present(left, right, direction),
+    }
+}
+
+fn compare_present<T: Ord>(left: T, right: T, direction: SortDirection) -> Ordering {
+    match direction {
+        SortDirection::Asc => left.cmp(&right),
+        SortDirection::Desc => right.cmp(&left),
+    }
+}
 
 /// Category IDs an item should display by default: direct assignments only
 /// (any provenance other than `Subsumption`), excluding the reserved
