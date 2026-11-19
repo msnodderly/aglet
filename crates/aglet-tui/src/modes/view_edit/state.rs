@@ -59,6 +59,8 @@ pub(crate) enum ViewEditInlineInput {
 
 #[derive(Clone)]
 pub(crate) struct ViewEditState {
+    /// View-picker row to return to when the editor closes.
+    pub(crate) return_picker_index: usize,
     pub(crate) draft: View,
     pub(crate) is_new_view: bool,
     pub(crate) region: ViewEditRegion,

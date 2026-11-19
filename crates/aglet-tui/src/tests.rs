@@ -3761,7 +3761,7 @@ fn view_edit_auto_assign_lint_app(auto_assign_in_criteria: bool) -> App {
         views: vec![view.clone()],
         ..App::default()
     };
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
     if let Some(state) = app.view_edit_state.as_mut() {
         state.region = ViewEditRegion::Sections;
         state.section_index = 0;
@@ -4239,8 +4239,8 @@ fn input_cursor_position_is_hidden_for_non_input_modes() {
         Mode::InputPanel,       // popup mode — footer cursor hidden
         Mode::SearchBarFocused, // cursor rendered by search bar, not footer
         Mode::ConfirmDelete,
-        Mode::ViewPicker,
-        Mode::ViewDeleteConfirm,
+        Mode::ViewPicker { index: 0 },
+        Mode::ViewDeleteConfirm { index: 0 },
         Mode::CategoryManager,
     ] {
         let app = App {
@@ -5510,14 +5510,16 @@ fn view_picker_v_opens_view_edit() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "Work Board")
-        .expect("work board view should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "Work Board")
+            .expect("work board view should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('V').into(), &aglet)
+    app.handle_key(KeyCode::Char('V').into(), &aglet)
         .expect("open view edit");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -5568,14 +5570,16 @@ fn view_picker_enter_switches_to_ready_queue_and_filters_blocked_items() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == aglet_core::workflow::READY_QUEUE_VIEW_NAME)
-        .expect("Ready Queue view should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == aglet_core::workflow::READY_QUEUE_VIEW_NAME)
+            .expect("Ready Queue view should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Enter.into(), &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("switch to Ready Queue");
 
     assert_eq!(
@@ -5606,26 +5610,28 @@ fn view_picker_blocks_edit_delete_and_rename_for_all_items() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "All Items")
-        .expect("All Items view should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "All Items")
+            .expect("All Items view should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('e').into(), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("edit key");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.status.contains("immutable"));
 
-    app.handle_view_picker_key(KeyCode::Char('x').into(), &aglet)
+    app.handle_key(KeyCode::Char('x').into(), &aglet)
         .expect("delete key");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.status.contains("immutable"));
 
-    app.handle_view_picker_key(KeyCode::Char('r').into(), &aglet)
+    app.handle_key(KeyCode::Char('r').into(), &aglet)
         .expect("rename key");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.status.contains("immutable"));
 
     drop(store);
@@ -5640,9 +5646,9 @@ fn view_picker_lowercase_n_opens_view_create() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
+    app.mode = Mode::ViewPicker { index: 0 };
 
-    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("n opens create view");
 
     // N now opens ViewEdit directly with inline name editing
@@ -5668,19 +5674,23 @@ fn view_picker_c_opens_clone_name_input() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "TestView")
-        .expect("TestView should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
+    app.handle_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone name input");
 
     assert_eq!(app.mode, Mode::InputPanel);
-    assert_eq!(app.name_input_context, Some(NameInputContext::ViewClone));
-    assert!(app.view_pending_clone_id.is_some());
+    assert!(matches!(
+        app.name_input_context,
+        Some(NameInputContext::ViewClone { .. })
+    ));
     assert!(app.status.contains("Clone"));
 
     let _ = std::fs::remove_file(&db_path);
@@ -5694,14 +5704,16 @@ fn view_picker_clone_creates_new_view() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "TestView")
-        .expect("TestView should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
+    app.handle_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone");
     assert_eq!(app.mode, Mode::InputPanel);
 
@@ -5712,7 +5724,7 @@ fn view_picker_clone_creates_new_view() {
     app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
         .expect("save clone");
 
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.status.contains("Cloned view as 'Cloned View'"));
     assert!(store
         .list_views()
@@ -5736,14 +5748,16 @@ fn view_picker_clone_rejects_duplicate_name() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "TestView")
-        .expect("TestView should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
+    app.handle_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone");
 
     for ch in "TestView".chars() {
@@ -5767,14 +5781,16 @@ fn view_picker_clone_empty_name_cancels() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "TestView")
-        .expect("TestView should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
+    app.handle_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone");
 
     // Enter/Esc with empty name cancels silently
@@ -5782,7 +5798,7 @@ fn view_picker_clone_empty_name_cancels() {
         .expect("save clone with empty name");
 
     // Empty name closes the panel (auto-save with empty = cancel)
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.input_panel.is_none());
 
     let _ = std::fs::remove_file(&db_path);
@@ -5800,14 +5816,14 @@ fn view_picker_c_with_no_views_shows_status() {
     let aglet = Aglet::new(&store, &classifier);
 
     let mut app = App {
-        mode: Mode::ViewPicker,
+        mode: Mode::ViewPicker { index: 0 },
         ..Default::default()
     };
 
-    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
+    app.handle_key(KeyCode::Char('c').into(), &aglet)
         .expect("c with no views");
 
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.status.contains("No selected view to clone"));
 
     drop(store);
@@ -5822,10 +5838,10 @@ fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() 
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
+    app.mode = Mode::ViewPicker { index: 0 };
 
     // N now opens ViewEdit directly with inline name editing
-    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
     let state = app.view_edit_state.as_ref().expect("view edit state");
@@ -5873,10 +5889,10 @@ fn view_create_wizard_esc_discards_unsaved_view() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
+    app.mode = Mode::ViewPicker { index: 0 };
 
     // N now opens ViewEdit directly with inline name editing
-    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
 
@@ -5903,7 +5919,7 @@ fn view_create_wizard_esc_discards_unsaved_view() {
     // 'n' discards the unsaved draft.
     app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("discard draft");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.view_edit_state.is_none());
 
     let persisted = store
@@ -5927,10 +5943,10 @@ fn view_create_wizard_s_save_persists_view() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
+    app.mode = Mode::ViewPicker { index: 0 };
 
     // N now opens ViewEdit directly with inline name editing
-    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
 
@@ -5986,13 +6002,15 @@ fn view_edit_navigation_keys_do_not_request_app_quit() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "Work Board")
-        .expect("work board view should exist");
-    app.handle_view_picker_key(KeyCode::Char('V').into(), &aglet)
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "Work Board")
+            .expect("work board view should exist"),
+    };
+    app.handle_key(KeyCode::Char('V').into(), &aglet)
         .expect("open view edit");
 
     let should_quit = app
@@ -8087,7 +8105,7 @@ fn view_picker_status_and_hint_row_agree_on_keys() {
     app.refresh(&store).expect("refresh");
     app.handle_normal_key(KeyCode::Char('v').into(), &aglet)
         .expect("open view picker");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
 
     for (key, desc) in super::VIEW_PICKER_HINTS {
         assert!(
@@ -17565,7 +17583,7 @@ fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
     if let Some(state) = &mut app.view_edit_state {
         state.pane_focus = ViewEditPaneFocus::Details;
         state.region = ViewEditRegion::Sections;
@@ -17617,14 +17635,16 @@ fn view_picker_e_opens_view_edit() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "TestView")
-        .expect("TestView should exist");
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker {
+        index: app
+            .views
+            .iter()
+            .position(|view| view.name == "TestView")
+            .expect("TestView should exist"),
+    };
 
-    app.handle_view_picker_key(KeyCode::Char('e').into(), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open view edit");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -17641,9 +17661,9 @@ fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
+    app.mode = Mode::ViewPicker { index: 0 };
 
-    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("open new view editor");
 
     let state = app
@@ -17681,7 +17701,7 @@ fn normal_v_then_e_opens_view_edit_for_active_view() {
 
     app.handle_key(KeyCode::Char('v').into(), &aglet)
         .expect("open view picker");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
 
     app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("edit selected view from picker");
@@ -17700,10 +17720,10 @@ fn view_picker_e_clamps_stale_picker_index_before_editing() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = usize::MAX;
+    app.mode = Mode::ViewPicker { index: 0 };
+    app.mode = Mode::ViewPicker { index: usize::MAX };
 
-    app.handle_view_picker_key(KeyCode::Char('e').into(), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("edit with stale picker index");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -17744,7 +17764,7 @@ fn view_edit_criteria_rows_render_in_draft_order_and_space_toggles_selected_row(
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("refreshed TestView");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     let backend = TestBackend::new(140, 35);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -17794,7 +17814,7 @@ fn view_edit_existing_criteria_enter_opens_category_picker() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("refreshed TestView");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter opens category picker from criteria row");
@@ -17825,7 +17845,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("refreshed TestView");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     // No criteria yet — Space opens the picker
     app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
@@ -17999,7 +18019,7 @@ fn view_edit_tab_cycles_panes() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18055,7 +18075,7 @@ fn view_edit_shift_tab_cycles_panes_backwards() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18084,12 +18104,12 @@ fn view_edit_esc_returns_to_view_picker() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("esc");
 
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.view_edit_state.is_none());
 
     let _ = std::fs::remove_file(&db_path);
@@ -18104,7 +18124,7 @@ fn view_edit_esc_on_dirty_prompts_save_confirm() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle view display mode");
@@ -18129,7 +18149,7 @@ fn view_edit_esc_on_dirty_prompts_save_confirm() {
     // 'n' discards and closes
     app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("n discards");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.view_edit_state.is_none());
 
     let _ = std::fs::remove_file(&db_path);
@@ -18154,7 +18174,7 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     // Move to Sections pane, then select first section row
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
@@ -18204,7 +18224,7 @@ fn view_edit_category_picker_tab_closes_and_cycles_panes() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     // Press 'N' to open overlay
     app.handle_view_edit_key(KeyCode::Char('N').into(), &aglet)
@@ -18240,7 +18260,7 @@ fn view_edit_criteria_picker_enter_closes_without_toggling() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.open_view_edit_view_criteria_picker();
     let work_picker_idx = app
@@ -18270,7 +18290,7 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18416,7 +18436,7 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to when include row");
@@ -18474,7 +18494,7 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
@@ -18513,7 +18533,7 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
@@ -18557,7 +18577,7 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
@@ -18625,7 +18645,7 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
     let mut view = test_view_from_app(&app);
     view.category_aliases
         .insert(category.id, "Client".to_string());
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     // Enter unmatched details, then open aliases picker.
     app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
@@ -18674,7 +18694,7 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to when include row");
@@ -18808,7 +18828,7 @@ fn view_edit_view_type_row_toggles_board_and_datebook() {
     let mut view = View::new("Scratch".to_string());
     view.sections
         .push(App::view_edit_default_section("New section"));
-    app.open_view_edit_new_view_focus_name(view);
+    app.open_view_edit_new_view_focus_name(view, 0);
     app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close name input");
 
@@ -18857,7 +18877,7 @@ fn view_edit_view_type_row_is_locked_for_saved_views() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("move from criteria to view type");
@@ -18881,7 +18901,7 @@ fn view_edit_empty_criteria_enter_opens_category_picker() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     let view = test_view_from_app(&app);
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18932,7 +18952,7 @@ fn view_edit_section_details_field_count_is_nine() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections pane");
@@ -19028,7 +19048,7 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
@@ -19124,7 +19144,7 @@ fn view_edit_section_layout_space_toggles_split_mode() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
@@ -19191,7 +19211,7 @@ fn view_edit_h_does_not_toggle_section_layout() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
@@ -19251,7 +19271,7 @@ fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections pane");
@@ -19328,7 +19348,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
@@ -19389,7 +19409,7 @@ fn view_edit_category_picker_allows_multi_select_with_space() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("open category picker");
@@ -19463,7 +19483,7 @@ fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
@@ -19514,7 +19534,7 @@ fn view_edit_section_e_starts_section_title_edit() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
@@ -19550,7 +19570,7 @@ fn view_edit_section_uppercase_n_adds_and_starts_section_title_edit() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
@@ -19606,7 +19626,7 @@ fn view_edit_section_lowercase_n_inserts_below_current_and_starts_title_edit() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
@@ -19670,7 +19690,7 @@ fn view_edit_section_uppercase_n_inserts_above_current_and_starts_title_edit() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
@@ -19733,7 +19753,7 @@ fn view_edit_section_uppercase_jk_reorders_sections() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to sections");
@@ -19784,7 +19804,7 @@ fn view_edit_sections_up_from_first_row_focuses_view_settings() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to sections");
@@ -19825,7 +19845,7 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('r').into(), &aglet)
         .expect("start view rename");
@@ -19861,7 +19881,7 @@ fn view_edit_name_tab_commits_and_moves_to_view_type() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('r').into(), &aglet)
         .expect("start view rename");
@@ -19917,7 +19937,7 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Char('/').into(), &aglet)
         .expect("open section filter");
@@ -19998,7 +20018,7 @@ fn view_edit_section_filter_uses_fuzzy_mode_for_section_titles() {
         search_mode: SearchMode::Fuzzy,
         ..App::default()
     };
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
     {
         let state = app.view_edit_state.as_mut().expect("state");
         state.sections_filter_buf.set("ns".to_string());
@@ -20024,7 +20044,7 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     // Preview starts visible by default
     assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
@@ -20107,7 +20127,7 @@ fn view_edit_preview_renders_on_narrow_terminal_without_panic() {
         show_children: false,
         board_display_mode_override: None,
     });
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
     app.handle_view_edit_key(KeyCode::Char('p').into(), &aglet)
         .expect("show preview");
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
@@ -20136,7 +20156,7 @@ fn view_edit_settings_focus_still_shows_first_section_details() {
     first.criteria.set_criterion(CriterionMode::And, todo.id);
     view.sections.push(first);
     view.sections.push(App::view_edit_default_section("Done"));
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     let state = app.view_edit_state.as_ref().expect("view edit state");
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
@@ -20184,7 +20204,7 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
@@ -20239,7 +20259,7 @@ fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
         .find(|v| v.name == "TestView")
         .cloned()
         .unwrap();
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
@@ -20317,7 +20337,7 @@ fn section_column_picker_includes_non_leaf_tag_headings() {
         .find(|v| v.name == "TestView")
         .cloned()
         .unwrap();
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
@@ -20373,7 +20393,7 @@ fn section_column_picker_includes_nested_non_leaf_tag_headings() {
         .find(|v| v.name == "TestView")
         .cloned()
         .unwrap();
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
@@ -20424,7 +20444,7 @@ fn section_column_picker_includes_numeric_leaf_headings() {
         .find(|v| v.name == "TestView")
         .cloned()
         .unwrap();
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
@@ -20474,7 +20494,7 @@ fn view_edit_save_persists_view() {
         .find(|v| v.name == "TestView")
         .cloned()
         .expect("TestView should exist");
-    app.open_view_edit(view);
+    app.open_view_edit(view, 0);
 
     // Add a section via 'N' in Sections region
     app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
@@ -20570,7 +20590,7 @@ fn view_edit_save_persists_view() {
     // Save with S (save + exit)
     app.handle_view_edit_key(KeyCode::Char('S').into(), &aglet)
         .expect("S save");
-    assert_eq!(app.mode, Mode::ViewPicker);
+    assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.view_edit_state.is_none());
     assert!(
         app.status.contains("Saved"),

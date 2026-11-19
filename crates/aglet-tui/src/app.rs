@@ -1998,7 +1998,6 @@ impl App {
     pub(crate) fn set_active_view_index(&mut self, index: usize) {
         if self.views.is_empty() {
             self.view_index = 0;
-            self.picker_index = 0;
             self.active_view_name = None;
             self.session_hide_dependent_items_override = None;
             self.selected_item_ids.clear();
@@ -2013,7 +2012,6 @@ impl App {
             self.board_scroll_offset = 0;
         }
         self.view_index = next_index;
-        self.picker_index = next_index;
         self.active_view_name = next_view_name;
     }
 
