@@ -3617,16 +3617,20 @@ fn cmd_import_csv_bad_row_rolls_back_earlier_rows() {
 }
 
 /// Answers every LLM request with the same suggestion.
-struct FixedOllamaTransport(&'static str);
+struct FixedChatTransport(&'static str);
 
-impl aglet_core::classification::OllamaTransport for FixedOllamaTransport {
+impl aglet_core::classification::ChatTransport for FixedChatTransport {
     fn complete(
         &self,
-        _settings: &aglet_core::classification::OllamaProviderSettings,
+        _endpoint: &aglet_core::classification::ChatEndpoint,
+        _api_key: Option<&str>,
         _system_prompt: &str,
         _user_prompt: &str,
-    ) -> aglet_core::error::Result<Option<String>> {
-        Ok(Some(self.0.to_string()))
+    ) -> aglet_core::error::Result<Option<aglet_core::classification::ChatCompletion>> {
+        Ok(Some(aglet_core::classification::ChatCompletion {
+            content: self.0.to_string(),
+            usage: None,
+        }))
     }
 }
 
@@ -3640,10 +3644,10 @@ fn cmd_import_csv_skips_rows_deleted_by_an_action_when_classifying() {
 
     let store = Store::open_memory().expect("store");
     let classifier = SubstringClassifier;
-    let transport = std::sync::Arc::new(FixedOllamaTransport(
+    let transport = std::sync::Arc::new(FixedChatTransport(
         r#"{"suggestions":[{"category":"Errands","confidence":0.9,"rationale":"chore"}]}"#,
     ));
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::AutoApply,
         semantic_mode: SemanticClassificationMode::SuggestReview,
