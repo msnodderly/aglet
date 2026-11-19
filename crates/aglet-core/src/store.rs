@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use jiff::Timestamp;
+use rusqlite::types::Type;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use rust_decimal::Decimal;
 use serde_json;
@@ -14,15 +15,15 @@ use crate::classification::{
 };
 use crate::error::{AgletError, Result};
 use crate::model::{
-    is_reserved_category_name, Action, Assignment, AssignmentExplanation, AssignmentRecord,
-    AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind, Condition,
-    ConditionMatchMode, DatebookConfig, DeletionLogEntry, EmptySections, Item, ItemId, ItemLink,
-    ItemLinkKind, ItemLinksForItem, NumericFormat, Query, RecurrenceRule, Section, SectionFlow,
-    View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
+    is_reserved_category_name, Action, Assignment, AssignmentExplanation, AssignmentSource,
+    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Condition, ConditionMatchMode,
+    DeletionLogEntry, EmptySections, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
+    NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
-const SCHEMA_VERSION: i32 = 20;
+const SCHEMA_VERSION: i32 = 21;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
@@ -80,11 +81,10 @@ CREATE TABLE IF NOT EXISTS categories (
 CREATE TABLE IF NOT EXISTS assignments (
     item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
     category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-    source      TEXT NOT NULL,
     assigned_at TEXT NOT NULL,
     sticky      INTEGER NOT NULL DEFAULT 1,
     origin      TEXT,
-    explanation_json TEXT NOT NULL DEFAULT 'null',
+    explanation_json TEXT NOT NULL,
     numeric_value TEXT,
     PRIMARY KEY (item_id, category_id)
 );
@@ -1278,42 +1278,31 @@ impl Store {
     }
 
     const ASSIGNMENT_COLUMNS: &'static str =
-        "item_id, category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value";
+        "item_id, category_id, assigned_at, sticky, origin, explanation_json, numeric_value";
 
     /// Decode one `assignments` row selected with `ASSIGNMENT_COLUMNS`.
     fn row_to_assignment(row: &Row<'_>) -> rusqlite::Result<(ItemId, CategoryId, Assignment)> {
         let item_str: String = row.get(0)?;
         let cat_str: String = row.get(1)?;
-        let source_str: String = row.get(2)?;
-        let assigned_str: String = row.get(3)?;
-        let sticky_int: i32 = row.get(4)?;
-        let origin: Option<String> = row.get(5)?;
-        let explanation_json: String = row.get(6)?;
-        let numeric_value_str: Option<String> = row.get(7)?;
-
-        let source = match source_str.as_str() {
-            "Manual" => AssignmentSource::Manual,
-            "AutoMatch" => AssignmentSource::AutoMatch,
-            "AutoClassified" => AssignmentSource::AutoClassified,
-            "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
-            "Action" => AssignmentSource::Action,
-            "Subsumption" => AssignmentSource::Subsumption,
-            _ => AssignmentSource::Manual,
-        };
+        let assigned_str: String = row.get(2)?;
+        let sticky_int: i32 = row.get(3)?;
+        let origin: Option<String> = row.get(4)?;
+        let explanation_json: String = row.get(5)?;
+        let numeric_value_str: Option<String> = row.get(6)?;
+        let explanation = serde_json::from_str::<AssignmentExplanation>(&explanation_json)
+            .map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(5, Type::Text, Box::new(err))
+            })?;
         Ok((
             Uuid::parse_str(&item_str).unwrap_or_default(),
             Uuid::parse_str(&cat_str).unwrap_or_default(),
-            Assignment::from(AssignmentRecord {
-                source,
+            Assignment {
+                explanation,
                 assigned_at: assigned_str.parse::<Timestamp>().unwrap_or_default(),
                 sticky: sticky_int != 0,
                 origin,
-                explanation: serde_json::from_str::<Option<AssignmentExplanation>>(
-                    &explanation_json,
-                )
-                .unwrap_or_default(),
                 numeric_value: numeric_value_str.and_then(|s| s.parse::<Decimal>().ok()),
-            }),
+            },
         ))
     }
 
@@ -1728,19 +1717,17 @@ impl Store {
         category_id: CategoryId,
         assignment: &Assignment,
     ) -> Result<()> {
-        let explanation_json =
-            serde_json::to_string(&assignment.recorded_explanation()).map_err(|err| {
-                AgletError::StorageError {
-                    source: Box::new(err),
-                }
-            })?;
+        let explanation_json = serde_json::to_string(&assignment.explanation).map_err(|err| {
+            AgletError::StorageError {
+                source: Box::new(err),
+            }
+        })?;
         self.conn.execute(
-            "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO assignments (item_id, category_id, assigned_at, sticky, origin, explanation_json, numeric_value)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 item_id.to_string(),
                 category_id.to_string(),
-                assignment_source_label(assignment.source()),
                 assignment.assigned_at.to_string(),
                 assignment.sticky as i32,
                 assignment.origin,
@@ -2335,24 +2322,31 @@ impl Store {
 
         let version: i32 = self
             .conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap_or(0);
-
-        if version < SCHEMA_VERSION {
-            self.conn
-                .execute_batch(SCHEMA_SQL)
-                .map_err(|e| AgletError::StorageError {
-                    source: Box::new(e),
-                })?;
-        }
-        // Some local DBs have been stamped with the current schema version by
-        // partial development builds while still missing columns. The migration
-        // body is intentionally idempotent, so run it on every open to repair
-        // those drifted schemas before any SELECT references the new columns.
-        self.apply_migrations(version)?;
-        if version < SCHEMA_VERSION {
-            self.conn
-                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        match version {
+            SCHEMA_VERSION => {}
+            0 if !self.has_items_table()? => {
+                self.conn.execute_batch(SCHEMA_SQL)?;
+                self.conn
+                    .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            }
+            20 => self.upgrade_v20_to_v21()?,
+            newer if newer > SCHEMA_VERSION => {
+                return Err(AgletError::InvalidOperation {
+                    message: format!(
+                        "this database uses schema v{newer}, newer than this aglet \
+                         supports (v{SCHEMA_VERSION}); upgrade aglet"
+                    ),
+                });
+            }
+            older => {
+                return Err(AgletError::InvalidOperation {
+                    message: format!(
+                        "this database uses schema v{older}, which this aglet no longer \
+                         upgrades; open it once with aglet v0.1.0, then try again"
+                    ),
+                });
+            }
         }
 
         let when_category_id = self.ensure_reserved_categories()?;
@@ -2361,335 +2355,134 @@ impl Store {
         Ok(())
     }
 
-    /// Versioned migrations in ascending order, followed by an idempotent
-    /// column-repair pass for DBs stamped with a current version by partial
-    /// development builds. Add new migrations to the END of the table with
-    /// the next schema version; keep bodies idempotent as defense in depth.
-    fn apply_migrations(&self, from_version: i32) -> Result<()> {
-        type Migration = (i32, fn(&Store) -> Result<()>);
-        const MIGRATIONS: &[Migration] = &[
-            (2, Store::migrate_v2_actionable_flag),
-            (3, Store::migrate_v3_column_kinds),
-            (6, Store::migrate_v6_item_links),
-            (8, Store::migrate_v8_app_settings),
-            (11, Store::migrate_v11_suggestions_and_datetime_format),
-            (16, Store::migrate_v16_recurrence_columns),
-            (20, Store::migrate_v20_assignment_vetoes),
-        ];
-        for (version, migrate) in MIGRATIONS {
-            if from_version < *version {
-                migrate(self)?;
-            }
-        }
-        self.repair_missing_columns()
-    }
-
-    fn migrate_v2_actionable_flag(&self) -> Result<()> {
-        if self.column_exists("categories", "is_actionable")? {
-            return Ok(());
-        }
-        self.conn.execute_batch(
-            "ALTER TABLE categories ADD COLUMN is_actionable INTEGER NOT NULL DEFAULT 1;",
-        )?;
-        self.conn.execute(
-            "UPDATE categories
-             SET is_actionable = 0
-             WHERE name IN ('When', 'Entry', 'Done') COLLATE NOCASE",
+    fn has_items_table(&self) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items')",
             [],
-        )?;
-        Ok(())
+            |row| row.get(0),
+        )?)
     }
 
-    fn migrate_v3_column_kinds(&self) -> Result<()> {
-        // Inject kind field into existing columns_json.
-        // Find the When category ID, then tag columns whose heading matches it
-        // as When, all others as Standard.
-        let when_cat_id = self.get_category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
-        let mut stmt = self.conn.prepare("SELECT id, columns_json FROM views")?;
-        let rows: Vec<(String, String)> = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+    /// Upgrade a v20 file (written by aglet v0.1.0) to v21. Writes
+    /// `<file>.v20-backup.ag` first and refuses to overwrite one. The upgrade
+    /// itself is one transaction. See `docs/plans/schema-squash-v21.md`.
+    ///
+    /// v21 drops `assignments.source`: the explanation is the provenance.
+    /// Rows whose explanation is null or unreadable become
+    /// `AssignmentExplanation::Legacy { source }`, which is how they already
+    /// behaved. Deletion-log JSON is rewritten to the new assignment shape.
+    fn upgrade_v20_to_v21(&self) -> Result<()> {
+        /// An assignment as v20 stored it in deletion-log JSON.
+        #[derive(serde::Deserialize)]
+        struct V20Assignment {
+            source: AssignmentSource,
+            assigned_at: Timestamp,
+            sticky: bool,
+            origin: Option<String>,
+            #[serde(default)]
+            explanation: Option<AssignmentExplanation>,
+            #[serde(default)]
+            numeric_value: Option<Decimal>,
+        }
+        fn to_json<T: serde::Serialize>(value: &T) -> Result<String> {
+            serde_json::to_string(value).map_err(|err| AgletError::StorageError {
+                source: Box::new(err),
+            })
+        }
 
-        for (view_id, columns_json) in rows {
-            // Corrupt legacy row: treat as having no columns and skip the migration.
-            let mut columns: Vec<serde_json::Value> =
-                serde_json::from_str(&columns_json).unwrap_or_default();
-            let mut changed = false;
-            for col in columns.iter_mut() {
-                if col.get("kind").is_none() {
-                    let heading = col.get("heading").and_then(|h| h.as_str()).unwrap_or("");
-                    let is_when = when_cat_id
-                        .map(|wid| heading == wid.to_string())
-                        .unwrap_or(false);
-                    col.as_object_mut().unwrap().insert(
-                        "kind".to_string(),
-                        serde_json::Value::String(
-                            if is_when { "When" } else { "Standard" }.to_string(),
-                        ),
-                    );
-                    changed = true;
-                }
+        if let Some(path) = self.conn.path().filter(|path| !path.is_empty()) {
+            let backup = format!("{path}.v20-backup.ag");
+            if Path::new(&backup).exists() {
+                return Err(AgletError::InvalidOperation {
+                    message: format!(
+                        "upgrading this database to schema v21 needs a backup at {backup}, \
+                         but that file already exists; move it aside and try again"
+                    ),
+                });
             }
-            if changed {
-                let new_json = serde_json::to_string(&columns)
-                    .expect("Vec<serde_json::Value> is always serialisable");
-                self.conn.execute(
-                    "UPDATE views SET columns_json = ?1 WHERE id = ?2",
-                    params![new_json, view_id],
+            self.conn.execute("VACUUM INTO ?1", params![backup])?;
+        }
+
+        self.with_immediate_transaction(|store| -> Result<()> {
+            let rows: Vec<(String, String, String, String)> = store
+                .conn
+                .prepare("SELECT item_id, category_id, source, explanation_json FROM assignments")?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (item_id, category_id, source, explanation_json) in rows {
+                if serde_json::from_str::<AssignmentExplanation>(&explanation_json).is_ok() {
+                    continue;
+                }
+                let source = serde_json::from_value::<AssignmentSource>(source.into())
+                    .unwrap_or(AssignmentSource::Manual);
+                store.conn.execute(
+                    "UPDATE assignments SET explanation_json = ?1 WHERE item_id = ?2 AND category_id = ?3",
+                    params![
+                        to_json(&AssignmentExplanation::Legacy { source })?,
+                        item_id,
+                        category_id
+                    ],
                 )?;
             }
-        }
-        Ok(())
-    }
 
-    fn migrate_v6_item_links(&self) -> Result<()> {
-        self.conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS item_links (
-                item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                other_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                kind          TEXT NOT NULL,
-                created_at    TEXT NOT NULL,
-                origin        TEXT,
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                PRIMARY KEY (item_id, other_item_id, kind),
-                CHECK (item_id <> other_item_id),
-                CHECK (kind IN ('depends-on', 'related')),
-                CHECK (kind <> 'related' OR item_id < other_item_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_item_links_item_kind
-                ON item_links(item_id, kind);
-            CREATE INDEX IF NOT EXISTS idx_item_links_other_kind
-                ON item_links(other_item_id, kind);
-            CREATE INDEX IF NOT EXISTS idx_item_links_kind
-                ON item_links(kind);
-            "#,
-        )?;
-        Ok(())
-    }
+            store.conn.execute_batch(
+                "CREATE TABLE assignments_v21 (
+                    item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                    assigned_at TEXT NOT NULL,
+                    sticky      INTEGER NOT NULL DEFAULT 1,
+                    origin      TEXT,
+                    explanation_json TEXT NOT NULL,
+                    numeric_value TEXT,
+                    PRIMARY KEY (item_id, category_id)
+                );
+                INSERT INTO assignments_v21
+                    SELECT item_id, category_id, assigned_at, sticky, origin, explanation_json, numeric_value
+                    FROM assignments;
+                DROP TABLE assignments;
+                ALTER TABLE assignments_v21 RENAME TO assignments;
+                CREATE INDEX idx_assignments_item ON assignments(item_id);
+                CREATE INDEX idx_assignments_category ON assignments(category_id);",
+            )?;
 
-    fn migrate_v8_app_settings(&self) -> Result<()> {
-        self.conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            "#,
-        )?;
-        Ok(())
-    }
-
-    fn migrate_v11_suggestions_and_datetime_format(&self) -> Result<()> {
-        self.conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS classification_suggestions (
-                id                 TEXT PRIMARY KEY,
-                item_id            TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                kind               TEXT NOT NULL,
-                category_id        TEXT,
-                when_value         TEXT,
-                provider_id        TEXT NOT NULL,
-                model              TEXT,
-                confidence         REAL,
-                rationale          TEXT,
-                status             TEXT NOT NULL,
-                context_hash       TEXT NOT NULL,
-                item_revision_hash TEXT NOT NULL,
-                created_at         TEXT NOT NULL,
-                decided_at         TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_classification_suggestions_item_id
-                ON classification_suggestions (item_id);
-            CREATE INDEX IF NOT EXISTS idx_classification_suggestions_status
-                ON classification_suggestions (status);
-            "#,
-        )?;
-        // Migrate when_date / done_date from "YYYY-MM-DD HH:MM:SS" to "YYYY-MM-DDTHH:MM:SS"
-        self.conn.execute_batch(
-            "UPDATE items SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
-             UPDATE items SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;
-             UPDATE deletion_log SET when_date = REPLACE(when_date, ' ', 'T') WHERE when_date IS NOT NULL;
-             UPDATE deletion_log SET done_date = REPLACE(done_date, ' ', 'T') WHERE done_date IS NOT NULL;",
-        )?;
-        Ok(())
-    }
-
-    fn migrate_v16_recurrence_columns(&self) -> Result<()> {
-        if !self.column_exists("items", "recurrence_rule_json")? {
-            self.conn
-                .execute_batch("ALTER TABLE items ADD COLUMN recurrence_rule_json TEXT;")?;
-        }
-        if !self.column_exists("items", "recurrence_series_id")? {
-            self.conn
-                .execute_batch("ALTER TABLE items ADD COLUMN recurrence_series_id TEXT;")?;
-        }
-        if !self.column_exists("items", "recurrence_parent_item_id")? {
-            self.conn
-                .execute_batch("ALTER TABLE items ADD COLUMN recurrence_parent_item_id TEXT;")?;
-        }
-        Ok(())
-    }
-
-    fn migrate_v20_assignment_vetoes(&self) -> Result<()> {
-        self.conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS assignment_vetoes (
-                item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-                created_at  TEXT NOT NULL,
-                origin      TEXT,
-                PRIMARY KEY (item_id, category_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_assignment_vetoes_item
-                ON assignment_vetoes(item_id);
-            "#,
-        )?;
-        Ok(())
-    }
-
-    /// Idempotent column adds for DBs that were stamped with a current
-    /// schema version by earlier partial development builds while still
-    /// missing columns. Runs on every open, after versioned migrations.
-    fn repair_missing_columns(&self) -> Result<()> {
-        if !self.column_exists("views", "item_column_label")? {
-            self.conn
-                .execute_batch("ALTER TABLE views ADD COLUMN item_column_label TEXT;")?;
-        }
-        if !self.column_exists("views", "board_display_mode")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN board_display_mode TEXT NOT NULL DEFAULT 'SingleLine';",
-            )?;
-        }
-        if !self.column_exists("views", "section_flow")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN section_flow TEXT NOT NULL DEFAULT 'Vertical';",
-            )?;
-        }
-        let added_empty_sections_column = if !self.column_exists("views", "empty_sections")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN empty_sections TEXT NOT NULL DEFAULT 'Show';",
-            )?;
-            true
-        } else {
-            false
-        };
-        if added_empty_sections_column && self.column_exists("views", "datebook_config_json")? {
-            self.migrate_datebook_empty_sections_to_view()?;
-        }
-        if !self.column_exists("views", "category_aliases_json")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN category_aliases_json TEXT NOT NULL DEFAULT '{}';",
-            )?;
-        }
-        if !self.column_exists("views", "hide_dependent_items")? {
-            self.conn.execute_batch(
-                "ALTER TABLE views ADD COLUMN hide_dependent_items INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-        if !self.column_exists("categories", "value_kind")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN value_kind TEXT NOT NULL DEFAULT 'Tag';",
-            )?;
-        }
-        if !self.column_exists("categories", "allow_delete_action")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN allow_delete_action INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-        if !self.column_exists("categories", "numeric_format_json")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN numeric_format_json TEXT NOT NULL DEFAULT 'null';",
-            )?;
-        }
-        if !self.column_exists("categories", "also_match_json")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN also_match_json TEXT NOT NULL DEFAULT '[]';",
-            )?;
-        }
-        if !self.column_exists("categories", "match_category_name")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN match_category_name INTEGER NOT NULL DEFAULT 1;",
-            )?;
-        }
-        if !self.column_exists("categories", "enable_semantic_classification")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN enable_semantic_classification INTEGER NOT NULL DEFAULT 1;",
-            )?;
-        }
-        if !self.column_exists("categories", "condition_match_mode")? {
-            self.conn.execute_batch(
-                "ALTER TABLE categories ADD COLUMN condition_match_mode TEXT NOT NULL DEFAULT 'Any';",
-            )?;
-        }
-        if !self.column_exists("assignments", "explanation_json")? {
-            self.conn.execute_batch(
-                "ALTER TABLE assignments ADD COLUMN explanation_json TEXT NOT NULL DEFAULT 'null';",
-            )?;
-        }
-        if !self.column_exists("assignments", "numeric_value")? {
-            self.conn
-                .execute_batch("ALTER TABLE assignments ADD COLUMN numeric_value TEXT;")?;
-        }
-        if !self.column_exists("views", "datebook_config_json")? {
-            self.conn
-                .execute_batch("ALTER TABLE views ADD COLUMN datebook_config_json TEXT;")?;
-        }
-        Ok(())
-    }
-
-    fn migrate_datebook_empty_sections_to_view(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, datebook_config_json FROM views WHERE datebook_config_json IS NOT NULL",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                let id: String = row.get(0)?;
-                let config_json: String = row.get(1)?;
-                Ok((id, config_json))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(stmt);
-
-        for (id, config_json) in rows {
-            let Ok(config) = serde_json::from_str::<DatebookConfig>(&config_json) else {
-                continue;
-            };
-            let empty_sections_json = serde_json::to_string(&config.empty_sections)
-                .unwrap_or_else(|_| "\"Show\"".to_string());
-            self.conn.execute(
-                "UPDATE views SET empty_sections = ?1 WHERE id = ?2",
-                params![empty_sections_json, id],
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
-        let pragma = format!("PRAGMA table_info({table})");
-        let mut stmt = self.conn.prepare(&pragma)?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if name.eq_ignore_ascii_case(column) {
-                return Ok(true);
+            let entries: Vec<(String, String)> = store
+                .conn
+                .prepare("SELECT id, assignments_json FROM deletion_log")?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (id, assignments_json) in entries {
+                let Ok(old) =
+                    serde_json::from_str::<BTreeMap<CategoryId, V20Assignment>>(&assignments_json)
+                else {
+                    continue;
+                };
+                let new: BTreeMap<CategoryId, Assignment> = old
+                    .into_iter()
+                    .map(|(category_id, old)| {
+                        let explanation = old
+                            .explanation
+                            .unwrap_or(AssignmentExplanation::Legacy { source: old.source });
+                        let assignment = Assignment {
+                            explanation,
+                            assigned_at: old.assigned_at,
+                            sticky: old.sticky,
+                            origin: old.origin,
+                            numeric_value: old.numeric_value,
+                        };
+                        (category_id, assignment)
+                    })
+                    .collect();
+                store.conn.execute(
+                    "UPDATE deletion_log SET assignments_json = ?1 WHERE id = ?2",
+                    params![to_json(&new)?, id],
+                )?;
             }
-        }
-        Ok(false)
-    }
-}
 
-fn assignment_source_label(source: AssignmentSource) -> &'static str {
-    match source {
-        AssignmentSource::Manual => "Manual",
-        AssignmentSource::AutoMatch => "AutoMatch",
-        AssignmentSource::AutoClassified => "AutoClassified",
-        AssignmentSource::SuggestionAccepted => "SuggestionAccepted",
-        AssignmentSource::Action => "Action",
-        AssignmentSource::Subsumption => "Subsumption",
+            store
+                .conn
+                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            Ok(())
+        })
     }
 }
 

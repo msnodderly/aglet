@@ -224,10 +224,16 @@ CLI and TUI text search both route through
 
 ## Store And Migration Notes
 
-`Store::init()` runs idempotent repair on open for known drift, including
-`views.empty_sections` and `classification_suggestions`, even when
-`PRAGMA user_version` is already current. Current schema version is defined in
-`crates/aglet-core/src/store.rs`.
+The schema is one `SCHEMA_SQL` at version 21 in
+`crates/aglet-core/src/store.rs`; there is no per-version migration chain.
+`Store::init()` creates fresh files, opens v21, and upgrades v20 files (aglet
+v0.1.0) once, writing `<file>.v20-backup.ag` first. Older or newer versions
+are refused untouched. See `docs/plans/schema-squash-v21.md`. A future schema
+change adds one upgrade step from the previous version, with a backup.
+
+Assignment provenance is `explanation_json`; there is no `source` column.
+`Assignment::source()` derives it. `AssignmentExplanation::Legacy` marks rows
+made before explanations were recorded.
 
 If direct SQLite imports write `items.when_date`, use the store datetime format
 `YYYY-MM-DD HH:MM:SS`. ISO strings such as `2025-10-11T00:00:00` will not load

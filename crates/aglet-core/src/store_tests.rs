@@ -4,10 +4,9 @@ use crate::classification::{
 };
 use crate::model::{
     Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
-    CategoryValueKind, Column, ColumnKind, CriterionMode, DateSource, DatebookAnchor,
-    DatebookConfig, DatebookInterval, DatebookPeriod, EmptySections, Item, ItemLink, ItemLinkKind,
-    NumericFormat, Query, Section, SectionFlow, TextMatchSource, View, RESERVED_CATEGORY_NAMES,
-    RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
+    CategoryValueKind, Column, ColumnKind, CriterionMode, EmptySections, Item, ItemLink,
+    ItemLinkKind, NumericFormat, Query, Section, SectionFlow, TextMatchSource, View,
+    RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
 };
 use jiff::Timestamp;
 use rusqlite::params;
@@ -203,375 +202,6 @@ fn test_idempotent_init() {
 }
 
 #[test]
-fn test_upgrade_from_v5_creates_item_links_table_and_bumps_version() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.pragma_update(None, "user_version", 5).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let version: i32 = store
-        .conn
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, SCHEMA_VERSION);
-
-    let exists: Option<String> = store
-        .conn
-        .query_row(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='item_links'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .unwrap();
-    assert_eq!(exists.as_deref(), Some("item_links"));
-
-    let aliases_column_exists = store
-        .column_exists("views", "category_aliases_json")
-        .unwrap();
-    assert!(
-        aliases_column_exists,
-        "view aliases column should be present after migration"
-    );
-}
-
-#[test]
-fn test_upgrade_from_v6_adds_view_category_aliases_column_for_existing_views_table() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE views (
-                id                          TEXT PRIMARY KEY,
-                name                        TEXT NOT NULL UNIQUE,
-                criteria_json               TEXT NOT NULL DEFAULT '{}',
-                sections_json               TEXT NOT NULL DEFAULT '[]',
-                columns_json                TEXT NOT NULL DEFAULT '[]',
-                show_unmatched              INTEGER NOT NULL DEFAULT 1,
-                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
-                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
-                item_column_label           TEXT,
-                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
-            );
-            "#,
-    )
-    .unwrap();
-
-    let legacy_id = Uuid::new_v4();
-    conn.execute(
-            "INSERT INTO views (
-                id, name, criteria_json, sections_json, columns_json,
-                show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                item_column_label, board_display_mode
-            ) VALUES (?1, 'Legacy', '{}', '[]', '[]', 1, 'Unassigned', '[]', NULL, '\"SingleLine\"')",
-            params![legacy_id.to_string()],
-        )
-        .unwrap();
-    conn.pragma_update(None, "user_version", 6).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let aliases_column_exists = store
-        .column_exists("views", "category_aliases_json")
-        .unwrap();
-    assert!(aliases_column_exists, "migration should add aliases column");
-
-    let legacy = store.get_view(legacy_id).expect("legacy view loads");
-    assert!(
-        legacy.category_aliases.is_empty(),
-        "legacy rows default to no aliases"
-    );
-}
-
-#[test]
-fn test_upgrade_from_v7_creates_app_settings_table() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.pragma_update(None, "user_version", 7).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let exists: Option<String> = store
-        .conn
-        .query_row(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='app_settings'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .unwrap();
-    assert_eq!(exists.as_deref(), Some("app_settings"));
-}
-
-#[test]
-fn test_upgrade_from_v8_adds_hide_dependent_items_column() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE views (
-                id                          TEXT PRIMARY KEY,
-                name                        TEXT NOT NULL UNIQUE,
-                criteria_json               TEXT NOT NULL DEFAULT '{}',
-                sections_json               TEXT NOT NULL DEFAULT '[]',
-                columns_json                TEXT NOT NULL DEFAULT '[]',
-                show_unmatched              INTEGER NOT NULL DEFAULT 1,
-                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
-                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
-                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
-                item_column_label           TEXT,
-                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine'
-            );
-            "#,
-    )
-    .unwrap();
-    conn.pragma_update(None, "user_version", 8).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let hide_dependent_column_exists = store
-        .column_exists("views", "hide_dependent_items")
-        .unwrap();
-    assert!(
-        hide_dependent_column_exists,
-        "migration should add hide_dependent_items column"
-    );
-}
-
-#[test]
-fn test_upgrade_from_v9_adds_section_flow_column() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE views (
-                id                          TEXT PRIMARY KEY,
-                name                        TEXT NOT NULL UNIQUE,
-                criteria_json               TEXT NOT NULL DEFAULT '{}',
-                sections_json               TEXT NOT NULL DEFAULT '[]',
-                columns_json                TEXT NOT NULL DEFAULT '[]',
-                show_unmatched              INTEGER NOT NULL DEFAULT 1,
-                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
-                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
-                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
-                item_column_label           TEXT,
-                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
-                hide_dependent_items        INTEGER NOT NULL DEFAULT 0
-            );
-            "#,
-    )
-    .unwrap();
-    conn.pragma_update(None, "user_version", 9).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let section_flow_column_exists = store.column_exists("views", "section_flow").unwrap();
-    assert!(
-        section_flow_column_exists,
-        "migration should add section_flow column"
-    );
-}
-
-#[test]
-fn test_upgrade_from_v18_adds_empty_sections_and_migrates_datebook_value() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE views (
-                id                          TEXT PRIMARY KEY,
-                name                        TEXT NOT NULL UNIQUE,
-                criteria_json               TEXT NOT NULL DEFAULT '{}',
-                sections_json               TEXT NOT NULL DEFAULT '[]',
-                columns_json                TEXT NOT NULL DEFAULT '[]',
-                show_unmatched              INTEGER NOT NULL DEFAULT 1,
-                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
-                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
-                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
-                item_column_label           TEXT,
-                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
-                section_flow                TEXT NOT NULL DEFAULT 'Vertical',
-                hide_dependent_items        INTEGER NOT NULL DEFAULT 0,
-                datebook_config_json        TEXT
-            );
-            "#,
-    )
-    .unwrap();
-    let legacy_id = Uuid::new_v4();
-    let config = DatebookConfig {
-        period: DatebookPeriod::Week,
-        interval: DatebookInterval::Daily,
-        anchor: DatebookAnchor::Today,
-        date_source: DateSource::When,
-        empty_sections: EmptySections::Collapse,
-        browse_offset: 0,
-        browse_interval_offset: 0,
-    };
-    let config_json = serde_json::to_string(&config).expect("serialize config");
-    conn.execute(
-        "INSERT INTO views (
-                id, name, criteria_json, sections_json, columns_json,
-                show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                category_aliases_json, item_column_label, board_display_mode,
-                section_flow, hide_dependent_items, datebook_config_json
-            ) VALUES (?1, 'Legacy Datebook', '{}', '[]', '[]', 1, 'Unassigned',
-                      '[]', '{}', NULL, '\"SingleLine\"', '\"Vertical\"', 0, ?2)",
-        params![legacy_id.to_string(), config_json],
-    )
-    .unwrap();
-    conn.pragma_update(None, "user_version", 18).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    assert!(
-        store.column_exists("views", "empty_sections").unwrap(),
-        "migration should add empty_sections column"
-    );
-    let legacy = store.get_view(legacy_id).expect("legacy view loads");
-    assert_eq!(legacy.empty_sections, EmptySections::Collapse);
-}
-
-#[test]
-fn test_current_version_schema_drift_adds_empty_sections_column() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(SCHEMA_SQL).unwrap();
-    conn.execute_batch(
-        r#"
-            DROP TABLE views;
-            CREATE TABLE views (
-                id                          TEXT PRIMARY KEY,
-                name                        TEXT NOT NULL UNIQUE,
-                criteria_json               TEXT NOT NULL DEFAULT '{}',
-                sections_json               TEXT NOT NULL DEFAULT '[]',
-                columns_json                TEXT NOT NULL DEFAULT '[]',
-                show_unmatched              INTEGER NOT NULL DEFAULT 1,
-                unmatched_label             TEXT NOT NULL DEFAULT 'Unassigned',
-                remove_from_view_unassign_json TEXT NOT NULL DEFAULT '[]',
-                category_aliases_json       TEXT NOT NULL DEFAULT '{}',
-                item_column_label           TEXT,
-                board_display_mode          TEXT NOT NULL DEFAULT 'SingleLine',
-                section_flow                TEXT NOT NULL DEFAULT 'Vertical',
-                hide_dependent_items        INTEGER NOT NULL DEFAULT 0,
-                datebook_config_json        TEXT
-            );
-            "#,
-    )
-    .unwrap();
-    let drifted_id = Uuid::new_v4();
-    let config = DatebookConfig {
-        period: DatebookPeriod::Week,
-        interval: DatebookInterval::Daily,
-        anchor: DatebookAnchor::Today,
-        date_source: DateSource::When,
-        empty_sections: EmptySections::Collapse,
-        browse_offset: 0,
-        browse_interval_offset: 0,
-    };
-    let config_json = serde_json::to_string(&config).expect("serialize config");
-    conn.execute(
-        "INSERT INTO views (
-                id, name, criteria_json, sections_json, columns_json,
-                show_unmatched, unmatched_label, remove_from_view_unassign_json,
-                category_aliases_json, item_column_label, board_display_mode,
-                section_flow, hide_dependent_items, datebook_config_json
-            ) VALUES (?1, 'Drifted Datebook', '{}', '[]', '[]', 1, 'Unassigned',
-                      '[]', '{}', NULL, '\"SingleLine\"', '\"Vertical\"', 0, ?2)",
-        params![drifted_id.to_string(), config_json],
-    )
-    .unwrap();
-    conn.pragma_update(None, "user_version", SCHEMA_VERSION)
-        .unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    assert!(
-        store.column_exists("views", "empty_sections").unwrap(),
-        "current-version drift repair should add empty_sections"
-    );
-    let drifted = store.get_view(drifted_id).expect("drifted view loads");
-    assert_eq!(drifted.empty_sections, EmptySections::Collapse);
-}
-
-#[test]
-fn test_upgrade_from_v11_adds_category_also_match_column() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE categories (
-                id                     TEXT PRIMARY KEY,
-                name                   TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                parent_id              TEXT REFERENCES categories(id),
-                is_exclusive           INTEGER NOT NULL DEFAULT 0,
-                is_actionable          INTEGER NOT NULL DEFAULT 1,
-                enable_implicit_string INTEGER NOT NULL DEFAULT 1,
-                note                   TEXT,
-                created_at             TEXT NOT NULL,
-                modified_at            TEXT NOT NULL,
-                sort_order             INTEGER NOT NULL DEFAULT 0,
-                conditions_json        TEXT NOT NULL DEFAULT '[]',
-                actions_json           TEXT NOT NULL DEFAULT '[]',
-                value_kind             TEXT NOT NULL DEFAULT 'Tag',
-                numeric_format_json    TEXT NOT NULL DEFAULT 'null'
-            );
-            "#,
-    )
-    .unwrap();
-    conn.pragma_update(None, "user_version", 11).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let also_match_column_exists = store
-        .column_exists("categories", "also_match_json")
-        .unwrap();
-    assert!(
-        also_match_column_exists,
-        "migration should add also_match_json column"
-    );
-}
-
-#[test]
-fn test_upgrade_from_v12_adds_match_category_name_column() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE categories (
-                id                     TEXT PRIMARY KEY,
-                name                   TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                parent_id              TEXT REFERENCES categories(id),
-                is_exclusive           INTEGER NOT NULL DEFAULT 0,
-                is_actionable          INTEGER NOT NULL DEFAULT 1,
-                enable_implicit_string INTEGER NOT NULL DEFAULT 1,
-                also_match_json        TEXT NOT NULL DEFAULT '[]',
-                note                   TEXT,
-                created_at             TEXT NOT NULL,
-                modified_at            TEXT NOT NULL,
-                sort_order             INTEGER NOT NULL DEFAULT 0,
-                conditions_json        TEXT NOT NULL DEFAULT '[]',
-                actions_json           TEXT NOT NULL DEFAULT '[]',
-                value_kind             TEXT NOT NULL DEFAULT 'Tag',
-                numeric_format_json    TEXT NOT NULL DEFAULT 'null'
-            );
-            "#,
-    )
-    .unwrap();
-    conn.pragma_update(None, "user_version", 12).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let match_category_name_column_exists = store
-        .column_exists("categories", "match_category_name")
-        .unwrap();
-    assert!(
-        match_category_name_column_exists,
-        "migration should add match_category_name column"
-    );
-}
-
-#[test]
 fn test_app_settings_roundtrip_persists_across_reopen() {
     let tmp = std::env::temp_dir().join(format!("aglet-core-app-settings-{}.ag", Uuid::new_v4()));
     let store = Store::open(&tmp).expect("open temp db");
@@ -606,66 +236,6 @@ fn test_classification_config_roundtrip() {
         .get_classification_config()
         .expect("reload classification config");
     assert_eq!(loaded, config);
-}
-
-#[test]
-fn test_upgrade_from_v13_adds_enable_semantic_classification_column() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        r#"
-            CREATE TABLE categories (
-                id                     TEXT PRIMARY KEY,
-                name                   TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                parent_id              TEXT REFERENCES categories(id),
-                is_exclusive           INTEGER NOT NULL DEFAULT 0,
-                is_actionable          INTEGER NOT NULL DEFAULT 1,
-                enable_implicit_string INTEGER NOT NULL DEFAULT 1,
-                match_category_name    INTEGER NOT NULL DEFAULT 1,
-                also_match_json        TEXT NOT NULL DEFAULT '[]',
-                note                   TEXT,
-                created_at             TEXT NOT NULL,
-                modified_at            TEXT NOT NULL,
-                sort_order             INTEGER NOT NULL DEFAULT 0,
-                conditions_json        TEXT NOT NULL DEFAULT '[]',
-                actions_json           TEXT NOT NULL DEFAULT '[]',
-                value_kind             TEXT NOT NULL DEFAULT 'Tag',
-                numeric_format_json    TEXT NOT NULL DEFAULT 'null'
-            );
-            "#,
-    )
-    .unwrap();
-    let category_id = Uuid::new_v4();
-    let now = Timestamp::now().to_string();
-    conn.execute(
-            "INSERT INTO categories (
-                id, name, parent_id, is_exclusive, is_actionable,
-                enable_implicit_string, match_category_name, also_match_json, note,
-                created_at, modified_at, sort_order, conditions_json, actions_json,
-                value_kind, numeric_format_json
-            ) VALUES (?1, 'Legacy', NULL, 0, 1, 1, 1, '[]', NULL, ?2, ?2, 0, '[]', '[]', 'Tag', 'null')",
-            params![category_id.to_string(), now],
-        )
-        .unwrap();
-    conn.pragma_update(None, "user_version", 13).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let semantic_column_exists = store
-        .column_exists("categories", "enable_semantic_classification")
-        .unwrap();
-    assert!(
-        semantic_column_exists,
-        "migration should add enable_semantic_classification column"
-    );
-
-    let legacy = store
-        .get_category(category_id)
-        .expect("legacy category loads");
-    assert!(
-        legacy.enable_semantic_classification,
-        "legacy rows should default semantic matching on after migration"
-    );
 }
 
 #[test]
@@ -1166,12 +736,12 @@ fn test_item_with_assignments_loaded() {
     store
         .conn
         .execute(
-            "INSERT INTO assignments (item_id, category_id, source, assigned_at, sticky, origin)
+            "INSERT INTO assignments (item_id, category_id, explanation_json, assigned_at, sticky, origin)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 item_id.to_string(),
                 cat_id.to_string(),
-                "Manual",
+                r#"{"Manual":{"origin":null}}"#,
                 Timestamp::now().to_string(),
                 1,
                 "manual",
@@ -1222,47 +792,6 @@ fn test_assign_and_get_assignments() {
     assert!(assignments.contains_key(&cat_id));
     assert_eq!(assignments[&cat_id].source(), AssignmentSource::Manual);
     assert_eq!(assignments[&cat_id].origin.as_deref(), Some("manual"));
-}
-
-#[test]
-fn null_explanation_rows_load_as_legacy_and_store_unchanged() {
-    let store = Store::open_memory().unwrap();
-    let item = Item::new("Old row".to_string());
-    store.create_item(&item).unwrap();
-    let cat_id = make_category(&store, "Errands");
-    store
-        .conn
-        .execute(
-            "INSERT INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, explanation_json)
-             VALUES (?1, ?2, 'AutoMatch', '2026-01-01T00:00:00Z', 1, 'cat:Errands', 'null')",
-            params![item.id.to_string(), cat_id.to_string()],
-        )
-        .unwrap();
-
-    let loaded = store.get_assignments_for_item(item.id).unwrap()[&cat_id].clone();
-    assert_eq!(loaded.source(), AssignmentSource::AutoMatch);
-    assert!(loaded.recorded_explanation().is_none());
-
-    store.assign_item(item.id, cat_id, &loaded).unwrap();
-    let (source, explanation_json): (String, String) = store
-        .conn
-        .query_row(
-            "SELECT source, explanation_json FROM assignments WHERE item_id = ?1",
-            params![item.id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        (source.as_str(), explanation_json.as_str()),
-        ("AutoMatch", "null")
-    );
-
-    // Deletion-log JSON keeps the stored shape: `source` plus nullable `explanation`.
-    let json = serde_json::to_value(&loaded).unwrap();
-    assert_eq!(json["source"], "AutoMatch");
-    assert!(json["explanation"].is_null());
-    let back: Assignment = serde_json::from_value(json).unwrap();
-    assert_eq!(back.source(), AssignmentSource::AutoMatch);
 }
 
 #[test]
@@ -2277,157 +1806,7 @@ fn resolve_item_prefix_empty() {
     assert!(msg.contains("empty item id prefix"), "got: {msg}");
 }
 
-// ── column_exists ─────────────────────────────────────────────────────────
-
-#[test]
-fn column_exists_returns_true_for_existing_column() {
-    let store = Store::open_memory().unwrap();
-    assert!(
-        store.column_exists("categories", "is_actionable").unwrap(),
-        "is_actionable should exist on categories table"
-    );
-}
-
-#[test]
-fn column_exists_returns_false_for_nonexistent_column() {
-    let store = Store::open_memory().unwrap();
-    assert!(
-        !store.column_exists("categories", "does_not_exist").unwrap(),
-        "does_not_exist should not be present"
-    );
-}
-
 // ── v3 columns_json kind migration ────────────────────────────────────────
-
-#[test]
-fn upgrade_from_v2_injects_kind_into_existing_columns_json() {
-    // Build a database that looks like a v2 store: all current tables exist
-    // (SCHEMA_SQL is idempotent), but the views already have columns_json
-    // rows without a "kind" field.  After init() the migration must inject
-    // "kind": "When" for columns whose heading matches the When category ID
-    // and "kind": "Standard" for all others.
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(SCHEMA_SQL).unwrap();
-
-    // Insert the When category so the migration can identify it.
-    let when_id = Uuid::new_v4();
-    conn.execute(
-            "INSERT INTO categories
-             (id, name, is_exclusive, is_actionable, enable_implicit_string,
-              condition_match_mode, conditions_json, actions_json, sort_order, created_at, modified_at,
-              value_kind, numeric_format_json)
-             VALUES (?1, 'When', 0, 0, 0, 'Any', '[]', '[]', 0,
-                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
-                     'Tag', 'null')",
-            params![when_id.to_string()],
-        )
-        .unwrap();
-
-    // Insert a view whose columns_json has entries without a "kind" field.
-    // First column heading matches the When category ID; second does not.
-    let view_id = Uuid::new_v4();
-    let columns_without_kind = serde_json::json!([
-        {"heading": when_id.to_string()},
-        {"heading": "SomeStandardHeading"}
-    ])
-    .to_string();
-
-    conn.execute(
-        "INSERT INTO views
-             (id, name, criteria_json, sections_json, columns_json,
-              show_unmatched, unmatched_label, remove_from_view_unassign_json,
-              category_aliases_json, board_display_mode)
-             VALUES (?1, 'TestView', '{}', '[]', ?2, 1, 'Unassigned', '[]', '{}',
-                     '\"SingleLine\"')",
-        params![view_id.to_string(), columns_without_kind],
-    )
-    .unwrap();
-
-    // Stamp as v2 so init() will call apply_migrations(2).
-    conn.pragma_update(None, "user_version", 2).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    // Read back raw columns_json from the DB.
-    let raw: String = store
-        .conn
-        .query_row(
-            "SELECT columns_json FROM views WHERE id = ?1",
-            params![view_id.to_string()],
-            |row| row.get(0),
-        )
-        .unwrap();
-
-    let columns: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
-    assert_eq!(columns.len(), 2);
-
-    let kind0 = columns[0]
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let kind1 = columns[1]
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    assert_eq!(
-        kind0, "When",
-        "column whose heading matches When category id should get kind=When"
-    );
-    assert_eq!(
-        kind1, "Standard",
-        "column with unrecognised heading should get kind=Standard"
-    );
-}
-
-#[test]
-fn upgrade_from_v2_skips_columns_that_already_have_kind() {
-    // If a column already has a "kind" field (e.g. from a partial migration),
-    // the migration must leave it unchanged.
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(SCHEMA_SQL).unwrap();
-
-    let view_id = Uuid::new_v4();
-    let already_has_kind = serde_json::json!([
-        {"heading": "SomeHeading", "kind": "Standard"}
-    ])
-    .to_string();
-
-    conn.execute(
-        "INSERT INTO views
-             (id, name, criteria_json, sections_json, columns_json,
-              show_unmatched, unmatched_label, remove_from_view_unassign_json,
-              category_aliases_json, board_display_mode)
-             VALUES (?1, 'PreMigrated', '{}', '[]', ?2, 1, 'Unassigned', '[]', '{}',
-                     '\"SingleLine\"')",
-        params![view_id.to_string(), already_has_kind],
-    )
-    .unwrap();
-
-    conn.pragma_update(None, "user_version", 2).unwrap();
-
-    let store = Store { conn };
-    store.init().unwrap();
-
-    let raw: String = store
-        .conn
-        .query_row(
-            "SELECT columns_json FROM views WHERE id = ?1",
-            params![view_id.to_string()],
-            |row| row.get(0),
-        )
-        .unwrap();
-
-    let columns: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
-    assert_eq!(columns.len(), 1);
-    // kind must still be "Standard" — not duplicated or overwritten.
-    let kind = columns[0]
-        .get("kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    assert_eq!(kind, "Standard");
-}
 
 // ── Phase 0 spike: jiff format compatibility ──────────────────────
 
@@ -2497,13 +1876,164 @@ fn spike_jiff_weekday_offset() {
     assert_eq!(Weekday::Sunday.to_monday_zero_offset(), 6);
 }
 
+// ── v20 to v21 upgrade ───────────────────────────────────────────────────
+
+const SCHEMA_V20_SQL: &str = include_str!("testdata/schema_v20.sql");
+
+fn temp_db_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("aglet-{label}-{}.ag", Uuid::new_v4()))
+}
+
+fn user_version(conn: &rusqlite::Connection) -> i32 {
+    conn.pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap()
+}
+
+/// A v20 file with one item, one category, three assignment rows (null,
+/// unreadable, and normal explanations), and an old-shape deletion-log entry.
+fn write_v20_fixture(path: &std::path::Path) -> (ItemId, [CategoryId; 3], Uuid) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute_batch(SCHEMA_V20_SQL).unwrap();
+    conn.pragma_update(None, "user_version", 20).unwrap();
+    let item_id = Uuid::new_v4();
+    conn.execute(
+        "INSERT INTO items (id, text, created_at, modified_at, entry_date)
+         VALUES (?1, 'Pay rent', ?2, ?2, '2026-01-01')",
+        params![item_id.to_string(), "2026-01-01T00:00:00Z"],
+    )
+    .unwrap();
+    let categories = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+    let rows = [
+        ("Errands", "AutoMatch", "null"),
+        ("Home", "Action", r#"{"NoSuchVariant":{}}"#),
+        (
+            "Bills",
+            "Manual",
+            r#"{"Manual":{"origin":"manual:cli.assign"}}"#,
+        ),
+    ];
+    for (category_id, (name, source, explanation_json)) in categories.iter().zip(rows) {
+        conn.execute(
+            "INSERT INTO categories (id, name, created_at, modified_at) VALUES (?1, ?2, ?3, ?3)",
+            params![category_id.to_string(), name, "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, explanation_json)
+             VALUES (?1, ?2, ?3, '2026-01-01T00:00:00Z', 1, NULL, ?4)",
+            params![item_id.to_string(), category_id.to_string(), source, explanation_json],
+        )
+        .unwrap();
+    }
+    let log_id = Uuid::new_v4();
+    let deleted_item = Uuid::new_v4();
+    let old_shape = format!(
+        r#"{{"{}":{{"source":"Manual","assigned_at":"2026-01-01T00:00:00Z","sticky":true,"origin":null,"explanation":null,"numeric_value":null}}}}"#,
+        categories[2]
+    );
+    conn.execute(
+        "INSERT INTO deletion_log (id, item_id, text, entry_date, assignments_json, deleted_at, deleted_by)
+         VALUES (?1, ?2, 'Old chore', '2026-01-01', ?3, '2026-01-02T00:00:00Z', 'test')",
+        params![log_id.to_string(), deleted_item.to_string(), old_shape],
+    )
+    .unwrap();
+    (item_id, categories, log_id)
+}
+
 #[test]
-fn spike_jiff_schema_migration_format() {
-    // Verify that REPLACE(' ', 'T') on chrono's format produces valid jiff input
-    let chrono_format = "2026-03-20 14:30:00";
-    let migrated = chrono_format.replace(' ', "T");
-    assert_eq!(migrated, "2026-03-20T14:30:00");
-    let dt: jiff::civil::DateTime = migrated.parse().unwrap();
-    assert_eq!(dt.year(), 2026);
-    assert_eq!(dt.hour(), 14);
+fn v20_file_upgrades_to_v21_with_backup() {
+    let path = temp_db_path("v20-upgrade");
+    let (item_id, [errands, home, bills], log_id) = write_v20_fixture(&path);
+
+    let store = Store::open(&path).unwrap();
+    assert_eq!(user_version(&store.conn), SCHEMA_VERSION);
+
+    let assignments = store.get_assignments_for_item(item_id).unwrap();
+    assert_eq!(
+        assignments[&errands].explanation,
+        AssignmentExplanation::Legacy {
+            source: AssignmentSource::AutoMatch
+        }
+    );
+    assert_eq!(
+        assignments[&home].explanation,
+        AssignmentExplanation::Legacy {
+            source: AssignmentSource::Action
+        }
+    );
+    assert_eq!(
+        assignments[&bills].explanation,
+        AssignmentExplanation::Manual {
+            origin: Some("manual:cli.assign".to_string())
+        }
+    );
+
+    let restored = store.restore_deleted_item(log_id).unwrap();
+    let restored_assignments = store.get_assignments_for_item(restored).unwrap();
+    assert_eq!(
+        restored_assignments.get(&bills).map(Assignment::source),
+        Some(AssignmentSource::Manual)
+    );
+
+    let backup_path = format!("{}.v20-backup.ag", path.display());
+    let backup = rusqlite::Connection::open(&backup_path).unwrap();
+    assert_eq!(user_version(&backup), 20);
+
+    let columns = |conn: &rusqlite::Connection| -> Vec<(String, String, bool, Option<String>)> {
+        conn.prepare("PRAGMA table_info(assignments)")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let fresh = Store::open_memory().unwrap();
+    assert_eq!(columns(&store.conn), columns(&fresh.conn));
+
+    drop(store);
+    drop(backup);
+    for file in [path.display().to_string(), backup_path] {
+        let _ = std::fs::remove_file(file);
+    }
+}
+
+#[test]
+fn v20_upgrade_refuses_to_overwrite_an_existing_backup() {
+    let path = temp_db_path("v20-backup-exists");
+    write_v20_fixture(&path);
+    let backup_path = format!("{}.v20-backup.ag", path.display());
+    std::fs::write(&backup_path, b"earlier backup").unwrap();
+
+    let err = Store::open(&path).err().expect("upgrade should refuse");
+    assert!(err.to_string().contains("already exists"), "{err}");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(user_version(&conn), 20);
+    assert_eq!(std::fs::read(&backup_path).unwrap(), b"earlier backup");
+
+    drop(conn);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&backup_path);
+}
+
+#[test]
+fn files_older_than_v20_or_newer_than_v21_are_refused_untouched() {
+    for (version, expected) in [
+        (0, "aglet v0.1.0"),
+        (19, "aglet v0.1.0"),
+        (22, "upgrade aglet"),
+    ] {
+        let path = temp_db_path("refused-version");
+        write_v20_fixture(&path);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.pragma_update(None, "user_version", version).unwrap();
+
+        let err = Store::open(&path).err().expect("open should refuse");
+        assert!(err.to_string().contains(expected), "{err}");
+        assert_eq!(user_version(&conn), version);
+
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+    }
 }
