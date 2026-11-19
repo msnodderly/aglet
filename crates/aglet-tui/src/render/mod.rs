@@ -5564,13 +5564,16 @@ impl App {
                 "Assign to view/section  (Tab/S-Tab: switch pane  Space: assign  Enter: apply+close  r: remove from view  j/k: navigate  Esc: close)",
         };
         frame.render_widget(Paragraph::new(header), chunks[0]);
-        frame.render_widget(
+        let legend = if self.item_assign_preview.unavailable {
+            Paragraph::new("Preview unavailable: the database is busy with another write")
+                .style(Style::default().fg(Color::Yellow))
+        } else {
             Paragraph::new(
                 "[x] assigned   [-] vetoed   green = will add   red = will remove   dim = derived (via \u{2026})",
             )
-            .style(Style::default().fg(MUTED_TEXT_COLOR)),
-            chunks[1],
-        );
+            .style(Style::default().fg(MUTED_TEXT_COLOR))
+        };
+        frame.render_widget(legend, chunks[1]);
 
         let item_context = self
             .item_assign_anchor_id()
