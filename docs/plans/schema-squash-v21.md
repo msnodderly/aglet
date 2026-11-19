@@ -31,17 +31,24 @@ files. The `assignments.source` column duplicates `explanation_json` (D3).
 
 | `user_version` | Action |
 |---|---|
-| 0 and no `items` table | Fresh file: run `SCHEMA_SQL`, stamp 21. |
+| 0 and no `items` table | Fresh file: in one `BEGIN IMMEDIATE` transaction, recheck the version, run `SCHEMA_SQL`, stamp 21. |
 | 21 | Open. |
 | 20 | Back up, then upgrade to 21 in one transaction. |
 | 1 to 19, or 0 with tables | Refuse: "open this file once with aglet v0.1.0, then retry". |
 | above 21 | Refuse: "created by a newer aglet". |
 
+The version is read before anything persistent happens: a refused file is
+left byte-for-byte unchanged, including its journal mode. WAL is enabled only
+for files that will open.
+
 The v20 to v21 upgrade:
 
-1. `VACUUM INTO '<file>.v20-backup.ag'`. If that path exists, refuse and
-   say so; never overwrite a backup.
+1. Record `PRAGMA data_version`, then `VACUUM INTO '<file>.v20-backup.ag'`.
+   If that path exists, refuse and say so; never overwrite a backup.
 2. In one `BEGIN IMMEDIATE` transaction:
+   - If `data_version` changed, another connection committed after the
+     snapshot, so the backup would miss that write. Abort, delete the backup,
+     and leave the file at v20; the next open retries.
    - Rewrite every `assignments.explanation_json` that is null or does not
      parse as the current type to `{"Legacy":{"source":<source>}}`. Today such
      rows already behave as "source only"; this keeps that.

@@ -2028,12 +2028,74 @@ fn files_older_than_v20_or_newer_than_v21_are_refused_untouched() {
         write_v20_fixture(&path);
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.pragma_update(None, "user_version", version).unwrap();
+        drop(conn);
+        let before = std::fs::read(&path).unwrap();
 
         let err = Store::open(&path).err().expect("open should refuse");
         assert!(err.to_string().contains(expected), "{err}");
-        assert_eq!(user_version(&conn), version);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "a refused v{version} file must not be modified"
+        );
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let journal_mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode, "delete");
 
         drop(conn);
         let _ = std::fs::remove_file(&path);
     }
+}
+
+#[test]
+fn v20_upgrade_aborts_when_another_connection_writes_after_the_backup() {
+    let path = temp_db_path("v20-backup-race");
+    let (item_id, _, _) = write_v20_fixture(&path);
+    let store = Store {
+        conn: rusqlite::Connection::open(&path).unwrap(),
+    };
+    let snapshot = store.backup_v20().unwrap();
+    let (backup_path, _) = snapshot.clone().expect("file-backed store gets a backup");
+
+    // Another process, still on v20, commits after the snapshot was taken.
+    let other = rusqlite::Connection::open(&path).unwrap();
+    other
+        .execute(
+            "UPDATE items SET text = 'Pay rent today' WHERE id = ?1",
+            params![item_id.to_string()],
+        )
+        .unwrap();
+    drop(other);
+
+    let err = store.upgrade_v20_to_v21(snapshot).unwrap_err();
+    assert!(err.to_string().contains("open it again to retry"), "{err}");
+    assert_eq!(user_version(&store.conn), 20);
+    assert!(
+        !std::path::Path::new(&backup_path).exists(),
+        "the stale backup is removed so a retry can take a fresh one"
+    );
+
+    drop(store);
+    let reopened = Store::open(&path).unwrap();
+    assert_eq!(user_version(&reopened.conn), SCHEMA_VERSION);
+    drop(reopened);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&backup_path);
+}
+
+#[test]
+fn fresh_schema_creation_accepts_a_file_another_process_just_created() {
+    let path = temp_db_path("fresh-race");
+    // The other process won the race and created the v21 schema.
+    drop(Store::open(&path).unwrap());
+    // This process saw an empty file before that and now creates the schema.
+    let late = Store {
+        conn: rusqlite::Connection::open(&path).unwrap(),
+    };
+    late.create_schema().unwrap();
+    assert_eq!(user_version(&late.conn), SCHEMA_VERSION);
+    drop(late);
+    let _ = std::fs::remove_file(&path);
 }

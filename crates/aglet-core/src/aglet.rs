@@ -262,14 +262,22 @@ impl<'a> Aglet<'a> {
         self.store.update_item(&item)
     }
 
+    /// Create a category and re-evaluate every item against it. Both happen
+    /// in one transaction: if any item fails, the category is not created.
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
-        self.store.create_category(category)?;
-        self.process_category_change(category.id)
+        self.transaction(|| {
+            self.store.create_category(category)?;
+            self.process_category_change(category.id)
+        })
     }
 
+    /// Save a category and re-evaluate every item against it, in one
+    /// transaction: a failure keeps the old definition and old assignments.
     pub fn update_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
-        self.store.update_category(category)?;
-        self.process_category_change(category.id)
+        self.transaction(|| {
+            self.store.update_category(category)?;
+            self.process_category_change(category.id)
+        })
     }
 
     pub fn add_category_action(
@@ -693,6 +701,14 @@ impl<'a> Aglet<'a> {
     pub fn remove_item_from_view(&self, item_id: ItemId, view: &View) -> Result<ProcessItemResult> {
         self.unassign_categories(item_id, &view.remove_from_view_unassign)?;
         self.reprocess_existing_item(item_id)
+    }
+
+    /// Run several previews against one rolled-back transaction, waiting at
+    /// most `PREVIEW_LOCK_WAIT` for the write lock. Returns
+    /// `AgletError::Busy` when another process is writing.
+    pub fn preview<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.store
+            .with_rolled_back_transaction_waiting(crate::store::PREVIEW_LOCK_WAIT, |_| f())
     }
 
     /// The item as it would look after a manual toggle of `category_id`,
