@@ -61,7 +61,7 @@ impl App {
                 self.status = "Suggestion review closed".to_string();
             }
             KeyCode::Char('?') => {
-                self.mode = Mode::HelpPanel;
+                self.mode = Mode::HelpPanel { scroll: 0 };
             }
             KeyCode::Tab | KeyCode::BackTab => {
                 if let Some(state) = &mut self.classification.suggestion_review {

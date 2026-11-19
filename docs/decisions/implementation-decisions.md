@@ -1,5 +1,36 @@
 # Decisions
 
+## 2026-11-18
+
+Context: decisions D1, D3, and D4 in
+`docs/plans/codebase-review-and-simplification-plan.md`, made by the user.
+
+### The schema is one SCHEMA_SQL at v21; only v20 upgrades
+
+`Store::init` creates fresh files, opens v21, and upgrades v20 (what the
+`v0.1.0` release writes) in one transaction after writing
+`<file>.v20-backup.ag`. Other versions are refused before anything is
+written. Reason: seven migrations plus an every-open repair pass existed only
+for old development files. Rollback: the backup plus `v0.1.0`. Plan:
+`docs/plans/schema-squash-v21.md`.
+
+### Assignment provenance: explanation replaces source; origin stays
+
+`Assignment::source()` is derived from `explanation`, and the
+`assignments.source` column is gone at v21. Rows that had no explanation load
+as `AssignmentExplanation::Legacy { source }`. `origin` stays because it
+carries detail the explanation lacks (`manual:done`, `recurrence:carry`, the
+category name an LLM chose). `sticky` stays because older rule-derived rows
+were written sticky and cannot be re-derived.
+
+### TUI modes form a flat enum; children carry their return target
+
+Each `Mode` variant owns its state. A mode that returns to another (the view
+picker returning from rename, the item editor returning from the assign
+picker) carries what it needs to return, instead of the app keeping a stack.
+Reason: current nesting is one level deep, and a flat enum keeps the whole
+UI state visible in one value. Revisit if chains deeper than two appear.
+
 ## 2026-11-17
 
 Context: `docs/plans/codebase-review-and-simplification-plan.md`, phases 1 and 3.
