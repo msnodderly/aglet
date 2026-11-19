@@ -34,6 +34,8 @@ pub(crate) struct AssignmentPreview {
     pub(crate) section_to_gain: HashSet<(usize, Option<usize>)>,
     /// View/section slots that the item would lose (shown as `[-]` in the view pane).
     pub(crate) section_to_lose: HashSet<(usize, Option<usize>)>,
+    /// Another process held the write lock, so no preview was computed.
+    pub(crate) unavailable: bool,
 }
 
 #[derive(Clone)]
