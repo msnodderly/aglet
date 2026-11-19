@@ -1338,7 +1338,7 @@ impl App {
     /// `via "maybe"` for an implicit text match (UX audit P2-4).
     pub(crate) fn selected_item_assignment_via(&self, category_id: CategoryId) -> Option<String> {
         let assignment = self.selected_item_assignment(category_id)?;
-        match assignment.explanation.as_ref()? {
+        match &assignment.explanation {
             AssignmentExplanation::Subsumption {
                 via_child_category_name,
                 ..
@@ -1376,7 +1376,7 @@ impl App {
                 Some(format!("via {provider_id}"))
             }
             AssignmentExplanation::SuggestionAccepted { .. } => Some("via suggestion".to_string()),
-            AssignmentExplanation::Manual { .. } => None,
+            AssignmentExplanation::Manual { .. } | AssignmentExplanation::Legacy { .. } => None,
         }
     }
 
@@ -1407,11 +1407,10 @@ impl App {
                     .get(category_id)
                     .cloned()
                     .unwrap_or_else(|| category_id.to_string()),
-                source_label: format!("{:?}", assignment.source),
+                source_label: format!("{:?}", assignment.source()),
                 origin_label: assignment.origin.clone().unwrap_or_else(|| "-".to_string()),
                 explanation_label: assignment
-                    .explanation
-                    .as_ref()
+                    .recorded_explanation()
                     .map(|explanation| explanation.summary()),
             })
             .collect();

@@ -1,7 +1,9 @@
 use std::time::{Duration, Instant};
 
 use aglet_core::aglet::{Aglet, SaveOptions};
-use aglet_core::model::{Assignment, AssignmentSource, CategoryId, Item, ItemId, ItemLinkKind};
+use aglet_core::model::{
+    Assignment, AssignmentExplanation, AssignmentSource, CategoryId, Item, ItemId, ItemLinkKind,
+};
 use jiff::Timestamp;
 use rust_decimal::Decimal;
 
@@ -172,7 +174,7 @@ impl App {
                 restored.modified_at = Timestamp::now();
                 aglet.update_item_with(&restored, SaveOptions::on(reference_date))?;
                 for (cat_id, assignment) in &item.assignments {
-                    if assignment.source == AssignmentSource::Manual {
+                    if assignment.source() == AssignmentSource::Manual {
                         if let Some(numeric_value) = assignment.numeric_value {
                             let _ = aglet.assign_item_numeric_manual(
                                 item.id,
@@ -210,11 +212,10 @@ impl App {
                     .ok()
                     .and_then(|item| item.assignments.get(&category_id).cloned())
                     .unwrap_or(Assignment {
-                        source: AssignmentSource::Manual,
                         assigned_at: Timestamp::now(),
                         sticky: false,
                         origin: None,
-                        explanation: None,
+                        explanation: AssignmentExplanation::Manual { origin: None },
                         numeric_value: None,
                     });
                 let _ = aglet.unassign_item_manual(item_id, category_id);

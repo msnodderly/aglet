@@ -1584,11 +1584,10 @@ mod tests {
         item.assignments.insert(
             cat_id,
             aglet_core::model::Assignment {
-                source: aglet_core::model::AssignmentSource::Manual,
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
-                explanation: None,
+                explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
                 numeric_value: Some(Decimal::new(100, 0)),
             },
         );
@@ -1615,11 +1614,10 @@ mod tests {
         item1.assignments.insert(
             cat_id,
             aglet_core::model::Assignment {
-                source: aglet_core::model::AssignmentSource::Manual,
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
-                explanation: None,
+                explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
                 numeric_value: Some(Decimal::new(100, 0)),
             },
         );
@@ -1627,11 +1625,10 @@ mod tests {
         item2.assignments.insert(
             cat_id,
             aglet_core::model::Assignment {
-                source: aglet_core::model::AssignmentSource::Manual,
                 assigned_at: Timestamp::now(),
                 sticky: true,
                 origin: None,
-                explanation: None,
+                explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
                 numeric_value: Some(Decimal::new(250, 0)),
             },
         );

@@ -16,9 +16,9 @@ use crate::classification::{
 use crate::error::AgletError;
 use crate::matcher::SubstringClassifier;
 use crate::model::{
-    Action, Assignment, AssignmentSource, Category, CategoryId, CategoryValueKind, Condition,
-    CriterionMode, Item, ItemId, ItemLinkKind, Query, Section, View, WhenBucket,
-    RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
+    Action, Assignment, AssignmentExplanation, AssignmentSource, Category, CategoryId,
+    CategoryValueKind, Condition, CriterionMode, Item, ItemId, ItemLinkKind, Query, Section, View,
+    WhenBucket, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::query::{resolve_view, resolve_when_bucket};
 use crate::store::Store;
@@ -54,11 +54,10 @@ fn view(name: &str) -> View {
 
 fn manual_assignment(origin: &str) -> Assignment {
     Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: Timestamp::now(),
         sticky: true,
         origin: Some(origin.to_string()),
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     }
 }
@@ -837,7 +836,7 @@ fn local_ollama_smoke_test_current_item_review_flow() {
         .get(&travel.id)
         .expect("travel assignment should exist after acceptance");
     assert_eq!(
-        travel_assignment.source,
+        travel_assignment.source(),
         AssignmentSource::SuggestionAccepted
     );
 
@@ -935,7 +934,7 @@ fn create_item_parses_date_and_sets_when_provenance() {
 
     let assignments = store.get_assignments_for_item(item.id).unwrap();
     let when_assignment = assignments.get(&when_id).expect("when assignment exists");
-    assert_eq!(when_assignment.source, AssignmentSource::AutoClassified);
+    assert_eq!(when_assignment.source(), AssignmentSource::AutoClassified);
     assert_eq!(when_assignment.origin.as_deref(), Some("nlp:date"));
 }
 
@@ -1036,7 +1035,7 @@ fn set_item_when_date_assigns_reserved_when_with_manual_provenance() {
 
     let assignments = store.get_assignments_for_item(item.id).unwrap();
     let when_assignment = assignments.get(&when_id).expect("when assignment exists");
-    assert_eq!(when_assignment.source, AssignmentSource::Manual);
+    assert_eq!(when_assignment.source(), AssignmentSource::Manual);
     assert_eq!(
         when_assignment.origin.as_deref(),
         Some("manual:test.when-edit")
@@ -1060,7 +1059,7 @@ fn set_item_when_date_uses_default_manual_origin_when_none_is_provided() {
 
     let assignments = store.get_assignments_for_item(item.id).unwrap();
     let when_assignment = assignments.get(&when_id).expect("when assignment exists");
-    assert_eq!(when_assignment.source, AssignmentSource::Manual);
+    assert_eq!(when_assignment.source(), AssignmentSource::Manual);
     assert_eq!(when_assignment.origin.as_deref(), Some("manual:when"));
 }
 
@@ -1243,7 +1242,7 @@ fn manual_assignment_triggers_cascade() {
 
     let assignments = store.get_assignments_for_item(item.id).unwrap();
     assert_eq!(
-        assignments.get(&urgent.id).unwrap().source,
+        assignments.get(&urgent.id).unwrap().source(),
         AssignmentSource::Manual
     );
     assert!(assignments.contains_key(&escalated.id));
@@ -1273,19 +1272,19 @@ fn manual_assignment_applies_subsumption_to_all_ancestors() {
     assert_eq!(
         assignments
             .get(&frabulator.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Manual)
     );
     assert_eq!(
         assignments
             .get(&project_y.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Subsumption)
     );
     assert_eq!(
         assignments
             .get(&work.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Subsumption)
     );
 }
@@ -1370,14 +1369,14 @@ fn preview_manual_category_toggle_uses_reprocessed_assignments() {
         preview
             .assignments
             .get(&project_y.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Manual)
     );
     assert_eq!(
         preview
             .assignments
             .get(&work.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Subsumption),
         "preview should include the same subsumption ancestor the real assign path creates"
     );
@@ -1437,7 +1436,7 @@ fn manual_unassign_removes_live_subsumption_ancestor() {
 
     let assignments = store.get_assignments_for_item(item.id).unwrap();
     let ancestor = assignments.get(&work.id).unwrap();
-    assert_eq!(ancestor.source, AssignmentSource::Subsumption);
+    assert_eq!(ancestor.source(), AssignmentSource::Subsumption);
     assert!(!ancestor.sticky);
 
     aglet.unassign_item_manual(item.id, project_y.id).unwrap();
@@ -1663,7 +1662,7 @@ fn assign_item_numeric_manual_sets_payload_and_subsumption_ancestor_has_none() {
         None
     );
     assert_eq!(
-        assignments.get(&project.id).map(|a| a.source),
+        assignments.get(&project.id).map(|a| a.source()),
         Some(AssignmentSource::Subsumption)
     );
 }
@@ -1829,7 +1828,7 @@ fn manual_assignment_fires_category_actions() {
         "actions fire on manual assignment, per the Agenda paradigm"
     );
     assert_eq!(
-        assignments.get(&archive.id).unwrap().source,
+        assignments.get(&archive.id).unwrap().source(),
         AssignmentSource::Action
     );
     assert!(result.new_assignments.contains(&archive.id));
@@ -2244,7 +2243,7 @@ fn assign_numeric_action_assigns_with_value() {
         .get(&cost.id)
         .expect("numeric action should assign the target");
     assert_eq!(cost_assignment.numeric_value, Some(Decimal::new(100, 0)));
-    assert_eq!(cost_assignment.source, AssignmentSource::Action);
+    assert_eq!(cost_assignment.source(), AssignmentSource::Action);
 }
 
 #[test]
@@ -2684,15 +2683,15 @@ fn end_to_end_workflow_runs_automatically() {
 
     let assignments = store.get_assignments_for_item(item.id).unwrap();
     assert_eq!(
-        assignments.get(&meetings.id).unwrap().source,
+        assignments.get(&meetings.id).unwrap().source(),
         AssignmentSource::AutoClassified
     );
     assert_eq!(
-        assignments.get(&calendar.id).unwrap().source,
+        assignments.get(&calendar.id).unwrap().source(),
         AssignmentSource::Action
     );
     assert_eq!(
-        assignments.get(&events.id).unwrap().source,
+        assignments.get(&events.id).unwrap().source(),
         AssignmentSource::Subsumption
     );
 }
@@ -2837,7 +2836,7 @@ fn insert_item_in_section_applies_subsumption_for_manual_section_assignments() {
     assert_eq!(
         assignments
             .get(&work.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Subsumption)
     );
 }
@@ -3196,7 +3195,7 @@ fn unmatched_insert_applies_subsumption_for_view_include_assignments() {
     assert_eq!(
         assignments
             .get(&work.id)
-            .map(|assignment| assignment.source),
+            .map(|assignment| assignment.source()),
         Some(AssignmentSource::Subsumption)
     );
 }

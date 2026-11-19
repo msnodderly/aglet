@@ -192,7 +192,7 @@ pub fn display_category_ids(item: &Item, categories: &[Category]) -> Vec<Categor
         .assignments
         .iter()
         .filter(|(category_id, assignment)| {
-            assignment.source != AssignmentSource::Subsumption && !reserved.contains(category_id)
+            assignment.source() != AssignmentSource::Subsumption && !reserved.contains(category_id)
         })
         .map(|(category_id, _)| *category_id)
         .collect();
@@ -966,8 +966,8 @@ mod tests {
         matches_text_search, resolve_view, resolve_when_bucket, SortDirection, SortField, SortKey,
     };
     use crate::model::{
-        Assignment, AssignmentSource, Category, CategoryId, CriterionMode, Item, Query, Section,
-        View, WhenBucket,
+        Assignment, AssignmentExplanation, AssignmentSource, Category, CategoryId, CriterionMode,
+        Item, Query, Section, View, WhenBucket,
     };
 
     fn day(year: i16, month: i8, date: i8) -> Date {
@@ -980,18 +980,17 @@ mod tests {
 
     fn assignment() -> Assignment {
         Assignment {
-            source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
-            explanation: None,
+            explanation: AssignmentExplanation::Manual { origin: None },
             numeric_value: None,
         }
     }
 
     fn assignment_with_source(source: AssignmentSource) -> Assignment {
         Assignment {
-            source,
+            explanation: AssignmentExplanation::Legacy { source },
             ..assignment()
         }
     }

@@ -72,11 +72,10 @@ fn open_category_direct_edit_initializes_rows_in_parent_order_with_alpha_fallbac
 
     let mut item = Item::new("Draft row ordering".to_string());
     let assignment = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: jiff::Timestamp::now(),
         sticky: false,
         origin: None,
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     };
     item.assignments.insert(high.id, assignment.clone());
@@ -1997,7 +1996,7 @@ fn when_column_edit_saves_datetime_and_reserved_when_assignment() {
         .get_assignments_for_item(item_id)
         .expect("assignments for item");
     let when_assignment = assignments.get(&when_id).expect("when assignment exists");
-    assert_eq!(when_assignment.source, AssignmentSource::Manual);
+    assert_eq!(when_assignment.source(), AssignmentSource::Manual);
     assert_eq!(
         when_assignment.origin.as_deref(),
         Some("manual:tui.when-edit")
@@ -4679,11 +4678,12 @@ fn edit_panel_prechecks_derived_assignments() {
             item.id,
             in_progress.id,
             &Assignment {
-                source: AssignmentSource::AutoMatch,
                 assigned_at: now,
                 sticky: false,
                 origin: Some("cat:In Progress".to_string()),
-                explanation: None,
+                explanation: AssignmentExplanation::Legacy {
+                    source: AssignmentSource::AutoMatch,
+                },
                 numeric_value: None,
             },
         )
@@ -4693,11 +4693,12 @@ fn edit_panel_prechecks_derived_assignments() {
             item.id,
             status.id,
             &Assignment {
-                source: AssignmentSource::Subsumption,
                 assigned_at: now,
                 sticky: false,
                 origin: Some("subsumption:Status".to_string()),
-                explanation: None,
+                explanation: AssignmentExplanation::Legacy {
+                    source: AssignmentSource::Subsumption,
+                },
                 numeric_value: None,
             },
         )
@@ -12044,11 +12045,10 @@ fn item_details_summary_prioritizes_note_and_categories() {
     let mut item = Item::new("demo".to_string());
     item.note = Some("Primary note".to_string());
     let assignment = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: jiff::Timestamp::now(),
         sticky: false,
         origin: None,
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     };
     item.assignments.insert(alpha.id, assignment.clone());
@@ -16889,22 +16889,20 @@ fn item_assignment_labels_are_sorted_and_human_readable() {
     item.assignments.insert(
         category_a,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: None,
         },
     );
     item.assignments.insert(
         category_b,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: None,
         },
     );
@@ -16923,15 +16921,14 @@ fn inspect_assignment_rows_include_explanation_summary() {
     item.assignments.insert(
         category.id,
         Assignment {
-            source: AssignmentSource::AutoMatch,
             assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: Some("cat:Phone Calls".to_string()),
-            explanation: Some(AssignmentExplanation::ImplicitMatch {
+            explanation: AssignmentExplanation::ImplicitMatch {
                 owner_category_name: String::new(),
                 matched_term: "call".to_string(),
                 matched_source: TextMatchSource::AlsoMatch,
-            }),
+            },
             numeric_value: None,
         },
     );
@@ -23655,11 +23652,10 @@ fn moving_from_unmatched_to_section_preserves_view_remove_side_effect_categories
             item.id,
             pinned.id,
             &Assignment {
-                source: AssignmentSource::Manual,
                 assigned_at: jiff::Timestamp::now(),
                 sticky: true,
                 origin: Some("manual:test".to_string()),
-                explanation: None,
+                explanation: AssignmentExplanation::Manual { origin: None },
                 numeric_value: None,
             },
         )

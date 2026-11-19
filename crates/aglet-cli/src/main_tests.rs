@@ -1243,11 +1243,10 @@ fn section_summary_entries_supports_all_summary_functions() {
     item_a.assignments.insert(
         cost.id,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: Some(Decimal::new(100, 0)),
         },
     );
@@ -1255,11 +1254,10 @@ fn section_summary_entries_supports_all_summary_functions() {
     item_b.assignments.insert(
         cost.id,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: Some(Decimal::new(250, 0)),
         },
     );
@@ -1383,11 +1381,10 @@ fn render_section_column_table_renders_values_totals_and_aliases() {
     first.assignments.insert(
         cost.id,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: Some(rust_decimal::Decimal::new(123456, 2)),
         },
     );
@@ -1395,11 +1392,10 @@ fn render_section_column_table_renders_values_totals_and_aliases() {
     second.assignments.insert(
         cost.id,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: Some(rust_decimal::Decimal::new(50000, 2)),
         },
     );
@@ -1465,22 +1461,22 @@ fn render_compact_item_table_one_line_rows_with_leaf_categories() {
     item.assignments.insert(
         bills.id,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Manual,
             assigned_at: jiff::Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Manual { origin: None },
             numeric_value: None,
         },
     );
     item.assignments.insert(
         finance.id,
         aglet_core::model::Assignment {
-            source: aglet_core::model::AssignmentSource::Subsumption,
             assigned_at: jiff::Timestamp::now(),
             sticky: false,
             origin: None,
-            explanation: None,
+            explanation: aglet_core::model::AssignmentExplanation::Legacy {
+                source: aglet_core::model::AssignmentSource::Subsumption,
+            },
             numeric_value: None,
         },
     );

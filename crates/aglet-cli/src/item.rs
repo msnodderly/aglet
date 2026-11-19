@@ -369,9 +369,12 @@ pub(crate) fn cmd_show(store: &Store, item_id_str: String) -> CliResult {
             };
             println!(
                 "  {}{} | {:?} | {}",
-                name, value_suffix, assignment.source, origin
+                name,
+                value_suffix,
+                assignment.source(),
+                origin
             );
-            if let Some(explanation) = &assignment.explanation {
+            if let Some(explanation) = assignment.recorded_explanation() {
                 println!("    {}", explanation.summary());
             }
         }

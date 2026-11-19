@@ -238,13 +238,12 @@ impl<'a> Aglet<'a> {
         self.store.update_item(&item)?;
 
         let when_assignment = when_date.map(|_| Assignment {
-            source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: origin
                 .clone()
                 .or_else(|| Some(origin_const::MANUAL_WHEN.to_string())),
-            explanation: Some(AssignmentExplanation::Manual { origin }),
+            explanation: AssignmentExplanation::Manual { origin },
             numeric_value: None,
         });
         self.sync_when_assignment(item_id, when_date, when_assignment)?;
@@ -424,9 +423,8 @@ impl<'a> Aglet<'a> {
     ) -> AssignmentIntent {
         AssignmentIntent {
             category_id,
-            source: AssignmentSource::Manual,
             origin: Some(origin.clone().unwrap_or_else(|| default_origin.to_string())),
-            explanation: Some(AssignmentExplanation::Manual { origin }),
+            explanation: AssignmentExplanation::Manual { origin },
             numeric_value,
             upgrade_existing,
             clears_veto: true,
@@ -577,7 +575,7 @@ impl<'a> Aglet<'a> {
             .store
             .get_assignments_for_item(item_id)?
             .get(&category_id)
-            .map(|assignment| assignment.source);
+            .map(|assignment| assignment.source());
         if removed_source.is_some_and(|source| source != AssignmentSource::Manual) {
             self.store
                 .add_assignment_veto(item_id, category_id, Some("manual:unassign"))?;
@@ -855,7 +853,6 @@ impl<'a> Aglet<'a> {
                 continue;
             }
             let carry = Assignment {
-                source: assignment.source,
                 assigned_at: now,
                 sticky: true,
                 origin: Some(origin_const::RECURRENCE_CARRY.to_string()),
@@ -1843,12 +1840,11 @@ impl<'a> Aglet<'a> {
                     if self.apply_when_assignment(
                         item_id,
                         when,
-                        AssignmentSource::Action,
                         Some(format!("action:{name}")),
-                        Some(AssignmentExplanation::Action {
+                        AssignmentExplanation::Action {
                             trigger_category_name: name,
                             kind: AssignmentActionKind::Assign,
-                        }),
+                        },
                     )? {
                         when_changed = true;
                     }
@@ -1949,13 +1945,12 @@ impl<'a> Aglet<'a> {
                 let category = self.store.get_category(*category_id)?;
                 let intent = AssignmentIntent {
                     category_id: *category_id,
-                    source: AssignmentSource::AutoClassified,
                     origin: Some(format!("cat:{}", category.name)),
-                    explanation: Some(AssignmentExplanation::AutoClassified {
+                    explanation: AssignmentExplanation::AutoClassified {
                         provider_id: candidate.provider.clone(),
                         model: candidate.model.clone(),
                         rationale: candidate.rationale.clone(),
-                    }),
+                    },
                     numeric_value: None,
                     upgrade_existing: false,
                     clears_veto: false,
@@ -1973,13 +1968,12 @@ impl<'a> Aglet<'a> {
                 if self.apply_when_assignment(
                     item_id,
                     *when_date,
-                    AssignmentSource::AutoClassified,
                     origin,
-                    Some(AssignmentExplanation::AutoClassified {
+                    AssignmentExplanation::AutoClassified {
                         provider_id: candidate.provider.clone(),
                         model: candidate.model.clone(),
                         rationale: candidate.rationale.clone(),
-                    }),
+                    },
                 )? {
                     let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
                     result.new_assignments.insert(when_category_id);
@@ -2013,13 +2007,12 @@ impl<'a> Aglet<'a> {
             crate::classification::CandidateAssignment::Category(category_id) => {
                 let intent = AssignmentIntent {
                     category_id,
-                    source: AssignmentSource::SuggestionAccepted,
                     origin,
-                    explanation: Some(AssignmentExplanation::SuggestionAccepted {
+                    explanation: AssignmentExplanation::SuggestionAccepted {
                         provider_id: suggestion.provider_id.clone(),
                         model: suggestion.model.clone(),
                         rationale: suggestion.rationale.clone(),
-                    }),
+                    },
                     numeric_value: None,
                     upgrade_existing: false,
                     clears_veto: true,
@@ -2032,13 +2025,12 @@ impl<'a> Aglet<'a> {
                 if self.apply_when_assignment(
                     suggestion.item_id,
                     when_date,
-                    AssignmentSource::SuggestionAccepted,
                     origin,
-                    Some(AssignmentExplanation::SuggestionAccepted {
+                    AssignmentExplanation::SuggestionAccepted {
                         provider_id: suggestion.provider_id.clone(),
                         model: suggestion.model.clone(),
                         rationale: suggestion.rationale.clone(),
-                    }),
+                    },
                 )? {
                     let when_category_id = self.category_id_by_name(RESERVED_CATEGORY_NAME_WHEN)?;
                     result.new_assignments.insert(when_category_id);
@@ -2063,9 +2055,8 @@ impl<'a> Aglet<'a> {
         &self,
         item_id: ItemId,
         when_date: jiff::civil::DateTime,
-        source: AssignmentSource,
         origin: Option<String>,
-        explanation: Option<AssignmentExplanation>,
+        explanation: AssignmentExplanation,
     ) -> Result<bool> {
         let mut item = self.store.get_item(item_id)?;
         if item.when_date == Some(when_date) {
@@ -2076,7 +2067,6 @@ impl<'a> Aglet<'a> {
         item.modified_at = Timestamp::now();
         self.store.update_item(&item)?;
         let assignment = Assignment {
-            source,
             assigned_at: Timestamp::now(),
             sticky: true,
             origin,
@@ -2290,15 +2280,14 @@ impl<'a> Aglet<'a> {
 
     fn default_when_assignment() -> Assignment {
         Assignment {
-            source: AssignmentSource::AutoClassified,
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some(origin_const::NLP_DATE.to_string()),
-            explanation: Some(AssignmentExplanation::AutoClassified {
+            explanation: AssignmentExplanation::AutoClassified {
                 provider_id: PROVIDER_ID_WHEN_PARSER.to_string(),
                 model: None,
                 rationale: None,
-            }),
+            },
             numeric_value: None,
         }
     }

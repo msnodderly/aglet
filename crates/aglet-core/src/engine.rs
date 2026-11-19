@@ -109,10 +109,9 @@ struct InsertResult {
 
 #[derive(Debug, Clone)]
 struct AssignmentTemplate {
-    source: AssignmentSource,
     sticky: bool,
     origin: Option<String>,
-    explanation: Option<AssignmentExplanation>,
+    explanation: AssignmentExplanation,
     numeric_value: Option<rust_decimal::Decimal>,
 }
 
@@ -123,10 +122,9 @@ struct AssignmentTemplate {
 #[derive(Debug, Clone)]
 pub struct AssignmentIntent {
     pub category_id: CategoryId,
-    pub source: AssignmentSource,
     /// `None` derives the origin from the explanation.
     pub origin: Option<String>,
-    pub explanation: Option<AssignmentExplanation>,
+    pub explanation: AssignmentExplanation,
     pub numeric_value: Option<Decimal>,
     /// Upsert semantics: re-assigning an existing category replaces its
     /// provenance (manual re-assign upgrades an auto-match to sticky Manual;
@@ -462,15 +460,12 @@ fn apply_assignment_intents(
         }
 
         let assignment = Assignment {
-            source: intent.source,
             assigned_at: Timestamp::now(),
             sticky: true,
-            origin: intent.origin.clone().or_else(|| {
-                intent
-                    .explanation
-                    .as_ref()
-                    .and_then(AssignmentExplanation::origin)
-            }),
+            origin: intent
+                .origin
+                .clone()
+                .or_else(|| intent.explanation.origin()),
             explanation: intent.explanation.clone(),
             numeric_value: intent.numeric_value,
         };
@@ -493,11 +488,7 @@ fn apply_assignment_intents(
 
         if new_to_store {
             result.new_assignments.insert(category_id);
-            let summary = intent
-                .explanation
-                .as_ref()
-                .map(AssignmentExplanation::summary)
-                .unwrap_or_else(|| "Assigned".to_string());
+            let summary = intent.explanation.summary();
             let category_name = categories_by_id
                 .get(&category_id)
                 .map(|category| category.name.clone())
@@ -561,10 +552,9 @@ fn run_hierarchy_pass(
             input.item_id,
             category.id,
             AssignmentTemplate {
-                source: AssignmentSource::AutoMatch,
                 sticky: false,
                 origin: Some(reason.origin.clone()),
-                explanation: Some(reason.explanation.clone()),
+                explanation: reason.explanation.clone(),
                 numeric_value: None,
             },
             input.original_assignments,
@@ -928,10 +918,9 @@ fn fire_queued_actions(
                             item_id,
                             *target_id,
                             AssignmentTemplate {
-                                source: AssignmentSource::Action,
                                 sticky: true,
                                 origin: explanation.origin(),
-                                explanation: Some(explanation),
+                                explanation,
                                 numeric_value: None,
                             },
                             original_assignments,
@@ -1001,10 +990,9 @@ fn fire_queued_actions(
                         item_id,
                         *target,
                         AssignmentTemplate {
-                            source: AssignmentSource::Action,
                             sticky: true,
                             origin: explanation.origin(),
-                            explanation: Some(explanation),
+                            explanation,
                             numeric_value: Some(*value),
                         },
                         original_assignments,
@@ -1106,7 +1094,6 @@ fn assign_if_unassigned(
         .get(&category_id)
         .cloned()
         .unwrap_or_else(|| Assignment {
-            source: template.source,
             assigned_at: Timestamp::now(),
             sticky: template.sticky,
             origin: template.origin,
@@ -1187,7 +1174,7 @@ fn has_blocking_exclusive_sibling(
                 return false;
             };
             matches!(
-                assignment.source,
+                assignment.source(),
                 AssignmentSource::Manual | AssignmentSource::SuggestionAccepted
             ) || sibling_index < current_index
         })
@@ -1229,11 +1216,10 @@ fn assign_subsumption_ancestors(
                             via_child_category_name: category.name.clone(),
                         };
                         Assignment {
-                            source: AssignmentSource::Subsumption,
                             assigned_at: Timestamp::now(),
                             sticky: false,
                             origin: explanation.origin(),
-                            explanation: Some(explanation),
+                            explanation,
                             numeric_value: None,
                         }
                     });
@@ -1265,7 +1251,7 @@ fn apply_deferred_removals_to_assignments(
 
 fn drop_live_subsumption_assignments(assignments: &mut HashMap<CategoryId, Assignment>) {
     assignments.retain(|_, assignment| {
-        assignment.source != AssignmentSource::Subsumption || assignment.sticky
+        assignment.source() != AssignmentSource::Subsumption || assignment.sticky
     });
 }
 
@@ -1282,7 +1268,7 @@ fn retained_assignments(
 fn is_live_derived_assignment(assignment: &Assignment) -> bool {
     !assignment.sticky
         && matches!(
-            assignment.source,
+            assignment.source(),
             AssignmentSource::AutoMatch | AssignmentSource::Subsumption
         )
 }
@@ -1296,7 +1282,7 @@ fn rebuild_live_subsumption_assignments(
 ) {
     let direct_assignment_ids: Vec<CategoryId> = assignments
         .iter()
-        .filter(|(_, assignment)| assignment.source != AssignmentSource::Subsumption)
+        .filter(|(_, assignment)| assignment.source() != AssignmentSource::Subsumption)
         .map(|(&category_id, _)| category_id)
         .collect();
 
@@ -1329,7 +1315,7 @@ fn sync_assignments(
             .unwrap_or_else(|_| category_id.to_string());
         let summary = original_assignments
             .get(category_id)
-            .and_then(|assignment| assignment.explanation.as_ref())
+            .and_then(Assignment::recorded_explanation)
             .map(AssignmentExplanation::removal_summary)
             .unwrap_or_else(|| "Assignment removed".to_string());
         store.unassign_item(item_id, *category_id)?;
@@ -1436,11 +1422,10 @@ mod tests {
 
     fn manual_assignment() -> Assignment {
         Assignment {
-            source: AssignmentSource::Manual,
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: Some("manual:test".to_string()),
-            explanation: None,
+            explanation: AssignmentExplanation::Manual { origin: None },
             numeric_value: None,
         }
     }
@@ -1617,11 +1602,10 @@ mod tests {
                 expensive.id,
                 cost.id,
                 &Assignment {
-                    source: AssignmentSource::Manual,
                     assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: None,
-                    explanation: None,
+                    explanation: AssignmentExplanation::Manual { origin: None },
                     numeric_value: Some(rust_decimal::Decimal::new(500, 0)),
                 },
             )
@@ -1636,8 +1620,6 @@ mod tests {
             .get(&big_ticket.id)
             .unwrap()
             .explanation
-            .as_ref()
-            .unwrap()
             .summary();
         assert!(
             explanation.contains("Cost >= 100"),
@@ -1650,11 +1632,10 @@ mod tests {
                 cheap.id,
                 cost.id,
                 &Assignment {
-                    source: AssignmentSource::Manual,
                     assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: None,
-                    explanation: None,
+                    explanation: AssignmentExplanation::Manual { origin: None },
                     numeric_value: Some(rust_decimal::Decimal::new(5, 0)),
                 },
             )
@@ -1691,11 +1672,10 @@ mod tests {
                 item.id,
                 qty.id,
                 &Assignment {
-                    source: AssignmentSource::Manual,
                     assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: None,
-                    explanation: None,
+                    explanation: AssignmentExplanation::Manual { origin: None },
                     numeric_value: Some(rust_decimal::Decimal::new(50, 0)),
                 },
             )
@@ -1712,11 +1692,10 @@ mod tests {
                 item.id,
                 qty.id,
                 &Assignment {
-                    source: AssignmentSource::Manual,
                     assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: None,
-                    explanation: None,
+                    explanation: AssignmentExplanation::Manual { origin: None },
                     numeric_value: Some(rust_decimal::Decimal::new(5, 0)),
                 },
             )
@@ -1762,11 +1741,10 @@ mod tests {
                 valued.id,
                 cost.id,
                 &Assignment {
-                    source: AssignmentSource::Manual,
                     assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: None,
-                    explanation: None,
+                    explanation: AssignmentExplanation::Manual { origin: None },
                     numeric_value: Some(rust_decimal::Decimal::new(1, 0)),
                 },
             )
@@ -1809,7 +1787,7 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&sarah.id).unwrap().source,
+            assignments.get(&sarah.id).unwrap().source(),
             AssignmentSource::AutoMatch
         );
     }
@@ -1836,11 +1814,11 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&meetings.id).unwrap().source,
+            assignments.get(&meetings.id).unwrap().source(),
             AssignmentSource::AutoMatch
         );
         assert_eq!(
-            assignments.get(&calendar.id).unwrap().source,
+            assignments.get(&calendar.id).unwrap().source(),
             AssignmentSource::Action
         );
     }
@@ -1947,10 +1925,10 @@ mod tests {
         assert!(result.new_assignments.contains(&overdue.id));
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         let assignment = assignments.get(&overdue.id).unwrap();
-        assert_eq!(assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(assignment.source(), AssignmentSource::AutoMatch);
         assert!(matches!(
             assignment.explanation,
-            Some(AssignmentExplanation::DateCondition { .. })
+            AssignmentExplanation::DateCondition { .. }
         ));
     }
 
@@ -2050,11 +2028,11 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&alpha.id).unwrap().source,
+            assignments.get(&alpha.id).unwrap().source(),
             AssignmentSource::AutoMatch
         );
         assert_eq!(
-            assignments.get(&projects.id).unwrap().source,
+            assignments.get(&projects.id).unwrap().source(),
             AssignmentSource::Subsumption
         );
         assert_eq!(
@@ -2082,11 +2060,11 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&projects.id).unwrap().source,
+            assignments.get(&projects.id).unwrap().source(),
             AssignmentSource::Subsumption
         );
         assert_eq!(
-            assignments.get(&work.id).unwrap().source,
+            assignments.get(&work.id).unwrap().source(),
             AssignmentSource::Subsumption
         );
     }
@@ -2111,7 +2089,7 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&projects.id).unwrap().source,
+            assignments.get(&projects.id).unwrap().source(),
             AssignmentSource::Manual
         );
         assert_eq!(
@@ -2119,7 +2097,7 @@ mod tests {
             Some("manual:test")
         );
         assert_eq!(
-            assignments.get(&alpha.id).unwrap().source,
+            assignments.get(&alpha.id).unwrap().source(),
             AssignmentSource::AutoMatch
         );
     }
@@ -2194,7 +2172,7 @@ mod tests {
         assert!(pass_result.new_assignments.contains(&alpha.id));
         assert!(!pass_result.new_assignments.contains(&projects.id));
         assert_eq!(
-            assignments.get(&projects.id).unwrap().source,
+            assignments.get(&projects.id).unwrap().source(),
             AssignmentSource::Subsumption
         );
     }
@@ -2225,15 +2203,15 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&meetings.id).unwrap().source,
+            assignments.get(&meetings.id).unwrap().source(),
             AssignmentSource::AutoMatch
         );
         assert_eq!(
-            assignments.get(&calendar.id).unwrap().source,
+            assignments.get(&calendar.id).unwrap().source(),
             AssignmentSource::Action
         );
         assert_eq!(
-            assignments.get(&events.id).unwrap().source,
+            assignments.get(&events.id).unwrap().source(),
             AssignmentSource::Subsumption
         );
     }
@@ -2415,7 +2393,7 @@ mod tests {
         assert_eq!(
             assignments
                 .get(&complete.id)
-                .map(|assignment| assignment.source),
+                .map(|assignment| assignment.source()),
             Some(AssignmentSource::Manual),
             "manual exclusive choice should survive implicit-string matches"
         );
@@ -2452,7 +2430,9 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         assert_eq!(
-            assignments.get(&low.id).map(|assignment| assignment.source),
+            assignments
+                .get(&low.id)
+                .map(|assignment| assignment.source()),
             Some(AssignmentSource::Manual)
         );
         assert!(!assignments.contains_key(&medium.id));
@@ -3240,7 +3220,7 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         let target_assignment = assignments.get(&target.id).unwrap();
-        assert_eq!(target_assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(target_assignment.source(), AssignmentSource::AutoMatch);
         assert_eq!(target_assignment.origin.as_deref(), Some("profile:Target"));
     }
 
@@ -3358,7 +3338,7 @@ mod tests {
         assert!(matches!(
             assignments
                 .get(&target.id)
-                .and_then(|assignment| assignment.explanation.as_ref()),
+                .map(|assignment| &assignment.explanation),
             Some(AssignmentExplanation::ConditionGroup {
                 match_mode: ConditionMatchMode::All,
                 ..
@@ -3492,7 +3472,7 @@ mod tests {
 
         let assignments = store.get_assignments_for_item(item.id).unwrap();
         let mom_assignment = assignments.get(&mom.id).unwrap();
-        assert_eq!(mom_assignment.source, AssignmentSource::AutoMatch);
+        assert_eq!(mom_assignment.source(), AssignmentSource::AutoMatch);
         assert!(!mom_assignment.sticky);
 
         item.text = "Call Dad about birthday".to_string();
@@ -3582,7 +3562,7 @@ mod tests {
             assignments.contains_key(&notify.id),
             "action-produced assignment should remain after live condition assignment breaks"
         );
-        assert_eq!(assignments[&notify.id].source, AssignmentSource::Action);
+        assert_eq!(assignments[&notify.id].source(), AssignmentSource::Action);
         assert!(assignments[&notify.id].sticky);
     }
 }

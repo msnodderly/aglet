@@ -866,11 +866,10 @@ fn test_restore_deleted_item_recreates_item_and_assignments() {
     let item = Item::new("Restore me".to_string());
     store.create_item(&item).unwrap();
     let assignment = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: Timestamp::now(),
         sticky: true,
         origin: Some("manual:test".to_string()),
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     };
     store
@@ -1183,7 +1182,10 @@ fn test_item_with_assignments_loaded() {
     let loaded = store.get_item(item_id).unwrap();
     assert_eq!(loaded.assignments.len(), 1);
     assert!(loaded.assignments.contains_key(&cat_id));
-    assert_eq!(loaded.assignments[&cat_id].source, AssignmentSource::Manual);
+    assert_eq!(
+        loaded.assignments[&cat_id].source(),
+        AssignmentSource::Manual
+    );
 }
 
 fn make_category(store: &Store, name: &str) -> Uuid {
@@ -1207,11 +1209,10 @@ fn test_assign_and_get_assignments() {
 
     let cat_id = make_category(&store, "Project");
     let assignment = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: Timestamp::now(),
         sticky: true,
         origin: Some("manual".to_string()),
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     };
     store.assign_item(item_id, cat_id, &assignment).unwrap();
@@ -1219,8 +1220,49 @@ fn test_assign_and_get_assignments() {
     let assignments = store.get_assignments_for_item(item_id).unwrap();
     assert_eq!(assignments.len(), 1);
     assert!(assignments.contains_key(&cat_id));
-    assert_eq!(assignments[&cat_id].source, AssignmentSource::Manual);
+    assert_eq!(assignments[&cat_id].source(), AssignmentSource::Manual);
     assert_eq!(assignments[&cat_id].origin.as_deref(), Some("manual"));
+}
+
+#[test]
+fn null_explanation_rows_load_as_legacy_and_store_unchanged() {
+    let store = Store::open_memory().unwrap();
+    let item = Item::new("Old row".to_string());
+    store.create_item(&item).unwrap();
+    let cat_id = make_category(&store, "Errands");
+    store
+        .conn
+        .execute(
+            "INSERT INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, explanation_json)
+             VALUES (?1, ?2, 'AutoMatch', '2026-01-01T00:00:00Z', 1, 'cat:Errands', 'null')",
+            params![item.id.to_string(), cat_id.to_string()],
+        )
+        .unwrap();
+
+    let loaded = store.get_assignments_for_item(item.id).unwrap()[&cat_id].clone();
+    assert_eq!(loaded.source(), AssignmentSource::AutoMatch);
+    assert!(loaded.recorded_explanation().is_none());
+
+    store.assign_item(item.id, cat_id, &loaded).unwrap();
+    let (source, explanation_json): (String, String) = store
+        .conn
+        .query_row(
+            "SELECT source, explanation_json FROM assignments WHERE item_id = ?1",
+            params![item.id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (source.as_str(), explanation_json.as_str()),
+        ("AutoMatch", "null")
+    );
+
+    // Deletion-log JSON keeps the stored shape: `source` plus nullable `explanation`.
+    let json = serde_json::to_value(&loaded).unwrap();
+    assert_eq!(json["source"], "AutoMatch");
+    assert!(json["explanation"].is_null());
+    let back: Assignment = serde_json::from_value(json).unwrap();
+    assert_eq!(back.source(), AssignmentSource::AutoMatch);
 }
 
 #[test]
@@ -1230,15 +1272,14 @@ fn test_assignment_explanation_round_trips_through_store() {
     store.create_item(&item).unwrap();
     let cat_id = make_category(&store, "Phone Calls");
     let assignment = Assignment {
-        source: AssignmentSource::AutoMatch,
         assigned_at: Timestamp::now(),
         sticky: false,
         origin: Some("cat:Phone Calls".to_string()),
-        explanation: Some(AssignmentExplanation::ImplicitMatch {
+        explanation: AssignmentExplanation::ImplicitMatch {
             owner_category_name: String::new(),
             matched_term: "call".to_string(),
             matched_source: TextMatchSource::AlsoMatch,
-        }),
+        },
         numeric_value: None,
     };
     store.assign_item(item.id, cat_id, &assignment).unwrap();
@@ -1247,8 +1288,8 @@ fn test_assignment_explanation_round_trips_through_store() {
     assert_eq!(
         assignments
             .get(&cat_id)
-            .and_then(|assignment| assignment.explanation.clone()),
-        assignment.explanation
+            .map(|stored| stored.explanation.clone()),
+        Some(assignment.explanation)
     );
 }
 
@@ -1264,11 +1305,10 @@ fn test_assign_and_get_numeric_assignment_value() {
     store.create_category(&cat).unwrap();
 
     let assignment = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: Timestamp::now(),
         sticky: true,
         origin: Some("manual".to_string()),
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: Some(Decimal::new(24596, 2)),
     };
     store.assign_item(item_id, cat.id, &assignment).unwrap();
@@ -1289,29 +1329,29 @@ fn test_assign_upsert_replaces() {
 
     let cat_id = make_category(&store, "Status");
     let a1 = Assignment {
-        source: AssignmentSource::AutoMatch,
         assigned_at: Timestamp::now(),
         sticky: true,
         origin: Some("cat:Status".to_string()),
-        explanation: None,
+        explanation: AssignmentExplanation::Legacy {
+            source: AssignmentSource::AutoMatch,
+        },
         numeric_value: None,
     };
     store.assign_item(item_id, cat_id, &a1).unwrap();
 
     // Re-assign with different source — should replace.
     let a2 = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: Timestamp::now(),
         sticky: false,
         origin: Some("manual".to_string()),
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     };
     store.assign_item(item_id, cat_id, &a2).unwrap();
 
     let assignments = store.get_assignments_for_item(item_id).unwrap();
     assert_eq!(assignments.len(), 1);
-    assert_eq!(assignments[&cat_id].source, AssignmentSource::Manual);
+    assert_eq!(assignments[&cat_id].source(), AssignmentSource::Manual);
     assert!(!assignments[&cat_id].sticky);
 }
 
@@ -1324,11 +1364,10 @@ fn test_unassign_item() {
 
     let cat_id = make_category(&store, "Remove");
     let assignment = Assignment {
-        source: AssignmentSource::Manual,
         assigned_at: Timestamp::now(),
         sticky: true,
         origin: None,
-        explanation: None,
+        explanation: AssignmentExplanation::Manual { origin: None },
         numeric_value: None,
     };
     store.assign_item(item_id, cat_id, &assignment).unwrap();
@@ -1362,11 +1401,10 @@ fn test_multiple_assignments() {
         (cat3, AssignmentSource::Subsumption),
     ] {
         let a = Assignment {
-            source: src,
             assigned_at: Timestamp::now(),
             sticky: true,
             origin: None,
-            explanation: None,
+            explanation: AssignmentExplanation::Legacy { source: src },
             numeric_value: None,
         };
         store.assign_item(item_id, cat_id, &a).unwrap();
@@ -1374,9 +1412,9 @@ fn test_multiple_assignments() {
 
     let assignments = store.get_assignments_for_item(item_id).unwrap();
     assert_eq!(assignments.len(), 3);
-    assert_eq!(assignments[&cat1].source, AssignmentSource::Manual);
-    assert_eq!(assignments[&cat2].source, AssignmentSource::AutoMatch);
-    assert_eq!(assignments[&cat3].source, AssignmentSource::Subsumption);
+    assert_eq!(assignments[&cat1].source(), AssignmentSource::Manual);
+    assert_eq!(assignments[&cat2].source(), AssignmentSource::AutoMatch);
+    assert_eq!(assignments[&cat3].source(), AssignmentSource::Subsumption);
 }
 
 #[test]
