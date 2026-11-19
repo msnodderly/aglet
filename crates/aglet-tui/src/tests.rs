@@ -1,3 +1,11 @@
+// Tests ported to the key-driven harness live in per-mode files under tests/.
+mod board;
+mod category_manager;
+mod confirm_delete;
+mod help_panel;
+mod item_assign;
+mod view_picker;
+
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -3854,50 +3862,6 @@ fn filtered_assign_picker_disambiguates_duplicate_leaf_names() {
     );
 }
 
-#[test]
-fn item_assign_input_renders_inside_popup_not_footer() {
-    let alpha = Category::new("Alpha".to_string());
-    let mut app = App {
-        mode: Mode::ItemAssignInput,
-        categories: vec![alpha],
-        ..App::default()
-    };
-    app.category_rows = build_category_rows(&app.categories);
-    app.input.set("moto".to_string());
-
-    let backend = TestBackend::new(110, 30);
-    let mut terminal = Terminal::new(backend).expect("test terminal");
-    terminal.draw(|frame| app.draw(frame)).expect("render");
-    let lines = terminal_buffer_lines(&terminal);
-
-    let popup_lines = &lines[..lines.len() - 4];
-    assert!(
-        popup_lines.iter().any(|line| line.contains("moto")),
-        "typed query should render inside the assign popup: {lines:?}"
-    );
-    assert!(
-        popup_lines.iter().any(|line| line.contains("> Category")),
-        "popup should show a focused category input block: {lines:?}"
-    );
-    let footer_lines = &lines[lines.len() - 4..];
-    assert!(
-        !footer_lines.iter().any(|line| line.contains("moto")),
-        "footer should keep hints, not the typed query: {footer_lines:?}"
-    );
-
-    let popup_area = super::centered_rect(88, 72, Rect::new(0, 0, 110, 30));
-    let cursor = app
-        .item_assign_input_cursor_position(popup_area)
-        .expect("cursor should be positioned in the popup input");
-    assert!(
-        cursor.0 > popup_area.x
-            && cursor.0 < popup_area.x + popup_area.width
-            && cursor.1 > popup_area.y
-            && cursor.1 < popup_area.y + popup_area.height,
-        "cursor {cursor:?} should sit inside the popup {popup_area:?}"
-    );
-}
-
 fn confirm_delete_app(items: Vec<Item>) -> App {
     let mut app = App {
         mode: Mode::ConfirmDelete,
@@ -3912,31 +3876,6 @@ fn confirm_delete_app(items: Vec<Item>) -> App {
     };
     app.column_index = 0;
     app
-}
-
-#[test]
-fn confirm_delete_popup_names_single_item() {
-    let item = Item::new("Wash DRZ".to_string());
-    let mut app = confirm_delete_app(vec![item]);
-    app.batch_delete_item_ids = None;
-
-    let backend = TestBackend::new(110, 28);
-    let mut terminal = Terminal::new(backend).expect("test terminal");
-    terminal.draw(|frame| app.draw(frame)).expect("render");
-    let text = terminal_buffer_lines(&terminal).join("\n");
-
-    assert!(
-        text.contains("Delete \"Wash DRZ\"?"),
-        "confirm popup should quote the item title: {text}"
-    );
-    assert!(
-        text.contains("restorable via 'aglet deleted'"),
-        "confirm popup should note recoverability: {text}"
-    );
-    assert!(
-        text.contains("y:confirm"),
-        "confirm popup should show keys: {text}"
-    );
 }
 
 #[test]
@@ -5525,72 +5464,6 @@ fn next_index_clamped_stops_at_edges() {
     assert_eq!(next_index_clamped(0, 3, 1), 1);
     assert_eq!(next_index_clamped(2, 3, 1), 2);
     assert_eq!(next_index_clamped(2, 3, -1), 1);
-}
-
-#[test]
-fn view_picker_delete_uses_x_and_removes_selected_view() {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after epoch")
-        .as_nanos();
-    let db_path = std::env::temp_dir().join(format!("aglet-tui-view-delete-{nanos}.ag"));
-    let store = Store::open(&db_path).expect("open temp db");
-    let classifier = SubstringClassifier;
-    let aglet = Aglet::new(&store, &classifier);
-
-    let keep = View::new("Keep Me".to_string());
-    let remove = View::new("Remove Me".to_string());
-    store.create_view(&keep).expect("create keep view");
-    store.create_view(&remove).expect("create remove view");
-
-    let mut app = App::default();
-    app.refresh(&store).expect("refresh app");
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "Remove Me")
-        .expect("remove view should exist");
-
-    app.handle_view_picker_key(KeyCode::Char('x'), &aglet)
-        .expect("open delete confirm");
-    assert_eq!(app.mode, Mode::ViewDeleteConfirm);
-
-    app.handle_view_delete_key(KeyCode::Char('y'), &aglet)
-        .expect("confirm delete");
-    assert_eq!(app.mode, Mode::ViewPicker);
-    assert!(!store
-        .list_views()
-        .expect("list views")
-        .iter()
-        .any(|view| view.name == "Remove Me"));
-    assert!(store
-        .list_views()
-        .expect("list views")
-        .iter()
-        .any(|view| view.name == "Keep Me"));
-
-    app.mode = Mode::ViewPicker;
-    app.picker_index = app
-        .views
-        .iter()
-        .position(|view| view.name == "Keep Me")
-        .expect("keep view should exist");
-    // 'd' is no longer a separate datebook-creation shortcut.
-    app.handle_view_picker_key(KeyCode::Char('d'), &aglet)
-        .expect("d key should not delete");
-    assert_eq!(app.mode, Mode::ViewPicker);
-    assert!(app
-        .status
-        .contains("Use n:new, then set View type to Datebook"));
-    assert!(store
-        .list_views()
-        .expect("list views")
-        .iter()
-        .any(|view| view.name == "Keep Me"));
-
-    drop(store);
-    let _ = std::fs::remove_file(&db_path);
 }
 
 #[test]
@@ -8153,30 +8026,6 @@ fn help_panel_scrolls_to_last_section_on_small_terminals() {
 }
 
 #[test]
-fn help_panel_renders_two_columns_on_wide_terminals() {
-    let mut app = App {
-        mode: Mode::HelpPanel,
-        ..App::default()
-    };
-
-    let backend = TestBackend::new(220, 50);
-    let mut terminal = Terminal::new(backend).expect("test terminal");
-    terminal.draw(|frame| app.draw(frame)).expect("render");
-    let lines = terminal_buffer_lines(&terminal);
-    let rendered = lines.join("\n");
-    assert!(
-        rendered.contains("CURRENT ITEM") && rendered.contains("Quit"),
-        "wide help panel should fit all sections without scrolling: {rendered}"
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("CURRENT ITEM") && line.contains("COLUMNS")),
-        "wide help panel should place sections side by side: {rendered}"
-    );
-}
-
-#[test]
 fn help_panel_key_labels_never_run_into_descriptions() {
     let mut app = App {
         mode: Mode::HelpPanel,
@@ -9099,102 +8948,6 @@ fn category_manager_conditions_focus_shows_rule_count() {
         app.category_manager_details_focus(),
         Some(CategoryManagerDetailsFocus::Conditions)
     );
-}
-
-#[test]
-fn category_manager_condition_edit_add_and_save() {
-    use aglet_core::model::{Condition, CriterionMode};
-
-    let store = Store::open_memory().expect("memory store");
-    let classifier = SubstringClassifier;
-    let aglet = Aglet::new(&store, &classifier);
-
-    let urgent = Category::new("Urgent".to_string());
-    let project = Category::new("Project Alpha".to_string());
-    let escalated = Category::new("Escalated".to_string());
-    store.create_category(&urgent).expect("create");
-    store.create_category(&project).expect("create");
-    store.create_category(&escalated).expect("create");
-
-    let mut app = App::default();
-    app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
-        .expect("open category manager");
-
-    // Navigate to Escalated
-    loop {
-        let row = app.selected_category_row().expect("row");
-        if row.name == "Escalated" {
-            break;
-        }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
-            .expect("down");
-    }
-
-    // Tab to details → AlsoMatch → Conditions → Enter to open editor
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
-        .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
-        .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
-        .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
-        .expect("open condition list");
-
-    // Verify condition edit state is open
-    assert!(app.category_manager_condition_edit().is_some());
-    assert!(!app.category_manager_condition_edit().unwrap().picker_open);
-
-    // Press 'a' to add new condition → opens picker
-    app.handle_category_manager_key(KeyCode::Char('a'), &aglet)
-        .expect("add condition");
-    assert!(app.category_manager_condition_edit().unwrap().picker_open);
-
-    // Navigate to "Urgent" in the picker and press Space to set as AND
-    loop {
-        let edit = app.category_manager_condition_edit().unwrap();
-        let idx = edit.picker_index;
-        if let Some(row) = app.category_rows.get(idx) {
-            if row.name == "Urgent" {
-                break;
-            }
-        }
-        app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
-            .expect("navigate picker");
-    }
-    app.handle_category_manager_key(KeyCode::Char(' '), &aglet)
-        .expect("toggle urgent as AND");
-
-    // Verify the draft query has the criterion
-    let edit = app.category_manager_condition_edit().unwrap();
-    assert_eq!(
-        edit.draft_query.mode_for(urgent.id),
-        Some(CriterionMode::And)
-    );
-
-    // Press Enter to save the condition
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
-        .expect("save condition");
-
-    // Verify condition was saved to the category
-    let cat = store.get_category(escalated.id).expect("load");
-    assert_eq!(cat.conditions.len(), 1);
-    match &cat.conditions[0] {
-        Condition::Profile { criteria } => {
-            let and_ids: Vec<_> = criteria.and_category_ids().collect();
-            assert_eq!(and_ids, vec![urgent.id]);
-        }
-        other => panic!("expected Profile, got {:?}", other),
-    }
-
-    // Verify we're back in the condition list (not the picker)
-    assert!(app.category_manager_condition_edit().is_some());
-    assert!(!app.category_manager_condition_edit().unwrap().picker_open);
-
-    // Press Esc to close the condition editor
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
-        .expect("close condition list");
-    assert!(app.category_manager_condition_edit().is_none());
 }
 
 #[test]
@@ -22300,59 +22053,6 @@ fn board_sorting_new_column_becomes_primary_and_previous_becomes_secondary() {
     assert_eq!(app.slot_sort_keys[0].len(), 2);
 
     let _ = std::fs::remove_file(&db_path);
-}
-
-#[test]
-fn board_sorting_childless_category_column_puts_assigned_items_first() {
-    let store = Store::open_memory().expect("store");
-    let classifier = SubstringClassifier;
-    let aglet = Aglet::new(&store, &classifier);
-
-    let urgent = Category::new("Urgent".to_string());
-    store.create_category(&urgent).expect("create urgent");
-    let alpha = Item::new("Alpha".to_string());
-    let bravo = Item::new("Bravo".to_string());
-    store.create_item(&alpha).expect("create alpha");
-    store.create_item(&bravo).expect("create bravo");
-    aglet
-        .assign_item_manual(alpha.id, urgent.id, Some("test:assign".to_string()))
-        .expect("assign alpha urgent");
-
-    let mut view = View::new("Board".to_string());
-    view.sections.push(Section {
-        title: "Main".to_string(),
-        criteria: Query::default(),
-        columns: vec![Column {
-            kind: ColumnKind::Standard,
-            heading: urgent.id,
-            width: 12,
-            summary_fn: None,
-        }],
-        item_column_index: 0,
-        on_insert_assign: std::collections::HashSet::new(),
-        on_remove_unassign: std::collections::HashSet::new(),
-        show_children: false,
-        board_display_mode_override: None,
-    });
-    store.create_view(&view).expect("create board view");
-
-    let mut app = App::default();
-    app.refresh(&store).expect("refresh");
-    app.set_view_selection_by_name("Board");
-    app.refresh(&store).expect("refresh board");
-    let order = |app: &App| -> Vec<String> {
-        app.slots[0]
-            .items
-            .iter()
-            .map(|item| item.text.clone())
-            .collect()
-    };
-    assert_eq!(order(&app), ["Bravo", "Alpha"]);
-
-    app.column_index = 1;
-    app.handle_key(KeyCode::Char('s'), &aglet)
-        .expect("sort urgent asc");
-    assert_eq!(order(&app), ["Alpha", "Bravo"]);
 }
 
 #[test]
