@@ -296,9 +296,10 @@ impl App {
 
     fn handle_input_panel_discard_confirm_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('y') => {
                 // Save: delegate to existing save functions
@@ -495,11 +496,12 @@ impl App {
         }
     }
 
-    fn handle_input_panel_category_filter_key(&mut self, code: KeyCode) -> bool {
+    fn handle_input_panel_category_filter_key(&mut self, key: KeyEvent) -> bool {
+        let code = key.code;
         let mut status: Option<String> = None;
         let mut should_clamp = false;
         let mut show_matches = false;
-        let text_key = self.text_key_event(code);
+        let text_key = key;
         let consumed = {
             let Some(panel) = self.input_panel.as_mut() else {
                 return false;
@@ -1588,9 +1590,10 @@ impl App {
 
     pub(crate) fn handle_board_column_delete_confirm_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('y') => {
                 self.board_pending_delete_column_label = None;
@@ -1936,9 +1939,10 @@ impl App {
 
     pub(crate) fn handle_category_column_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -2037,7 +2041,7 @@ impl App {
         }
 
         let mut edited = false;
-        let text_key = self.text_key_event(code);
+        let text_key = key;
         if let Some(state) = self.category_column_picker_state_mut() {
             if matches!(state.focus, CategoryColumnPickerFocus::FilterInput) {
                 edited = state.filter.handle_key_event(text_key, false);
@@ -2294,9 +2298,10 @@ impl App {
 
     pub(crate) fn handle_normal_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         if let Some(prefix) = self.normal_mode_prefix.take() {
             match (prefix, code) {
                 (NormalModePrefix::G, KeyCode::Char('a')) => {
@@ -2344,10 +2349,10 @@ impl App {
                     self.status = "No selected item to toggle".to_string();
                 }
             }
-            KeyCode::Down if self.transient.key_modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.move_selected_item_between_slots(1, aglet)?;
             }
-            KeyCode::Up if self.transient.key_modifiers.contains(KeyModifiers::SHIFT) => {
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.move_selected_item_between_slots(-1, aglet)?;
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -3780,9 +3785,10 @@ impl App {
 
     pub(crate) fn handle_link_wizard_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let Some(state) = self.link_wizard_state().cloned() else {
             self.mode = Mode::Normal;
             return Ok(false);
@@ -3902,7 +3908,7 @@ impl App {
                         .link_wizard_state()
                         .is_some_and(|wizard| wizard.focus == LinkWizardFocus::Target)
                 {
-                    let text_key = self.text_key_event(code);
+                    let text_key = key;
                     let consumed = if let Some(wizard) = self.link_wizard_state_mut() {
                         wizard.target_filter.handle_key_event(text_key, false)
                     } else {
@@ -3917,7 +3923,8 @@ impl App {
         Ok(false)
     }
 
-    pub(crate) fn handle_help_panel_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    pub(crate) fn handle_help_panel_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         // Upper bound on scrolling; the renderer clamps further to the
         // active layout (two-column mode needs less).
         let max_scroll = keymap::help_panel_content_line_count().saturating_sub(1);
@@ -3976,7 +3983,7 @@ impl App {
                 _ => {}
             }
         }
-        self.handle_normal_key(key.code, aglet)
+        self.handle_normal_key(key, aglet)
     }
 
     /// Resolves category IDs to display names, sorted case-insensitively.
@@ -4032,9 +4039,10 @@ impl App {
 
     pub(crate) fn handle_board_add_column_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         if self.board_add_column_create_confirm_open() {
             match inline_create_confirm_key_action(code) {
                 InlineCreateConfirmKeyAction::Confirm => {
@@ -4095,7 +4103,7 @@ impl App {
             _ => {}
         }
 
-        let text_key = self.text_key_event(code);
+        let text_key = key;
         if let Some(state) = self.board_add_column_state_mut() {
             if state.input.handle_key_event(text_key, false) {
                 state.create_confirm_name = None;
@@ -4107,9 +4115,10 @@ impl App {
 
     pub(crate) fn handle_category_direct_edit_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         if self.direct_edit_create_confirm_open() {
             match inline_create_confirm_key_action(code) {
                 InlineCreateConfirmKeyAction::Confirm => {
@@ -4132,7 +4141,7 @@ impl App {
         }
 
         match code {
-            _ if self.is_ctrl_s_code(code) => {
+            _ if is_ctrl_s(key) => {
                 self.apply_category_direct_edit_draft(aglet)?;
                 return Ok(false);
             }
@@ -4267,7 +4276,7 @@ impl App {
                     self.active_category_direct_edit_focus(),
                     Some(CategoryDirectEditFocus::Input)
                 ) {
-                    let text_key = self.text_key_event(code);
+                    let text_key = key;
                     if let Some(row) = self.active_category_direct_edit_row_mut() {
                         row.input.handle_key_event(text_key, false);
                         row.category_id = None;
@@ -4462,9 +4471,10 @@ impl App {
     /// Handle a key event while in Mode::InputPanel.
     pub(crate) fn handle_input_panel_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let Some(_) = &self.input_panel else {
             self.mode = Mode::Normal;
             self.status = "InputPanel error: no panel state".to_string();
@@ -4528,7 +4538,7 @@ impl App {
         }
 
         // Ctrl+G: open the focused text buffer in $EDITOR.
-        if self.transient.key_modifiers.contains(KeyModifiers::CONTROL)
+        if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(code, KeyCode::Char('g') | KeyCode::Char('G'))
         {
             if let Some(panel) = &self.input_panel {
@@ -4583,7 +4593,7 @@ impl App {
             return Ok(false);
         }
 
-        if self.handle_input_panel_category_filter_key(code) {
+        if self.handle_input_panel_category_filter_key(key) {
             return Ok(false);
         }
 
@@ -4621,12 +4631,12 @@ impl App {
 
         // Handle discard-confirm prompt before normal key routing.
         if self.input_panel.as_ref().is_some_and(|p| p.discard_confirm) {
-            return self.handle_input_panel_discard_confirm_key(code, aglet);
+            return self.handle_input_panel_discard_confirm_key(key, aglet);
         }
 
         let current_row_is_assigned_numeric = self.input_panel_cursor_row_is_assigned_numeric();
 
-        let input_key = self.text_key_event(code);
+        let input_key = key;
         let action = {
             let panel = self
                 .input_panel
@@ -4813,7 +4823,7 @@ impl App {
                         .input_panel_selected_category_row()
                         .map(|selection| selection.row.id);
                     if let Some(cat_id) = cat_id {
-                        let input_key = self.text_key_event(code);
+                        let input_key = key;
                         if let Some(panel) = &mut self.input_panel {
                             if let Some(buf) = panel.numeric_buffers.get_mut(&cat_id) {
                                 buf.handle_key_event(input_key, false);
@@ -5697,16 +5707,17 @@ impl App {
 
     pub(crate) fn handle_item_assign_category_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         // Any key other than Enter disarms a pending create confirm.
         if code != KeyCode::Enter {
             self.item_assign_create_confirm = None;
         }
         // Route to view/section pane handler when that pane is active.
         if self.item_assign_pane == ItemAssignPane::ViewSection {
-            return self.handle_item_assign_view_key(code, aglet);
+            return self.handle_item_assign_view_key(key, aglet);
         }
 
         match code {
@@ -5937,7 +5948,7 @@ impl App {
                 if self.item_assign_dirty {
                     self.close_item_assign_session(self.status.clone());
                 } else {
-                    self.handle_item_assign_category_key(KeyCode::Char(' '), aglet)?;
+                    self.handle_item_assign_category_key(KeyCode::Char(' ').into(), aglet)?;
                     if self.mode == Mode::ItemAssignPicker {
                         self.close_item_assign_session(self.status.clone());
                     }
@@ -5950,7 +5961,8 @@ impl App {
     }
 
     /// Handle key input when the View/Section pane is active inside the assign panel.
-    fn handle_item_assign_view_key(&mut self, code: KeyCode, aglet: &Aglet<'_>) -> TuiResult<bool> {
+    fn handle_item_assign_view_key(&mut self, key: KeyEvent, aglet: &Aglet<'_>) -> TuiResult<bool> {
+        let code = key.code;
         // Helper: advance view_row_index by `delta`, skipping ViewHeader rows.
         fn next_section_row(rows: &[ViewAssignRow], current: usize, delta: i32) -> usize {
             let navigable: Vec<usize> = rows
@@ -6161,7 +6173,7 @@ impl App {
                 if self.item_assign_dirty {
                     self.close_item_assign_session(self.status.clone());
                 } else {
-                    self.handle_item_assign_view_key(KeyCode::Char(' '), aglet)?;
+                    self.handle_item_assign_view_key(KeyCode::Char(' ').into(), aglet)?;
                     if self.mode == Mode::ItemAssignPicker {
                         self.close_item_assign_session(self.status.clone());
                     }
@@ -6178,9 +6190,10 @@ impl App {
 
     pub(crate) fn handle_item_assign_category_input_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         // Any key other than Enter disarms a pending create confirm.
         if code != KeyCode::Enter {
             self.item_assign_create_confirm = None;
@@ -6206,9 +6219,9 @@ impl App {
             }
             KeyCode::Down | KeyCode::Up => {
                 self.leave_item_assign_input_for_list(aglet);
-                return self.handle_item_assign_category_key(code, aglet);
+                return self.handle_item_assign_category_key(key, aglet);
             }
-            _ if self.handle_text_input_key(code) => {
+            _ if self.handle_text_input_key(key) => {
                 self.clamp_item_assign_category_index();
                 self.compute_assignment_preview(aglet);
             }
@@ -6232,9 +6245,10 @@ impl App {
 
     pub(crate) fn handle_inspect_unassign_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let rows = self
             .selected_item()
             .map(|item| self.inspect_assignment_rows_for_item(item))
@@ -6279,9 +6293,10 @@ impl App {
 
     pub(crate) fn handle_search_bar_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc => {
                 if self.global_search_active() {
@@ -6317,10 +6332,7 @@ impl App {
                 self.mode = Mode::Normal; // keep filter active
             }
             _ => {
-                if self
-                    .search_buffer
-                    .handle_key_event(self.text_key_event(code), false)
-                {
+                if self.search_buffer.handle_key_event(key, false) {
                     self.apply_search_filter();
                     self.refresh(aglet.store())?;
                 }
@@ -6813,9 +6825,9 @@ mod tests {
             panel.focus = input_panel::InputPanelFocus::Categories;
         }
 
-        app.handle_input_panel_key(KeyCode::Char('/'), &aglet)
+        app.handle_input_panel_key(KeyCode::Char('/').into(), &aglet)
             .expect("open filter");
-        app.handle_input_panel_key(KeyCode::Char('b'), &aglet)
+        app.handle_input_panel_key(KeyCode::Char('b').into(), &aglet)
             .expect("type filter");
         assert_eq!(
             app.input_panel_visible_category_row_indices().len(),
@@ -6828,9 +6840,9 @@ mod tests {
             Some("Beta".to_string())
         );
 
-        app.handle_input_panel_key(KeyCode::Enter, &aglet)
+        app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
             .expect("finish filter editing");
-        app.handle_input_panel_key(KeyCode::Char(' '), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(' ').into(), &aglet)
             .expect("toggle selected category");
 
         let panel = app.input_panel.as_ref().expect("panel");
@@ -6862,19 +6874,19 @@ mod tests {
             panel.focus = input_panel::InputPanelFocus::Categories;
         }
 
-        app.handle_input_panel_key(KeyCode::Char('/'), &aglet)
+        app.handle_input_panel_key(KeyCode::Char('/').into(), &aglet)
             .expect("open filter");
-        app.handle_input_panel_key(KeyCode::Char('b'), &aglet)
+        app.handle_input_panel_key(KeyCode::Char('b').into(), &aglet)
             .expect("type filter");
 
-        app.handle_input_panel_key(KeyCode::Esc, &aglet)
+        app.handle_input_panel_key(KeyCode::Esc.into(), &aglet)
             .expect("exit filter editing");
         let panel = app.input_panel.as_ref().expect("panel");
         assert!(!panel.category_filter_editing);
         assert_eq!(panel.category_filter.text(), "b");
         assert_eq!(app.mode, Mode::InputPanel);
 
-        app.handle_input_panel_key(KeyCode::Esc, &aglet)
+        app.handle_input_panel_key(KeyCode::Esc.into(), &aglet)
             .expect("cancel panel");
         assert_eq!(app.mode, Mode::Normal);
     }
@@ -6971,18 +6983,17 @@ mod tests {
                 &[],
             )),
             mode: Mode::InputPanel,
-            transient: TransientUiState {
-                key_modifiers: KeyModifiers::CONTROL,
-                ..TransientUiState::default()
-            },
             ..App::default()
         };
 
         let store = Store::open_memory().expect("open store");
         let classifier = SubstringClassifier;
         let aglet = Aglet::new(&store, &classifier);
-        app.handle_input_panel_key(KeyCode::Char('g'), &aglet)
-            .expect("ctrl+g");
+        app.handle_input_panel_key(
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &aglet,
+        )
+        .expect("ctrl+g");
         assert_eq!(
             app.transient.pending_external_edit,
             Some(ExternalEditorTarget::Text)
@@ -6996,18 +7007,17 @@ mod tests {
         let mut app = App {
             input_panel: Some(panel),
             mode: Mode::InputPanel,
-            transient: TransientUiState {
-                key_modifiers: KeyModifiers::CONTROL,
-                ..TransientUiState::default()
-            },
             ..App::default()
         };
 
         let store = Store::open_memory().expect("open store");
         let classifier = SubstringClassifier;
         let aglet = Aglet::new(&store, &classifier);
-        app.handle_input_panel_key(KeyCode::Char('g'), &aglet)
-            .expect("ctrl+g");
+        app.handle_input_panel_key(
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &aglet,
+        )
+        .expect("ctrl+g");
         assert_eq!(
             app.transient.pending_external_edit,
             Some(ExternalEditorTarget::Note)
@@ -7019,18 +7029,17 @@ mod tests {
         let mut app = App {
             input_panel: Some(input_panel::InputPanel::new_name_input("test", "label")),
             mode: Mode::InputPanel,
-            transient: TransientUiState {
-                key_modifiers: KeyModifiers::CONTROL,
-                ..TransientUiState::default()
-            },
             ..App::default()
         };
 
         let store = Store::open_memory().expect("open store");
         let classifier = SubstringClassifier;
         let aglet = Aglet::new(&store, &classifier);
-        app.handle_input_panel_key(KeyCode::Char('g'), &aglet)
-            .expect("ctrl+g");
+        app.handle_input_panel_key(
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &aglet,
+        )
+        .expect("ctrl+g");
         assert_eq!(
             app.transient.pending_external_edit,
             Some(ExternalEditorTarget::Text)
@@ -7085,7 +7094,7 @@ mod tests {
             panel.focus = input_panel::InputPanelFocus::Categories;
         }
         // Capital S saves from Categories focus
-        app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+        app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
             .expect("save add item");
 
         let created = store

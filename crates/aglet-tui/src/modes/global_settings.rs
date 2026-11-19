@@ -224,11 +224,12 @@ impl App {
 
     pub(crate) fn handle_global_settings_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         if self.settings.ollama_model_picker.is_some() {
-            self.handle_ollama_model_picker_key(code, aglet)?;
+            self.handle_ollama_model_picker_key(key, aglet)?;
             return Ok(false);
         }
         if self
@@ -237,7 +238,7 @@ impl App {
             .as_ref()
             .is_some_and(|picker| picker.origin == WorkflowRolePickerOrigin::GlobalSettings)
         {
-            self.handle_workflow_role_picker_key(code, aglet)?;
+            self.handle_workflow_role_picker_key(key, aglet)?;
             return Ok(false);
         }
 
@@ -402,9 +403,10 @@ impl App {
 
     fn handle_ollama_model_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<()> {
+        let code = key.code;
         let Some(picker) = self.settings.ollama_model_picker.as_mut() else {
             return Ok(());
         };

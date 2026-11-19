@@ -87,7 +87,8 @@ impl App {
         self.refresh_view_edit_preview();
     }
 
-    pub(crate) fn handle_view_edit_overlay_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    pub(crate) fn handle_view_edit_overlay_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };

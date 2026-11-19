@@ -504,7 +504,7 @@ fn category_direct_edit_enter_prefers_exact_match_over_highlighted_suggestion() 
     state.rows[0].category_id = None;
     state.suggest_index = 0; // Highlights AlphaBeta first, exact match should still win.
 
-    app.handle_category_direct_edit_key(KeyCode::Enter, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter handled");
 
     // Enter resolves the draft row only (exact match still wins over highlighted suggestion).
@@ -519,9 +519,9 @@ fn category_direct_edit_enter_prefers_exact_match_over_highlighted_suggestion() 
     assert!(!saved_before.assignments.contains_key(&alpha.id));
     assert!(!saved_before.assignments.contains_key(&alpha_beta.id));
 
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab away from Input");
-    app.handle_category_direct_edit_key(KeyCode::Char('S'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('S').into(), &aglet)
         .expect("save draft");
     let saved_after = store.get_item(item.id).expect("load item after save");
     assert!(saved_after.assignments.contains_key(&alpha.id));
@@ -573,7 +573,7 @@ fn category_direct_edit_enter_on_empty_row_removes_row_or_keeps_single_blank() {
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
 
-    app.handle_category_direct_edit_key(KeyCode::Enter, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter removes empty row");
     let state_after = app.category_direct_edit_state().expect("state");
     assert_eq!(state_after.rows.len(), 1);
@@ -584,7 +584,7 @@ fn category_direct_edit_enter_on_empty_row_removes_row_or_keeps_single_blank() {
         category_direct_edit: Some(state),
         ..App::default()
     };
-    app.handle_category_direct_edit_key(KeyCode::Enter, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter keeps single blank row");
     let state_after = app.category_direct_edit_state().expect("state");
     assert_eq!(state_after.rows.len(), 1);
@@ -645,11 +645,11 @@ fn category_direct_edit_input_focus_allows_typing_n_a_x() {
         CategoryDirectEditFocus::Input
     );
 
-    app.handle_category_direct_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("type n");
-    app.handle_category_direct_edit_key(KeyCode::Char('a'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('a').into(), &aglet)
         .expect("type a");
-    app.handle_category_direct_edit_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('x').into(), &aglet)
         .expect("type x");
 
     let state = app.category_direct_edit_state().expect("direct edit state");
@@ -707,9 +707,9 @@ fn category_direct_edit_input_focus_plus_adds_row_without_switching_focus() {
     );
 
     // Tab away from Input so '+' acts as add-row command instead of typing
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab away from Input");
-    app.handle_category_direct_edit_key(KeyCode::Char('+'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('+').into(), &aglet)
         .expect("plus adds row");
 
     let state = app.category_direct_edit_state().expect("direct edit state");
@@ -767,9 +767,9 @@ fn category_direct_edit_input_focus_plus_is_blocked_for_exclusive_parent() {
     let aglet = Aglet::new(&store, &classifier);
 
     // Tab away from Input so '+' acts as command instead of typing
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab away from Input");
-    app.handle_category_direct_edit_key(KeyCode::Char('+'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('+').into(), &aglet)
         .expect("plus handled");
 
     let state = app.category_direct_edit_state().expect("direct edit state");
@@ -822,24 +822,24 @@ fn category_direct_edit_entries_focus_n_and_x_still_add_and_remove_rows() {
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
 
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to suggestions");
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to entries");
     assert_eq!(
         app.category_direct_edit_state().expect("state").focus,
         CategoryDirectEditFocus::Entries
     );
 
-    app.handle_category_direct_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("entries n adds row");
     let state = app.category_direct_edit_state().expect("state");
     assert_eq!(state.rows.len(), 2);
     assert_eq!(state.focus, CategoryDirectEditFocus::Input);
 
-    app.handle_category_direct_edit_key(KeyCode::BackTab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::BackTab.into(), &aglet)
         .expect("backtab to entries");
-    app.handle_category_direct_edit_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('x').into(), &aglet)
         .expect("entries x removes row");
     let state = app.category_direct_edit_state().expect("state");
     assert_eq!(state.rows.len(), 1);
@@ -893,19 +893,19 @@ fn category_direct_edit_tab_cycles_focus_instead_of_autocomplete_from_suggestion
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
 
-    app.handle_category_direct_edit_key(KeyCode::Char('A'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('A').into(), &aglet)
         .expect("type A");
-    app.handle_category_direct_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("type l");
 
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to suggestions");
     assert_eq!(
         app.category_direct_edit_state().expect("state").focus,
         CategoryDirectEditFocus::Suggestions
     );
 
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to entries");
     let state = app.category_direct_edit_state().expect("state");
     assert_eq!(state.focus, CategoryDirectEditFocus::Entries);
@@ -959,18 +959,18 @@ fn category_direct_edit_right_autocompletes_from_suggestions_focus() {
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
 
-    app.handle_category_direct_edit_key(KeyCode::Char('A'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('A').into(), &aglet)
         .expect("type A");
-    app.handle_category_direct_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("type l");
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("focus suggestions");
     assert_eq!(
         app.category_direct_edit_state().expect("state").focus,
         CategoryDirectEditFocus::Suggestions
     );
 
-    app.handle_category_direct_edit_key(KeyCode::Right, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Right.into(), &aglet)
         .expect("autocomplete");
     let state = app.category_direct_edit_state().expect("state");
     assert_eq!(state.focus, CategoryDirectEditFocus::Suggestions);
@@ -1030,7 +1030,7 @@ fn category_direct_edit_inline_create_confirm_resolves_row_and_stays_open() {
         state.rows[0].category_id = None;
     }
 
-    app.handle_category_direct_edit_key(KeyCode::Enter, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open create confirm");
     assert_eq!(
         app.category_direct_edit_state()
@@ -1039,7 +1039,7 @@ fn category_direct_edit_inline_create_confirm_resolves_row_and_stays_open() {
     );
     assert_eq!(app.mode, Mode::CategoryDirectEdit);
 
-    app.handle_category_direct_edit_key(KeyCode::Char('y'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm create");
     let state = app.category_direct_edit_state().expect("still in editor");
     assert_eq!(state.create_confirm_name, None);
@@ -1127,9 +1127,9 @@ fn category_direct_edit_save_applies_mixed_diff_and_preserves_non_column_assignm
     }
 
     // Tab away from Input so 'S' acts as save command instead of typing
-    app.handle_category_direct_edit_key(KeyCode::Tab, &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab away from Input");
-    app.handle_category_direct_edit_key(KeyCode::Char('S'), &aglet)
+    app.handle_category_direct_edit_key(KeyCode::Char('S').into(), &aglet)
         .expect("save draft");
     assert_eq!(app.mode, Mode::Normal);
 
@@ -1192,7 +1192,8 @@ fn board_cell_enter_opens_category_column_picker_for_non_exclusive_parent() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("enter");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("enter");
 
     assert_eq!(app.mode, Mode::CategoryColumnPicker);
     let state = app.category_column_picker.as_ref().expect("picker");
@@ -1243,7 +1244,8 @@ fn board_cell_enter_opens_category_column_picker_for_exclusive_parent() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("enter");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("enter");
     assert_eq!(app.mode, Mode::CategoryColumnPicker);
     let state = app.category_column_picker.as_ref().expect("picker");
     assert!(state.is_exclusive);
@@ -1294,9 +1296,10 @@ fn category_column_picker_filter_uses_fuzzy_mode_for_category_names() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     for ch in "ns".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type fuzzy filter");
     }
 
@@ -1361,29 +1364,36 @@ fn category_column_picker_multi_toggle_save_applies_diff_and_preserves_other_ass
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     assert_eq!(app.mode, Mode::CategoryColumnPicker);
 
     for ch in "CLI".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type cli");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type cli");
     }
-    app.handle_key(KeyCode::Tab, &aglet).expect("focus list");
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
+        .expect("focus list");
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle cli on");
 
-    app.handle_key(KeyCode::Tab, &aglet).expect("focus filter");
+    app.handle_key(KeyCode::Tab.into(), &aglet)
+        .expect("focus filter");
     for _ in 0..3 {
-        app.handle_key(KeyCode::Backspace, &aglet)
+        app.handle_key(KeyCode::Backspace.into(), &aglet)
             .expect("clear filter");
     }
     for ch in "UX".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type ux");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type ux");
     }
-    app.handle_key(KeyCode::Tab, &aglet).expect("focus list");
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
+        .expect("focus list");
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle ux off");
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("save picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("save picker");
     assert_eq!(app.mode, Mode::Normal);
 
     let saved = store.get_item(item.id).expect("load item");
@@ -1438,13 +1448,15 @@ fn category_column_picker_cancel_discards_staged_changes() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     for ch in "CLI".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle on");
-    app.handle_key(KeyCode::Esc, &aglet).expect("cancel");
+    app.handle_key(KeyCode::Esc.into(), &aglet).expect("cancel");
 
     assert_eq!(app.mode, Mode::Normal);
     let saved = store.get_item(item.id).expect("load item");
@@ -1505,7 +1517,8 @@ fn category_column_picker_exclusive_selection_replaces_previous_and_never_stages
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     assert_eq!(app.mode, Mode::CategoryColumnPicker);
     {
         let state = app.category_column_picker.as_ref().expect("picker");
@@ -1515,10 +1528,12 @@ fn category_column_picker_exclusive_selection_replaces_previous_and_never_stages
     }
 
     for ch in "Deferred".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Tab, &aglet).expect("focus list");
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
+        .expect("focus list");
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select deferred");
     {
         let state = app.category_column_picker.as_ref().expect("picker");
@@ -1527,7 +1542,8 @@ fn category_column_picker_exclusive_selection_replaces_previous_and_never_stages
         assert_eq!(state.selected_ids.len(), 1, "radio behavior");
     }
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("save picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("save picker");
     let saved = store.get_item(item.id).expect("load item");
     assert!(!saved.assignments.contains_key(&pending.id));
     assert!(saved.assignments.contains_key(&deferred.id));
@@ -1582,11 +1598,13 @@ fn category_column_picker_enter_creates_child_and_saves() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     for ch in "Docs".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("create and save");
     let created = store
         .get_hierarchy()
@@ -1643,11 +1661,13 @@ fn category_column_picker_rejects_reserved_name_create() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     for ch in "Done".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt create");
 
     let state = app.category_column_picker.as_ref().expect("picker");
@@ -1696,11 +1716,13 @@ fn category_column_picker_accepts_spaces_in_new_category_names() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     for ch in "New Tag".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("create and save");
 
     let created = store
@@ -1757,7 +1779,8 @@ fn category_column_picker_renders_wrapped_full_item_text_context() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
-    app.handle_key(KeyCode::Enter, &aglet).expect("open picker");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("open picker");
     assert_eq!(app.mode, Mode::CategoryColumnPicker);
 
     let backend = TestBackend::new(92, 30);
@@ -1821,7 +1844,7 @@ fn normal_mode_plus_opens_add_column_picker_to_right_of_current_column() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 2; // Board column 2 => section column index 1 (B)
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("+ handled");
     assert_eq!(app.mode, Mode::BoardAddColumnPicker);
     let anchor = app.board_add_column.as_ref().expect("picker state").anchor;
@@ -1865,7 +1888,8 @@ fn board_item_column_enter_still_opens_item_editor() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 0; // item column
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("enter");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("enter");
     assert_eq!(app.mode, Mode::InputPanel);
 }
 
@@ -1911,7 +1935,8 @@ fn board_when_column_enter_opens_when_datetime_editor() {
         ..App::default()
     };
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("enter");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("enter");
     assert_eq!(app.mode, Mode::InputPanel);
     assert_eq!(app.name_input_context, Some(NameInputContext::WhenDateEdit));
     assert_eq!(
@@ -1983,15 +2008,15 @@ fn when_column_edit_saves_datetime_and_reserved_when_assignment() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open when editor");
     for ch in "2026-03-07 14:25".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type datetime");
     }
-    app.handle_key(KeyCode::Tab, &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
         .expect("focus save button");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save when datetime");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2024,15 +2049,15 @@ fn when_column_edit_accepts_seconds_precision() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open when editor");
     for ch in "2026-03-07 14:25:59".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type datetime with seconds");
     }
-    app.handle_key(KeyCode::Tab, &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
         .expect("focus save button");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save datetime with seconds");
 
     let loaded = store.get_item(item_id).expect("load item");
@@ -2055,15 +2080,15 @@ fn when_column_edit_accepts_natural_language_tomorrow() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open when editor");
     for ch in "tomorrow".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type natural language date");
     }
-    app.handle_key(KeyCode::Tab, &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
         .expect("focus save button");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save natural language date");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2094,13 +2119,13 @@ fn when_column_edit_enter_from_text_focus_saves() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open when editor");
     for ch in "tomorrow".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type natural language date");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save directly from text focus");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2121,15 +2146,15 @@ fn when_column_edit_invalid_input_keeps_panel_open() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open when editor");
     for ch in "xyzqv-nodate-token".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type invalid input");
     }
-    app.handle_key(KeyCode::Tab, &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
         .expect("focus save button");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt save");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -2162,7 +2187,7 @@ fn when_column_edit_empty_input_clears_when_and_reserved_assignment() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open when editor");
     let prefill_len = app
         .input_panel
@@ -2170,12 +2195,12 @@ fn when_column_edit_empty_input_clears_when_and_reserved_assignment() {
         .map(|panel| panel.text.trimmed().len())
         .expect("panel text");
     for _ in 0..prefill_len {
-        app.handle_key(KeyCode::Backspace, &aglet)
+        app.handle_key(KeyCode::Backspace.into(), &aglet)
             .expect("clear input");
     }
-    app.handle_key(KeyCode::Tab, &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet)
         .expect("focus save button");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save cleared when");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2241,7 +2266,7 @@ fn normal_mode_plus_opens_add_column_picker_from_item_column_any_position() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 2; // item column is rightmost
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("+ handled on item");
     assert_eq!(app.mode, Mode::BoardAddColumnPicker);
     let anchor = app.board_add_column.as_ref().expect("picker state").anchor;
@@ -2312,13 +2337,13 @@ fn board_add_column_picker_insert_right_of_rightmost_item_column_preserves_item_
     app.refresh(&store).expect("refresh board");
     app.column_index = 2; // item column (rightmost)
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open picker from item column");
     for ch in "Owner".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type in picker");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("insert exact-match column");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2385,13 +2410,13 @@ fn board_add_column_picker_enter_inserts_exact_match_and_persists() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open add-column picker");
     for ch in "Status".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type in picker");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("insert exact-match column");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2457,7 +2482,7 @@ fn board_add_column_picker_allows_nested_non_leaf_heading() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open add-column picker");
     let suggestions = app.get_board_add_column_suggest_matches();
     assert!(
@@ -2466,10 +2491,10 @@ fn board_add_column_picker_allows_nested_non_leaf_heading() {
     );
 
     for ch in "Phase".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type in picker");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("insert nested non-leaf heading");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2521,12 +2546,13 @@ fn board_add_column_picker_rejects_creating_new_leaf_heading() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open picker");
     for ch in "BrandNew".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt create");
     assert_eq!(app.mode, Mode::BoardAddColumnPicker);
     assert_eq!(app.board_add_column_create_confirm_name(), None);
@@ -2596,12 +2622,13 @@ fn board_add_column_picker_does_not_reuse_child_category_name_as_column_heading(
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open add-column picker");
     for ch in "Test".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt insert/create");
 
     assert_eq!(app.mode, Mode::BoardAddColumnPicker);
@@ -2674,7 +2701,7 @@ fn board_add_column_picker_excludes_existing_section_columns() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open picker");
 
     let suggestions = app.get_board_add_column_suggest_matches();
@@ -2694,9 +2721,10 @@ fn board_add_column_picker_excludes_existing_section_columns() {
     assert!(!names.contains(&"Status".to_string()));
 
     for ch in "Status".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet).expect("type");
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
+            .expect("type");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt duplicate section column");
     assert_eq!(app.mode, Mode::BoardAddColumnPicker);
     assert_eq!(app.board_add_column_create_confirm_name(), None);
@@ -2752,9 +2780,9 @@ fn board_add_column_picker_render_survives_empty_matches_after_typing() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Char('+'), &aglet)
+    app.handle_key(KeyCode::Char('+').into(), &aglet)
         .expect("open picker");
-    app.handle_key(KeyCode::Char('z'), &aglet)
+    app.handle_key(KeyCode::Char('z').into(), &aglet)
         .expect("type no-match filter");
     assert_eq!(app.mode, Mode::BoardAddColumnPicker);
     assert!(app.get_board_add_column_suggest_matches().is_empty());
@@ -2784,7 +2812,7 @@ fn link_wizard_target_filter_clamps_selection_and_selects_match() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(anchor.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open link wizard");
     assert_eq!(app.mode, Mode::LinkWizard);
     assert_eq!(
@@ -2792,16 +2820,16 @@ fn link_wizard_target_filter_clamps_selection_and_selects_match() {
         super::LinkWizardFocus::ScopeAction
     );
 
-    app.handle_key(KeyCode::Char('/'), &aglet)
+    app.handle_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus target filter");
     assert_eq!(
         app.link_wizard_state().expect("wizard state").focus,
         super::LinkWizardFocus::Target
     );
 
-    app.handle_key(KeyCode::Down, &aglet)
+    app.handle_key(KeyCode::Down.into(), &aglet)
         .expect("move target cursor");
-    app.handle_key(KeyCode::Down, &aglet)
+    app.handle_key(KeyCode::Down.into(), &aglet)
         .expect("move target cursor");
     assert_eq!(
         app.link_wizard_state().expect("wizard state").target_index,
@@ -2809,7 +2837,7 @@ fn link_wizard_target_filter_clamps_selection_and_selects_match() {
     );
 
     for ch in "beta".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type filter");
     }
 
@@ -2848,12 +2876,12 @@ fn link_wizard_target_filter_uses_fuzzy_mode_for_item_titles() {
     };
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(anchor.id);
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open link wizard");
-    app.handle_key(KeyCode::Char('/'), &aglet)
+    app.handle_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus target filter");
     for ch in "ftb".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type fuzzy filter");
     }
 
@@ -2881,7 +2909,7 @@ fn batch_link_wizard_excludes_all_selected_source_items_from_targets() {
     app.toggle_selected_item(source_b.id);
     app.set_item_selection_by_id(source_b.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open batch link wizard");
 
     let matches = app.link_wizard_target_matches();
@@ -2913,13 +2941,13 @@ fn batch_link_wizard_applies_relation_to_all_selected_sources() {
     app.toggle_selected_item(source_b.id);
     app.set_item_selection_by_id(source_b.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open batch link wizard");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus target");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus confirm");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("apply batch link");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2961,13 +2989,13 @@ fn batch_link_wizard_reports_created_and_skipped_counts() {
     app.toggle_selected_item(source_b.id);
     app.set_item_selection_by_id(source_b.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open batch link wizard");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus target");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus confirm");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("apply batch link");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -2998,16 +3026,16 @@ fn batch_link_wizard_partial_failure_preserves_remaining_selection() {
     app.toggle_selected_item(source_b.id);
     app.set_item_selection_by_id(source_a.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open batch link wizard");
     store
         .delete_item(source_b.id, "test")
         .expect("delete second source");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus target");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus confirm");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("apply batch link");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -3059,7 +3087,7 @@ fn link_wizard_excludes_closed_targets_and_restores_after_reopen() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(anchor.id);
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open link wizard");
 
     let matches = app.link_wizard_target_matches();
@@ -3074,16 +3102,16 @@ fn link_wizard_excludes_closed_targets_and_restores_after_reopen() {
         "Complete targets should be excluded"
     );
 
-    app.handle_key(KeyCode::Char('/'), &aglet)
+    app.handle_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus target filter");
     for ch in "target".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type target filter");
     }
     let filtered_matches = app.link_wizard_target_matches();
     assert_eq!(filtered_matches, vec![open_target.id]);
 
-    app.handle_key(KeyCode::Esc, &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("close link wizard");
 
     aglet
@@ -3095,7 +3123,7 @@ fn link_wizard_excludes_closed_targets_and_restores_after_reopen() {
 
     app.refresh(&store).expect("refresh after reopen");
     app.set_item_selection_by_id(anchor.id);
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("reopen link wizard");
     let reopened_matches = app.link_wizard_target_matches();
     assert!(reopened_matches.contains(&open_target.id));
@@ -3103,10 +3131,10 @@ fn link_wizard_excludes_closed_targets_and_restores_after_reopen() {
     assert!(reopened_matches.contains(&complete_target.id));
     assert!(!reopened_matches.contains(&anchor.id));
 
-    app.handle_key(KeyCode::Char('/'), &aglet)
+    app.handle_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus target filter after reopen");
     for ch in "target".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type target filter after reopen");
     }
     let reopened_filtered_matches = app.link_wizard_target_matches();
@@ -3134,9 +3162,9 @@ fn link_wizard_target_navigation_does_not_wrap() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(anchor.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open link wizard");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("focus target list");
     assert_eq!(
         app.link_wizard_state().expect("wizard state").focus,
@@ -3144,7 +3172,7 @@ fn link_wizard_target_navigation_does_not_wrap() {
     );
 
     for _ in 0..8 {
-        app.handle_key(KeyCode::Down, &aglet)
+        app.handle_key(KeyCode::Down.into(), &aglet)
             .expect("move target cursor down");
     }
     let last = app.link_wizard_target_matches().len().saturating_sub(1);
@@ -3155,7 +3183,7 @@ fn link_wizard_target_navigation_does_not_wrap() {
     );
 
     for _ in 0..8 {
-        app.handle_key(KeyCode::Up, &aglet)
+        app.handle_key(KeyCode::Up.into(), &aglet)
             .expect("move target cursor up");
     }
     assert_eq!(
@@ -3179,7 +3207,7 @@ fn link_wizard_header_names_source_item_without_empty_box() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(anchor.id);
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open link wizard");
 
     let backend = TestBackend::new(100, 40);
@@ -3217,9 +3245,9 @@ fn link_wizard_render_keeps_selected_target_visible_when_scrolled() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(anchor.id);
 
-    app.handle_key(KeyCode::Char('b'), &aglet)
+    app.handle_key(KeyCode::Char('b').into(), &aglet)
         .expect("open link wizard");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("move to target focus");
     assert_eq!(
         app.link_wizard_state().expect("wizard state").focus,
@@ -3227,7 +3255,7 @@ fn link_wizard_render_keeps_selected_target_visible_when_scrolled() {
     );
 
     for _ in 0..20 {
-        app.handle_key(KeyCode::Down, &aglet)
+        app.handle_key(KeyCode::Down.into(), &aglet)
             .expect("move target cursor");
     }
     let selected_target = app
@@ -3303,7 +3331,7 @@ fn board_column_reorder_shift_keys_move_item_column() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1; // item column
 
-    app.handle_key(KeyCode::Char('H'), &aglet)
+    app.handle_key(KeyCode::Char('H').into(), &aglet)
         .expect("Shift+H moves item column left");
     let saved = store
         .get_view(app.current_view().expect("current view").id)
@@ -3311,9 +3339,9 @@ fn board_column_reorder_shift_keys_move_item_column() {
     assert_eq!(saved.sections[0].item_column_index, 0);
     assert_eq!(app.column_index, 0);
 
-    app.handle_key(KeyCode::Char('L'), &aglet)
+    app.handle_key(KeyCode::Char('L').into(), &aglet)
         .expect("Shift+L moves item column right once");
-    app.handle_key(KeyCode::Char('L'), &aglet)
+    app.handle_key(KeyCode::Char('L').into(), &aglet)
         .expect("Shift+L moves item column to end");
     let saved = store
         .get_view(app.current_view().expect("current view").id)
@@ -3373,11 +3401,11 @@ fn board_column_reorder_and_remove_visidata_keys_update_columns() {
     app.refresh(&store).expect("refresh board");
 
     app.column_index = 3; // C in [A, Item, B, C]
-    app.handle_key(KeyCode::Char('H'), &aglet)
+    app.handle_key(KeyCode::Char('H').into(), &aglet)
         .expect("Shift+H moves category left");
-    app.handle_key(KeyCode::Char('H'), &aglet)
+    app.handle_key(KeyCode::Char('H').into(), &aglet)
         .expect("Shift+H moves category left again");
-    app.handle_key(KeyCode::Char('H'), &aglet)
+    app.handle_key(KeyCode::Char('H').into(), &aglet)
         .expect("Shift+H moves category to first");
 
     let saved = store
@@ -3392,10 +3420,10 @@ fn board_column_reorder_and_remove_visidata_keys_update_columns() {
     assert_eq!(saved.sections[0].item_column_index, 2);
     assert_eq!(app.column_index, 0);
 
-    app.handle_key(KeyCode::Char('-'), &aglet)
+    app.handle_key(KeyCode::Char('-').into(), &aglet)
         .expect("- opens delete confirmation");
     assert_eq!(app.mode, Mode::BoardColumnDeleteConfirm);
-    app.handle_key(KeyCode::Char('y'), &aglet)
+    app.handle_key(KeyCode::Char('y').into(), &aglet)
         .expect("y confirms delete");
     assert_eq!(app.mode, Mode::Normal);
     let saved = store
@@ -3411,7 +3439,7 @@ fn board_column_reorder_and_remove_visidata_keys_update_columns() {
     assert_eq!(app.column_index, 0);
 
     app.column_index = 1; // item column in [A, Item, B]
-    app.handle_key(KeyCode::Char('-'), &aglet)
+    app.handle_key(KeyCode::Char('-').into(), &aglet)
         .expect("- on item column should be blocked");
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.status, "Cannot delete Item column (move it with H/L)");
@@ -3461,9 +3489,9 @@ fn board_g_prefix_rejects_removed_gh_gl_bindings() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1; // item column
 
-    app.handle_key(KeyCode::Char('g'), &aglet)
+    app.handle_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix");
-    app.handle_key(KeyCode::Char('H'), &aglet)
+    app.handle_key(KeyCode::Char('H').into(), &aglet)
         .expect("gH should be rejected");
     assert_eq!(app.status, "Unknown g command (use ga, g/, or gs)");
 
@@ -3473,9 +3501,9 @@ fn board_g_prefix_rejects_removed_gh_gl_bindings() {
     assert_eq!(saved.sections[0].item_column_index, 1);
     assert_eq!(app.column_index, 1);
 
-    app.handle_key(KeyCode::Char('g'), &aglet)
+    app.handle_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix");
-    app.handle_key(KeyCode::Char('L'), &aglet)
+    app.handle_key(KeyCode::Char('L').into(), &aglet)
         .expect("gL should be rejected");
     assert_eq!(app.status, "Unknown g command (use ga, g/, or gs)");
 
@@ -3541,7 +3569,7 @@ fn board_column_reorder_preserves_slot_focus_when_item_exists_in_multiple_sectio
     app.item_index = 0;
     app.column_index = 2; // B in [Item, A, B]
 
-    app.handle_key(KeyCode::Char('H'), &aglet)
+    app.handle_key(KeyCode::Char('H').into(), &aglet)
         .expect("Shift+H reorders within second section");
 
     let saved = store
@@ -3769,7 +3797,7 @@ fn item_assign_create_confirm_disarms_on_intervening_keypress() {
     app.mode = Mode::ItemAssignInput;
     app.set_input("NewCat".to_string());
 
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("first enter arms");
     assert!(
         app.status.contains("Enter again to create"),
@@ -3778,15 +3806,15 @@ fn item_assign_create_confirm_disarms_on_intervening_keypress() {
     );
 
     // Editing the query disarms the pending confirm.
-    app.handle_item_assign_category_input_key(KeyCode::Char('s'), &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Char('s').into(), &aglet)
         .expect("typing disarms");
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("enter after edit re-arms instead of creating");
     assert!(
         !app.categories.iter().any(|c| c.name == "NewCats"),
         "edited query must re-arm, not create"
     );
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("confirming enter creates");
     assert!(
         app.categories.iter().any(|c| c.name == "NewCats"),
@@ -4471,7 +4499,7 @@ fn category_manager_details_cursor_position_tracks_numeric_inline_input() {
     app.set_category_selection_by_id(cost.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::DecimalPlaces);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("start decimal edit");
     if let Some(input) = app.category_manager_details_inline_input_mut() {
         input.buffer = text_buffer::TextBuffer::with_cursor("12".to_string(), 1);
@@ -4497,14 +4525,14 @@ fn category_manager_condition_cursor_position_tracks_date_value_input() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.field_focus = DateConditionField::Value;
@@ -4543,7 +4571,7 @@ fn input_panel_edit_tab_switches_to_note_and_saves() {
     app.set_item_selection_by_id(item.id);
 
     // 'e' opens InputPanel(EditItem)
-    app.handle_normal_key(KeyCode::Char('e'), &aglet)
+    app.handle_normal_key(KeyCode::Char('e').into(), &aglet)
         .expect("open item edit");
     assert_eq!(app.mode, Mode::InputPanel);
     assert_eq!(
@@ -4552,13 +4580,13 @@ fn input_panel_edit_tab_switches_to_note_and_saves() {
     );
 
     // Tab moves focus to When, then Note
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("switch to when");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::When
     );
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("switch to note");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
@@ -4567,18 +4595,18 @@ fn input_panel_edit_tab_switches_to_note_and_saves() {
 
     // Type in note field (appends to existing "old")
     for c in " updated".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type note");
     }
     // Tab -> Categories, then S to save
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("focus categories");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Categories
     );
     // Capital S saves from Categories focus
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save item edit");
     assert_eq!(app.mode, Mode::Normal);
 
@@ -4648,7 +4676,7 @@ fn edit_panel_prechecks_derived_assignments() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('e'), &aglet)
+    app.handle_normal_key(KeyCode::Char('e').into(), &aglet)
         .expect("open item edit");
     assert_eq!(app.mode, Mode::InputPanel);
     let panel = app.input_panel.as_ref().expect("edit panel open");
@@ -4678,7 +4706,7 @@ fn item_edit_note_placeholder_remains_generic() {
     app.refresh(&store).expect("refresh app");
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
-    app.handle_normal_key(KeyCode::Char('e'), &aglet)
+    app.handle_normal_key(KeyCode::Char('e').into(), &aglet)
         .expect("open item edit");
 
     let backend = TestBackend::new(220, 40);
@@ -4717,14 +4745,14 @@ fn input_panel_edit_enter_in_note_inserts_newline() {
     app.set_item_selection_by_id(item.id);
 
     // Enter opens InputPanel(EditItem)
-    app.handle_normal_key(KeyCode::Enter, &aglet)
+    app.handle_normal_key(KeyCode::Enter.into(), &aglet)
         .expect("enter opens edit");
     assert_eq!(app.mode, Mode::InputPanel);
 
     // Tab to When, then to Note field
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("focus when");
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("focus note");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
@@ -4732,17 +4760,17 @@ fn input_panel_edit_enter_in_note_inserts_newline() {
     );
 
     // Enter in Note inserts newline
-    app.handle_input_panel_key(KeyCode::Enter, &aglet)
+    app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
         .expect("enter adds newline");
     for c in "line2".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type note line2");
     }
     // Tab to Categories (non-text focus) so S can save
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("focus categories");
     // Capital S saves from non-text focus
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save");
     assert_eq!(app.mode, Mode::Normal);
 
@@ -4769,7 +4797,7 @@ fn enter_on_empty_slot_opens_add_item_panel() {
     app.mode = Mode::Normal;
     assert!(app.selected_item_id().is_none(), "slot should start empty");
 
-    app.handle_normal_key(KeyCode::Enter, &aglet)
+    app.handle_normal_key(KeyCode::Enter.into(), &aglet)
         .expect("enter opens add panel");
     assert_eq!(app.mode, Mode::InputPanel);
     let panel = app.input_panel.as_ref().expect("input panel opens");
@@ -5122,7 +5150,7 @@ fn add_item_save_submits_background_classification() {
     app.input_panel = Some(panel);
 
     // S saves from Categories focus
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save item");
 
     // Save should happen immediately (no blocking overlay).
@@ -5147,7 +5175,7 @@ fn manual_classify_selected_items_reports_semantic_mode_off() {
     app.set_item_selection_by_id(item.id);
     app.selected_item_ids.insert(item.id);
 
-    app.handle_normal_key(KeyCode::Char('='), &aglet)
+    app.handle_normal_key(KeyCode::Char('=').into(), &aglet)
         .expect("classify selected items");
 
     assert_eq!(app.status, "Background semantic classification is off");
@@ -5233,7 +5261,7 @@ fn assign_picker_pending_add_names_displaced_exclusive_sibling() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_item_assign_category_selection_by_id(high.id);
     app.compute_assignment_preview(&aglet);
@@ -5357,7 +5385,7 @@ fn edit_item_invalid_when_does_not_queue_blocking_classification_action() {
     app.input_panel = Some(panel);
 
     // S saves from Categories focus
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("attempt edit save");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -5403,7 +5431,7 @@ fn edit_item_when_enter_recalculates_without_closing_panel() {
     app.mode = Mode::InputPanel;
     app.input_panel = Some(panel);
 
-    app.handle_input_panel_key(KeyCode::Enter, &aglet)
+    app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
         .expect("recalculate when");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -5443,7 +5471,7 @@ fn edit_item_when_tab_recalculates_and_advances_focus() {
     app.mode = Mode::InputPanel;
     app.input_panel = Some(panel);
 
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("recalculate when and advance");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -5489,7 +5517,7 @@ fn view_picker_v_opens_view_edit() {
         .position(|view| view.name == "Work Board")
         .expect("work board view should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('V'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('V').into(), &aglet)
         .expect("open view edit");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -5547,7 +5575,7 @@ fn view_picker_enter_switches_to_ready_queue_and_filters_blocked_items() {
         .position(|view| view.name == aglet_core::workflow::READY_QUEUE_VIEW_NAME)
         .expect("Ready Queue view should exist");
 
-    app.handle_view_picker_key(KeyCode::Enter, &aglet)
+    app.handle_view_picker_key(KeyCode::Enter.into(), &aglet)
         .expect("switch to Ready Queue");
 
     assert_eq!(
@@ -5585,17 +5613,17 @@ fn view_picker_blocks_edit_delete_and_rename_for_all_items() {
         .position(|view| view.name == "All Items")
         .expect("All Items view should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('e'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('e').into(), &aglet)
         .expect("edit key");
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.status.contains("immutable"));
 
-    app.handle_view_picker_key(KeyCode::Char('x'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('x').into(), &aglet)
         .expect("delete key");
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.status.contains("immutable"));
 
-    app.handle_view_picker_key(KeyCode::Char('r'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('r').into(), &aglet)
         .expect("rename key");
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.status.contains("immutable"));
@@ -5614,7 +5642,7 @@ fn view_picker_lowercase_n_opens_view_create() {
     app.refresh(&store).expect("refresh");
     app.mode = Mode::ViewPicker;
 
-    app.handle_view_picker_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
         .expect("n opens create view");
 
     // N now opens ViewEdit directly with inline name editing
@@ -5647,7 +5675,7 @@ fn view_picker_c_opens_clone_name_input() {
         .position(|view| view.name == "TestView")
         .expect("TestView should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone name input");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -5673,15 +5701,15 @@ fn view_picker_clone_creates_new_view() {
         .position(|view| view.name == "TestView")
         .expect("TestView should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone");
     assert_eq!(app.mode, Mode::InputPanel);
 
     for ch in "Cloned View".chars() {
-        app.handle_input_panel_key(KeyCode::Char(ch), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type clone name");
     }
-    app.handle_input_panel_key(KeyCode::Enter, &aglet)
+    app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
         .expect("save clone");
 
     assert_eq!(app.mode, Mode::ViewPicker);
@@ -5715,14 +5743,14 @@ fn view_picker_clone_rejects_duplicate_name() {
         .position(|view| view.name == "TestView")
         .expect("TestView should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone");
 
     for ch in "TestView".chars() {
-        app.handle_input_panel_key(KeyCode::Char(ch), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type duplicate name");
     }
-    app.handle_input_panel_key(KeyCode::Enter, &aglet)
+    app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
         .expect("save clone with dup name");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -5746,11 +5774,11 @@ fn view_picker_clone_empty_name_cancels() {
         .position(|view| view.name == "TestView")
         .expect("TestView should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
         .expect("c opens clone");
 
     // Enter/Esc with empty name cancels silently
-    app.handle_input_panel_key(KeyCode::Enter, &aglet)
+    app.handle_input_panel_key(KeyCode::Enter.into(), &aglet)
         .expect("save clone with empty name");
 
     // Empty name closes the panel (auto-save with empty = cancel)
@@ -5776,7 +5804,7 @@ fn view_picker_c_with_no_views_shows_status() {
         ..Default::default()
     };
 
-    app.handle_view_picker_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('c').into(), &aglet)
         .expect("c with no views");
 
     assert_eq!(app.mode, Mode::ViewPicker);
@@ -5797,7 +5825,7 @@ fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() 
     app.mode = Mode::ViewPicker;
 
     // N now opens ViewEdit directly with inline name editing
-    app.handle_view_picker_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
     let state = app.view_edit_state.as_ref().expect("view edit state");
@@ -5808,11 +5836,11 @@ fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() 
 
     // Type the view name
     for ch in "Mixed".chars() {
-        app.handle_view_edit_key(KeyCode::Char(ch), &aglet)
+        app.handle_view_edit_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type view name");
     }
     // Enter confirms the name
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm name");
 
     let state = app.view_edit_state.as_ref().expect("view edit state");
@@ -5848,20 +5876,20 @@ fn view_create_wizard_esc_discards_unsaved_view() {
     app.mode = Mode::ViewPicker;
 
     // N now opens ViewEdit directly with inline name editing
-    app.handle_view_picker_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
 
     // Type a name
     for ch in "Scratch".chars() {
-        app.handle_view_edit_key(KeyCode::Char(ch), &aglet)
+        app.handle_view_edit_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type view name");
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm name");
 
     // Esc triggers discard confirm because typing a name made it dirty.
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("trigger discard confirm");
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(
@@ -5873,7 +5901,7 @@ fn view_create_wizard_esc_discards_unsaved_view() {
     );
 
     // 'n' discards the unsaved draft.
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("discard draft");
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.view_edit_state.is_none());
@@ -5902,20 +5930,20 @@ fn view_create_wizard_s_save_persists_view() {
     app.mode = Mode::ViewPicker;
 
     // N now opens ViewEdit directly with inline name editing
-    app.handle_view_picker_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
         .expect("open view editor directly");
     assert_eq!(app.mode, Mode::ViewEdit);
 
     // Type the view name and confirm
     for ch in "Roadmap".chars() {
-        app.handle_view_edit_key(KeyCode::Char(ch), &aglet)
+        app.handle_view_edit_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type view name");
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm name");
 
     // Save the new view
-    app.handle_view_edit_key(KeyCode::Char('S'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('S').into(), &aglet)
         .expect("save new view");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.view_edit_state.is_none());
@@ -5964,11 +5992,11 @@ fn view_edit_navigation_keys_do_not_request_app_quit() {
         .iter()
         .position(|view| view.name == "Work Board")
         .expect("work board view should exist");
-    app.handle_view_picker_key(KeyCode::Char('V'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('V').into(), &aglet)
         .expect("open view edit");
 
     let should_quit = app
-        .handle_key(KeyCode::Down, &aglet)
+        .handle_key(KeyCode::Down.into(), &aglet)
         .expect("down in view edit");
     assert!(!should_quit, "view-edit navigation must not quit the app");
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -6004,14 +6032,14 @@ fn normal_mode_comma_and_dot_cycle_views() {
         .name
         .clone();
 
-    app.handle_normal_key(KeyCode::Char('.'), &aglet)
+    app.handle_normal_key(KeyCode::Char('.').into(), &aglet)
         .expect("dot should cycle view");
     assert_eq!(
         app.current_view().map(|view| view.name.as_str()),
         Some(expected_next.as_str())
     );
 
-    app.handle_normal_key(KeyCode::Char(','), &aglet)
+    app.handle_normal_key(KeyCode::Char(',').into(), &aglet)
         .expect("comma should cycle backwards");
     assert_eq!(
         app.current_view().map(|view| view.name.as_str()),
@@ -6068,7 +6096,7 @@ fn normal_mode_u_toggles_hide_dependent_items_session_only() {
         "blocked item should be visible before toggle"
     );
 
-    app.handle_normal_key(KeyCode::Char('u'), &aglet)
+    app.handle_normal_key(KeyCode::Char('u').into(), &aglet)
         .expect("u should toggle hide-dependent on");
     assert!(
         app.slots
@@ -6084,7 +6112,7 @@ fn normal_mode_u_toggles_hide_dependent_items_session_only() {
         "session toggle must not persist to the stored view"
     );
 
-    app.handle_normal_key(KeyCode::Char('u'), &aglet)
+    app.handle_normal_key(KeyCode::Char('u').into(), &aglet)
         .expect("u should toggle hide-dependent off");
     assert!(
         app.slots
@@ -6137,7 +6165,7 @@ fn hide_dependent_session_toggle_resets_on_view_switch() {
     app.refresh(&store).expect("refresh A");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('u'), &aglet)
+    app.handle_normal_key(KeyCode::Char('u').into(), &aglet)
         .expect("enable hide-dependent session toggle");
     assert!(
         app.effective_hide_dependent_items(),
@@ -6185,7 +6213,7 @@ fn item_assign_input_enter_autoselects_single_visible_match() {
     app.mode = Mode::ItemAssignInput;
     app.set_input("wor".to_string());
 
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should auto-assign single visible match");
 
     let updated = store.get_item(item.id).expect("load updated item");
@@ -6234,7 +6262,7 @@ fn item_assign_input_enter_prefers_exact_match_over_partial_matches() {
     app.mode = Mode::ItemAssignInput;
     app.set_input("Work".to_string());
 
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should assign exact match");
 
     let updated = store.get_item(item.id).expect("load updated item");
@@ -6277,7 +6305,7 @@ fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
     app.mode = Mode::ItemAssignInput;
     app.set_input("wor".to_string());
 
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("first enter should arm the create confirm");
     assert!(
         app.status
@@ -6289,7 +6317,7 @@ fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
         !app.categories.iter().any(|category| category.name == "wor"),
         "no category should exist after the arming enter"
     );
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("second enter should create new category for ambiguous match");
 
     let created = app
@@ -6345,7 +6373,7 @@ fn item_assign_picker_filter_limits_rows_and_enter_uses_exact_match() {
     app.refresh(&store).expect("refresh app");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_input("Work".to_string());
 
@@ -6360,7 +6388,7 @@ fn item_assign_picker_filter_limits_rows_and_enter_uses_exact_match() {
         vec!["Work".to_string(), "Workshop".to_string()]
     );
 
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should resolve exact match and close");
 
     let updated = store.get_item(item.id).expect("load updated item");
@@ -6400,12 +6428,12 @@ fn item_assign_input_tab_returns_to_filtered_list_keeping_filter() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_item_selection_by_id(item.id);
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('/').into(), &aglet)
         .expect("enter filter input");
     for ch in ['w', 'o', 'r'] {
-        app.handle_item_assign_category_input_key(KeyCode::Char(ch), &aglet)
+        app.handle_item_assign_category_input_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type filter char");
     }
     assert_eq!(
@@ -6414,7 +6442,7 @@ fn item_assign_input_tab_returns_to_filtered_list_keeping_filter() {
         "typing should clamp the selection onto the narrowed list"
     );
 
-    app.handle_item_assign_category_input_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Tab.into(), &aglet)
         .expect("tab should return focus to the category list");
 
     assert_eq!(app.mode, Mode::ItemAssignPicker);
@@ -6434,7 +6462,7 @@ fn item_assign_input_tab_returns_to_filtered_list_keeping_filter() {
         vec!["Work".to_string(), "Workshop".to_string()]
     );
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space should apply the selected narrowed category");
     let updated = store.get_item(item.id).expect("load updated item");
     assert!(
@@ -6469,16 +6497,16 @@ fn item_assign_input_arrow_moves_into_filtered_list() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_item_selection_by_id(item.id);
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('/').into(), &aglet)
         .expect("enter filter input");
     for ch in ['w', 'o', 'r'] {
-        app.handle_item_assign_category_input_key(KeyCode::Char(ch), &aglet)
+        app.handle_item_assign_category_input_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type filter char");
     }
 
-    app.handle_item_assign_category_input_key(KeyCode::Down, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Down.into(), &aglet)
         .expect("down should move into the narrowed list");
 
     assert_eq!(app.mode, Mode::ItemAssignPicker);
@@ -6515,18 +6543,18 @@ fn item_assign_picker_slash_keeps_filter_for_refinement() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_item_selection_by_id(item.id);
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('/').into(), &aglet)
         .expect("enter filter input");
     for ch in ['w', 'o', 'r'] {
-        app.handle_item_assign_category_input_key(KeyCode::Char(ch), &aglet)
+        app.handle_item_assign_category_input_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type filter char");
     }
-    app.handle_item_assign_category_input_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Tab.into(), &aglet)
         .expect("tab back to list");
 
-    app.handle_item_assign_category_key(KeyCode::Char('/'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('/').into(), &aglet)
         .expect("re-enter filter input");
 
     assert_eq!(app.mode, Mode::ItemAssignInput);
@@ -6536,9 +6564,9 @@ fn item_assign_picker_slash_keeps_filter_for_refinement() {
         "re-entering the filter should keep the existing text for refinement"
     );
 
-    app.handle_item_assign_category_input_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Tab.into(), &aglet)
         .expect("tab back to list again");
-    app.handle_item_assign_category_key(KeyCode::Char('n'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('n').into(), &aglet)
         .expect("n starts fresh category entry");
     assert_eq!(app.mode, Mode::ItemAssignInput);
     assert!(
@@ -6546,7 +6574,7 @@ fn item_assign_picker_slash_keeps_filter_for_refinement() {
         "n should clear the filter text for fresh category entry"
     );
 
-    app.handle_item_assign_category_input_key(KeyCode::Esc, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Esc.into(), &aglet)
         .expect("esc cancels filter entry");
     assert_eq!(app.mode, Mode::ItemAssignPicker);
     assert!(
@@ -6582,11 +6610,11 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
     app.refresh(&store).expect("refresh app");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_input("wor".to_string());
 
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("first enter should arm the create confirm");
     assert_eq!(
         app.mode,
@@ -6597,7 +6625,7 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
         !app.categories.iter().any(|category| category.name == "wor"),
         "no category should exist after the arming enter"
     );
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("second enter should create category and assign");
 
     let created = app
@@ -6649,7 +6677,7 @@ fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() 
     app.refresh(&store).expect("refresh app");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_input("wrk".to_string());
     assert!(
@@ -6670,7 +6698,7 @@ fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() 
     );
 
     app.set_input("Work".to_string());
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should resolve exact match and close");
     let updated = store.get_item(item.id).expect("load updated item");
     assert!(updated.assignments.contains_key(&work.id));
@@ -6678,13 +6706,13 @@ fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() 
 
     app.set_item_selection_by_id(second_item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker again");
     app.search_mode = SearchMode::Fuzzy;
     app.set_input("NewTag".to_string());
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("first enter should arm the create confirm");
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("second enter should create a non-matching category and close");
     assert!(
         app.categories
@@ -6723,7 +6751,7 @@ fn normal_mode_u_in_preview_provenance_is_ignored() {
     app.normal_focus = super::NormalFocus::Preview;
     app.preview_mode = super::PreviewMode::Provenance;
 
-    app.handle_normal_key(KeyCode::Char('u'), &aglet)
+    app.handle_normal_key(KeyCode::Char('u').into(), &aglet)
         .expect("u should be ignored");
     assert_eq!(app.mode, Mode::Normal);
 
@@ -6762,15 +6790,15 @@ fn inspect_unassign_picker_jk_tracks_assignment_rows() {
     assert_eq!(app.mode, Mode::InspectUnassign);
     assert_eq!(app.inspect_assignment_index, 0);
 
-    app.handle_inspect_unassign_key(KeyCode::Char('j'), &aglet)
+    app.handle_inspect_unassign_key(KeyCode::Char('j').into(), &aglet)
         .expect("j moves to next assignment");
     assert_eq!(app.inspect_assignment_index, 1);
 
-    app.handle_inspect_unassign_key(KeyCode::Char('j'), &aglet)
+    app.handle_inspect_unassign_key(KeyCode::Char('j').into(), &aglet)
         .expect("j wraps around");
     assert_eq!(app.inspect_assignment_index, 0);
 
-    app.handle_inspect_unassign_key(KeyCode::Char('k'), &aglet)
+    app.handle_inspect_unassign_key(KeyCode::Char('k').into(), &aglet)
         .expect("k wraps backwards");
     assert_eq!(app.inspect_assignment_index, 1);
 
@@ -6803,7 +6831,7 @@ fn inspect_unassign_removes_auto_match_assignment_with_veto() {
     app.mode = Mode::InspectUnassign;
     app.inspect_assignment_index = 0;
 
-    app.handle_inspect_unassign_key(KeyCode::Enter, &aglet)
+    app.handle_inspect_unassign_key(KeyCode::Enter.into(), &aglet)
         .expect("inspect unassign enter should remove the assignment");
 
     let after = store
@@ -6871,7 +6899,7 @@ fn normal_mode_f_cycles_numeric_column_format() {
     app.column_index = 1; // Cost column (item at 0)
 
     // Default is 2dp → press f → 2dp+thousands
-    app.handle_normal_key(KeyCode::Char('f'), &aglet)
+    app.handle_normal_key(KeyCode::Char('f').into(), &aglet)
         .expect("press f");
     let cat = store.get_category(cost.id).expect("get cat");
     let fmt = cat.numeric_format.as_ref().unwrap();
@@ -6879,7 +6907,7 @@ fn normal_mode_f_cycles_numeric_column_format() {
     assert!(fmt.use_thousands_separator);
 
     // Press f again → currency ($+2dp+thousands)
-    app.handle_normal_key(KeyCode::Char('f'), &aglet)
+    app.handle_normal_key(KeyCode::Char('f').into(), &aglet)
         .expect("press f again");
     let cat = store.get_category(cost.id).expect("get cat");
     let fmt = cat.numeric_format.as_ref().unwrap();
@@ -6965,7 +6993,7 @@ fn normal_mode_f_format_cycle_does_not_reclassify_items() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1; // Cost column (item at 0)
 
-    app.handle_normal_key(KeyCode::Char('f'), &aglet)
+    app.handle_normal_key(KeyCode::Char('f').into(), &aglet)
         .expect("press f");
     let after_first = store
         .get_assignments_for_item(item.id)
@@ -6979,7 +7007,7 @@ fn normal_mode_f_format_cycle_does_not_reclassify_items() {
         "format-only change should not assign Complete"
     );
 
-    app.handle_normal_key(KeyCode::Char('f'), &aglet)
+    app.handle_normal_key(KeyCode::Char('f').into(), &aglet)
         .expect("press f again");
     let after_second = store
         .get_assignments_for_item(item.id)
@@ -7066,21 +7094,21 @@ fn normal_mode_tab_and_backtab_switch_sections_without_wrapping() {
     app.mode = Mode::Normal;
     assert_eq!(app.slot_index, 0);
 
-    app.handle_normal_key(KeyCode::Tab, &aglet)
+    app.handle_normal_key(KeyCode::Tab.into(), &aglet)
         .expect("tab moves to next section");
     assert_eq!(app.slot_index, 1);
-    app.handle_normal_key(KeyCode::Tab, &aglet)
+    app.handle_normal_key(KeyCode::Tab.into(), &aglet)
         .expect("tab clamps at last section");
     assert_eq!(app.slot_index, 1);
 
-    app.handle_normal_key(KeyCode::BackTab, &aglet)
+    app.handle_normal_key(KeyCode::BackTab.into(), &aglet)
         .expect("backtab moves to previous section");
     assert_eq!(app.slot_index, 0);
-    app.handle_normal_key(KeyCode::BackTab, &aglet)
+    app.handle_normal_key(KeyCode::BackTab.into(), &aglet)
         .expect("backtab clamps at first section");
     assert_eq!(app.slot_index, 0);
 
-    app.handle_normal_key(KeyCode::Char('J'), &aglet)
+    app.handle_normal_key(KeyCode::Char('J').into(), &aglet)
         .expect("J jumps to next section");
     assert_eq!(app.slot_index, 1);
     let alpha_assignments = store
@@ -7095,14 +7123,14 @@ fn normal_mode_tab_and_backtab_switch_sections_without_wrapping() {
         "J should not assign the next section category"
     );
 
-    app.handle_normal_key(KeyCode::Char('J'), &aglet)
+    app.handle_normal_key(KeyCode::Char('J').into(), &aglet)
         .expect("J clamps at last section");
     assert_eq!(app.slot_index, 1);
 
-    app.handle_normal_key(KeyCode::Char('K'), &aglet)
+    app.handle_normal_key(KeyCode::Char('K').into(), &aglet)
         .expect("K jumps to previous section");
     assert_eq!(app.slot_index, 0);
-    app.handle_normal_key(KeyCode::Char('K'), &aglet)
+    app.handle_normal_key(KeyCode::Char('K').into(), &aglet)
         .expect("K clamps at first section");
     assert_eq!(app.slot_index, 0);
 
@@ -7126,20 +7154,20 @@ fn normal_mode_p_and_i_manage_preview_modes() {
     app.mode = Mode::Normal;
     assert!(!app.show_preview);
 
-    app.handle_normal_key(KeyCode::Char('p'), &aglet)
+    app.handle_normal_key(KeyCode::Char('p').into(), &aglet)
         .expect("open preview");
     assert!(app.show_preview);
     assert_eq!(app.preview_mode, super::PreviewMode::Summary);
 
-    app.handle_normal_key(KeyCode::Char('i'), &aglet)
+    app.handle_normal_key(KeyCode::Char('i').into(), &aglet)
         .expect("switch to provenance");
     assert_eq!(app.preview_mode, super::PreviewMode::Provenance);
 
-    app.handle_normal_key(KeyCode::Char('i'), &aglet)
+    app.handle_normal_key(KeyCode::Char('i').into(), &aglet)
         .expect("switch to summary");
     assert_eq!(app.preview_mode, super::PreviewMode::Summary);
 
-    app.handle_normal_key(KeyCode::Char('p'), &aglet)
+    app.handle_normal_key(KeyCode::Char('p').into(), &aglet)
         .expect("close preview");
     assert!(!app.show_preview);
 
@@ -7190,7 +7218,7 @@ fn normal_mode_z_toggles_view_card_display_mode() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_normal_key(KeyCode::Char('z'), &aglet)
+    app.handle_normal_key(KeyCode::Char('z').into(), &aglet)
         .expect("toggle to multi-line");
     let saved = store.get_view(view.id).expect("load view after z");
     assert_eq!(saved.board_display_mode, BoardDisplayMode::MultiLine);
@@ -7200,7 +7228,7 @@ fn normal_mode_z_toggles_view_card_display_mode() {
         app.status
     );
 
-    app.handle_normal_key(KeyCode::Char('z'), &aglet)
+    app.handle_normal_key(KeyCode::Char('z').into(), &aglet)
         .expect("toggle back to single-line");
     let saved = store.get_view(view.id).expect("load view after second z");
     assert_eq!(saved.board_display_mode, BoardDisplayMode::SingleLine);
@@ -7252,7 +7280,7 @@ fn normal_mode_m_toggles_view_section_flow() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_normal_key(KeyCode::Char('m'), &aglet)
+    app.handle_normal_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle to horizontal");
     let saved = store.get_view(view.id).expect("load view after m");
     assert_eq!(saved.section_flow, SectionFlow::Horizontal);
@@ -7262,7 +7290,7 @@ fn normal_mode_m_toggles_view_section_flow() {
         app.status
     );
 
-    app.handle_normal_key(KeyCode::Char('m'), &aglet)
+    app.handle_normal_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle back to vertical");
     let saved = store.get_view(view.id).expect("load view after second m");
     assert_eq!(saved.section_flow, SectionFlow::Vertical);
@@ -7325,25 +7353,28 @@ fn global_settings_auto_refresh_row_cycles_interval_with_keys() {
 
     assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::Off);
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), &aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), &aglet)
         .expect("gs should open global settings");
     assert_eq!(app.mode, Mode::GlobalSettings);
 
-    app.handle_key(KeyCode::Enter, &aglet).expect("enter -> 1s");
+    app.handle_key(KeyCode::Enter.into(), &aglet)
+        .expect("enter -> 1s");
     assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
     assert_eq!(app.auto_refresh_mode_label(), "1s");
 
-    app.handle_key(KeyCode::Right, &aglet).expect("right -> 5s");
+    app.handle_key(KeyCode::Right.into(), &aglet)
+        .expect("right -> 5s");
     assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
     assert_eq!(app.auto_refresh_mode_label(), "5s");
 
-    app.handle_key(KeyCode::Left, &aglet).expect("left -> 1s");
+    app.handle_key(KeyCode::Left.into(), &aglet)
+        .expect("left -> 1s");
     assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
     assert_eq!(app.auto_refresh_mode_label(), "1s");
 
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space -> 5s");
     assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::FiveSeconds);
     assert_eq!(app.auto_refresh_mode_label(), "5s");
@@ -7360,9 +7391,9 @@ fn global_settings_section_borders_row_cycles_mode_with_keys() {
 
     assert_eq!(app.section_border_mode, SectionBorderMode::Full);
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), &aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), &aglet)
         .expect("gs should open global settings");
     assert_eq!(app.mode, Mode::GlobalSettings);
 
@@ -7372,22 +7403,22 @@ fn global_settings_section_borders_row_cycles_mode_with_keys() {
         GlobalSettingsRow::SectionBorders
     );
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("enter -> compact");
     assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
     assert_eq!(app.section_border_mode_label(), "compact");
 
-    app.handle_key(KeyCode::Right, &aglet)
+    app.handle_key(KeyCode::Right.into(), &aglet)
         .expect("right -> full");
     assert_eq!(app.section_border_mode, SectionBorderMode::Full);
     assert_eq!(app.section_border_mode_label(), "full");
 
-    app.handle_key(KeyCode::Left, &aglet)
+    app.handle_key(KeyCode::Left.into(), &aglet)
         .expect("left -> compact");
     assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
     assert_eq!(app.section_border_mode_label(), "compact");
 
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space -> full");
     assert_eq!(app.section_border_mode, SectionBorderMode::Full);
     assert_eq!(app.section_border_mode_label(), "full");
@@ -7409,11 +7440,11 @@ fn auto_refresh_interval_persists_across_app_instances_for_same_db() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), &aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), &aglet)
         .expect("gs should open global settings");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should persist 1s interval");
     assert_eq!(app.auto_refresh_interval, AutoRefreshInterval::OneSecond);
 
@@ -7449,12 +7480,12 @@ fn section_border_mode_persists_across_app_instances_for_same_db() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), &aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), &aglet)
         .expect("gs should open global settings");
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::SectionBorders);
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should persist compact mode");
     assert_eq!(app.section_border_mode, SectionBorderMode::Compact);
 
@@ -7509,7 +7540,7 @@ fn global_settings_search_mode_row_cycles_and_persists() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::SearchMode);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should persist fuzzy mode");
     assert_eq!(app.search_mode, SearchMode::Fuzzy);
     assert_eq!(
@@ -7519,7 +7550,7 @@ fn global_settings_search_mode_row_cycles_and_persists() {
         Some("fuzzy".to_string())
     );
 
-    app.handle_key(KeyCode::Left, &aglet)
+    app.handle_key(KeyCode::Left.into(), &aglet)
         .expect("left should persist substring mode");
     assert_eq!(app.search_mode, SearchMode::Substring);
     assert_eq!(
@@ -7529,7 +7560,7 @@ fn global_settings_search_mode_row_cycles_and_persists() {
         Some("substring".to_string())
     );
 
-    app.handle_key(KeyCode::Right, &aglet)
+    app.handle_key(KeyCode::Right.into(), &aglet)
         .expect("right should persist fuzzy mode");
     let mut reopened_app = App::default();
     reopened_app
@@ -8010,7 +8041,8 @@ fn help_panel_scrolls_to_last_section_on_small_terminals() {
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
-    app.handle_key(KeyCode::End, &aglet).expect("End scrolls");
+    app.handle_key(KeyCode::End.into(), &aglet)
+        .expect("End scrolls");
     terminal
         .draw(|frame| app.draw(frame))
         .expect("render scrolled");
@@ -8119,7 +8151,7 @@ fn view_picker_status_and_hint_row_agree_on_keys() {
     let aglet = Aglet::new(&store, &classifier);
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('v'), &aglet)
+    app.handle_normal_key(KeyCode::Char('v').into(), &aglet)
         .expect("open view picker");
     assert_eq!(app.mode, Mode::ViewPicker);
 
@@ -8315,11 +8347,11 @@ fn question_mark_opens_help_panel_from_normal_mode() {
     app.set_view_selection_by_name("TestView");
     app.refresh(&store).expect("refresh TestView");
 
-    app.handle_normal_key(KeyCode::Char('?'), &aglet)
+    app.handle_normal_key(KeyCode::Char('?').into(), &aglet)
         .expect("open help panel");
     assert_eq!(app.mode, Mode::HelpPanel);
 
-    app.handle_key(KeyCode::Esc, &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("close help panel");
     assert_eq!(app.mode, Mode::Normal);
 
@@ -8353,7 +8385,7 @@ fn g_question_opens_suggestion_review_with_pending() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
 
-    app.handle_normal_key(KeyCode::Char('C'), &aglet)
+    app.handle_normal_key(KeyCode::Char('C').into(), &aglet)
         .expect("C should open suggestion review");
 
     assert_eq!(app.mode, Mode::SuggestionReview);
@@ -8374,7 +8406,7 @@ fn shift_c_with_no_pending_stays_normal() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
 
-    app.handle_normal_key(KeyCode::Char('C'), &aglet)
+    app.handle_normal_key(KeyCode::Char('C').into(), &aglet)
         .expect("C should open suggestion review");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -8408,12 +8440,12 @@ fn suggestion_review_confirm_accepts_and_advances() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
 
-    app.handle_normal_key(KeyCode::Char('C'), &aglet)
+    app.handle_normal_key(KeyCode::Char('C').into(), &aglet)
         .expect("C should open suggestion review");
     assert_eq!(app.mode, Mode::SuggestionReview);
 
     // Confirm (Enter) — all suggestions default to accepted
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm suggestion review");
 
     // Should return to Normal since no more pending items
@@ -8452,18 +8484,18 @@ fn suggestion_review_space_toggles_and_esc_cancels() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
 
-    app.handle_normal_key(KeyCode::Char('C'), &aglet)
+    app.handle_normal_key(KeyCode::Char('C').into(), &aglet)
         .expect("C should open suggestion review");
 
     // Toggle first suggestion off
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle suggestion");
     assert!(
         !app.classification.suggestion_review.as_ref().unwrap().items[0].suggestions[0].accepted
     );
 
     // Esc cancels without applying
-    app.handle_key(KeyCode::Esc, &aglet).expect("cancel");
+    app.handle_key(KeyCode::Esc.into(), &aglet).expect("cancel");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.classification.suggestion_review.is_none());
     // Suggestions should still be pending (not rejected)
@@ -8482,16 +8514,16 @@ fn global_settings_literal_classification_row_applies_selection() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), &aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), &aglet)
         .expect("gs should open global settings");
 
     while app.global_settings_selected_kind() != GlobalSettingsRow::LiteralClassificationMode {
-        app.handle_key(KeyCode::Char('j'), &aglet)
+        app.handle_key(KeyCode::Char('j').into(), &aglet)
             .expect("move to classification mode row");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("apply classification mode");
 
     let reloaded = store.get_classification_config().expect("reload config");
@@ -8526,7 +8558,7 @@ fn global_settings_ollama_text_rows_persist_updates() {
     open_global_settings_for_test(&mut app, &aglet);
 
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::OllamaBaseUrl);
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ollama base url input");
     assert_eq!(app.mode, Mode::InputPanel);
     assert_eq!(
@@ -8534,25 +8566,25 @@ fn global_settings_ollama_text_rows_persist_updates() {
         Some(NameInputContext::OllamaBaseUrl)
     );
     for _ in 0.."old".len() {
-        app.handle_key(KeyCode::Backspace, &aglet)
+        app.handle_key(KeyCode::Backspace.into(), &aglet)
             .expect("clear old base url");
     }
     for ch in "http://localhost:11434/v1".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type new base url");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save ollama base url");
     assert_eq!(app.mode, Mode::GlobalSettings);
     assert!(app.status.contains("Ollama base URL set to"));
 
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::OllamaModel);
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ollama model input");
     if app.settings.ollama_model_picker.is_some() {
         // Ollama is running — picker opened. Dismiss it and verify we can
         // fall back to text input for direct model entry.
-        app.handle_key(KeyCode::Esc, &aglet)
+        app.handle_key(KeyCode::Esc.into(), &aglet)
             .expect("dismiss ollama model picker");
         assert!(app.settings.ollama_model_picker.is_none());
         // Now use the text input fallback path directly.
@@ -8561,14 +8593,14 @@ fn global_settings_ollama_text_rows_persist_updates() {
     assert_eq!(app.mode, Mode::InputPanel);
     assert_eq!(app.name_input_context, Some(NameInputContext::OllamaModel));
     for _ in 0.."oldmodel".len() {
-        app.handle_key(KeyCode::Backspace, &aglet)
+        app.handle_key(KeyCode::Backspace.into(), &aglet)
             .expect("clear old model");
     }
     for ch in "mistral".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type new model");
     }
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save ollama model");
     assert_eq!(app.mode, Mode::GlobalSettings);
     assert!(app.status.contains("Ollama model set to 'mistral'"));
@@ -8599,9 +8631,9 @@ fn ollama_model_picker_selects_and_persists_model() {
     });
 
     // Navigate down to "mistral" (index 2).
-    app.handle_key(KeyCode::Char('j'), &aglet)
+    app.handle_key(KeyCode::Char('j').into(), &aglet)
         .expect("picker down");
-    app.handle_key(KeyCode::Char('j'), &aglet)
+    app.handle_key(KeyCode::Char('j').into(), &aglet)
         .expect("picker down");
     assert_eq!(
         app.settings
@@ -8612,7 +8644,7 @@ fn ollama_model_picker_selects_and_persists_model() {
     );
 
     // Select it.
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("picker select");
     assert!(app.settings.ollama_model_picker.is_none());
     assert!(app.status.contains("Ollama model set to 'mistral'"));
@@ -8646,7 +8678,8 @@ fn ollama_model_picker_esc_cancels() {
         "picker overlay should be visible: {rendered}"
     );
 
-    app.handle_key(KeyCode::Esc, &aglet).expect("picker esc");
+    app.handle_key(KeyCode::Esc.into(), &aglet)
+        .expect("picker esc");
     assert!(app.settings.ollama_model_picker.is_none());
     assert!(app.status.contains("cancelled"));
 }
@@ -8683,7 +8716,7 @@ fn suggestion_review_render_shows_provider_model_confidence_and_full_reasoning()
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('C'), &aglet)
+    app.handle_normal_key(KeyCode::Char('C').into(), &aglet)
         .expect("open suggestion review");
     assert_eq!(app.mode, Mode::SuggestionReview);
 
@@ -8717,7 +8750,7 @@ fn category_manager_render_shows_global_settings_block() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     let backend = TestBackend::new(160, 40);
@@ -8770,7 +8803,7 @@ fn category_manager_details_note_workflow_roles_are_configured_in_global_setting
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     app.set_category_selection_by_id(ready.id);
@@ -8813,10 +8846,10 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
     assert_eq!(
         app.category_manager_focus(),
@@ -8827,7 +8860,7 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         Some(CategoryManagerDetailsFocus::Exclusive)
     );
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
     assert_eq!(
         app.category_manager_focus(),
@@ -8838,7 +8871,7 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         Some(CategoryManagerDetailsFocus::AlsoMatch)
     );
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
     assert_eq!(
         app.category_manager_focus(),
@@ -8849,7 +8882,7 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         Some(CategoryManagerDetailsFocus::Conditions)
     );
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to actions");
     assert_eq!(
         app.category_manager_focus(),
@@ -8860,7 +8893,7 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         Some(CategoryManagerDetailsFocus::Actions)
     );
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to note");
     assert_eq!(
         app.category_manager_focus(),
@@ -8871,7 +8904,7 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
         Some(CategoryManagerDetailsFocus::Note)
     );
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab exits details to filter");
     assert_eq!(
         app.category_manager_focus(),
@@ -8879,14 +8912,14 @@ fn category_manager_tab_cycles_details_sections_before_returning_to_filter() {
     );
 
     // Continue cycling: Filter → Tree → Details
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to tree");
     assert_eq!(
         app.category_manager_focus(),
         Some(CategoryManagerFocus::Tree)
     );
 
-    app.handle_category_manager_key(KeyCode::BackTab, &aglet)
+    app.handle_category_manager_key(KeyCode::BackTab.into(), &aglet)
         .expect("shift-tab back to filter");
     assert_eq!(
         app.category_manager_focus(),
@@ -8919,7 +8952,7 @@ fn category_manager_conditions_focus_shows_rule_count() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     // Navigate to "Escalated" in the category list (past reserved categories)
@@ -8928,7 +8961,7 @@ fn category_manager_conditions_focus_shows_rule_count() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("navigate down");
     }
 
@@ -8937,12 +8970,12 @@ fn category_manager_conditions_focus_shows_rule_count() {
     assert_eq!(row.condition_count, 1);
 
     // Navigate to conditions focus
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
     // Tab through sections: Exclusive -> AlsoMatch -> Conditions
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -8963,7 +8996,7 @@ fn category_manager_condition_edit_cancel_discards_draft() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -8971,19 +9004,19 @@ fn category_manager_condition_edit_cancel_discards_draft() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('a'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('a').into(), &aglet)
         .expect("add condition");
 
     loop {
@@ -8994,13 +9027,13 @@ fn category_manager_condition_edit_cancel_discards_draft() {
                 break;
             }
         }
-        app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
             .expect("navigate picker");
     }
-    app.handle_category_manager_key(KeyCode::Char(' '), &aglet)
+    app.handle_category_manager_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle urgent as AND");
 
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel picker");
 
     let cat = store.get_category(escalated.id).expect("load");
@@ -9051,7 +9084,7 @@ fn category_manager_condition_edit_focuses_first_selected_criterion_when_editing
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9059,19 +9092,19 @@ fn category_manager_condition_edit_focuses_first_selected_criterion_when_editing
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("edit condition");
 
     let edit = app
@@ -9101,7 +9134,7 @@ fn category_manager_condition_edit_blocks_self_referential_criteria() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9109,19 +9142,19 @@ fn category_manager_condition_edit_blocks_self_referential_criteria() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('a'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('a').into(), &aglet)
         .expect("add condition");
 
     loop {
@@ -9132,11 +9165,11 @@ fn category_manager_condition_edit_blocks_self_referential_criteria() {
                 break;
             }
         }
-        app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
             .expect("navigate picker");
     }
 
-    app.handle_category_manager_key(KeyCode::Char(' '), &aglet)
+    app.handle_category_manager_key(KeyCode::Char(' ').into(), &aglet)
         .expect("attempt self reference");
 
     let edit = app
@@ -9177,7 +9210,7 @@ fn category_manager_condition_edit_delete_condition() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     // Navigate to Escalated
@@ -9186,22 +9219,22 @@ fn category_manager_condition_edit_delete_condition() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
     // Open conditions editor
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open");
 
     // Delete the condition
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("delete condition");
 
     // Verify it was removed
@@ -9220,7 +9253,7 @@ fn category_manager_date_condition_match_cycle_includes_range() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9228,26 +9261,26 @@ fn category_manager_date_condition_match_cycle_includes_range() {
         if row.name == "Overdue" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
 
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus match");
 
     for _ in 0..4 {
-        app.handle_category_manager_key(KeyCode::Char('l'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('l').into(), &aglet)
             .expect("cycle match");
     }
 
@@ -9274,7 +9307,7 @@ fn category_manager_date_condition_range_fields_accept_direct_typing() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9282,29 +9315,29 @@ fn category_manager_date_condition_range_fields_accept_direct_typing() {
         if row.name == "This Week" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus match");
 
     for _ in 0..4 {
-        app.handle_category_manager_key(KeyCode::Char('l'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('l').into(), &aglet)
             .expect("cycle match to range");
     }
 
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus from");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.from_input.clear();
@@ -9317,7 +9350,7 @@ fn category_manager_date_condition_range_fields_accept_direct_typing() {
         KeyCode::Char('1'),
         KeyCode::Char('0'),
     ] {
-        app.handle_category_manager_key(key, &aglet)
+        app.handle_category_manager_key(key.into(), &aglet)
             .expect("type from field");
     }
     {
@@ -9328,7 +9361,7 @@ fn category_manager_date_condition_range_fields_accept_direct_typing() {
         assert_eq!(edit.draft_date.from_input.text(), "may 10");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("focus through");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.through_input.clear();
@@ -9341,7 +9374,7 @@ fn category_manager_date_condition_range_fields_accept_direct_typing() {
         KeyCode::Char('3'),
         KeyCode::Char('0'),
     ] {
-        app.handle_category_manager_key(key, &aglet)
+        app.handle_category_manager_key(key.into(), &aglet)
             .expect("type through field");
     }
     {
@@ -9364,7 +9397,7 @@ fn category_manager_date_condition_value_field_accepts_space_and_hjkl_text() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9372,23 +9405,23 @@ fn category_manager_date_condition_value_field_accepts_space_and_hjkl_text() {
         if row.name == "Morning Rush" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus value");
 
     if let Some(edit) = app.category_manager_condition_edit_mut() {
@@ -9408,7 +9441,7 @@ fn category_manager_date_condition_value_field_accepts_space_and_hjkl_text() {
         KeyCode::Char('k'),
         KeyCode::Char('l'),
     ] {
-        app.handle_category_manager_key(key, &aglet)
+        app.handle_category_manager_key(key.into(), &aglet)
             .expect("type into value field");
     }
 
@@ -9430,28 +9463,28 @@ fn category_manager_date_condition_blur_normalizes_typed_value() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus value");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.value_input.clear();
     }
     for key in "Nov 12, 1990".chars().map(KeyCode::Char) {
-        app.handle_category_manager_key(key, &aglet)
+        app.handle_category_manager_key(key.into(), &aglet)
             .expect("type value");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("blur value");
 
     let edit = app
@@ -9472,19 +9505,19 @@ fn category_manager_date_condition_impossible_range_is_flagged_and_blocked() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
     for _ in 0..4 {
-        app.handle_category_manager_key(KeyCode::Char('l'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('l').into(), &aglet)
             .expect("cycle to range");
     }
     if let Some(edit) = app.category_manager_condition_edit_mut() {
@@ -9493,7 +9526,7 @@ fn category_manager_date_condition_impossible_range_is_flagged_and_blocked() {
         edit.draft_date.field_focus = DateConditionField::Through;
     }
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt save");
 
     let cat = store.get_category(category.id).expect("reload category");
@@ -9519,18 +9552,18 @@ fn category_manager_date_condition_render_shows_typing_and_live_feedback() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus value");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.value_input.set("Nov 12, 1990".to_string());
@@ -9561,15 +9594,15 @@ fn category_manager_condition_list_can_toggle_any_all_mode() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
 
-    app.handle_category_manager_key(KeyCode::Char('m'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle condition mode");
 
     let saved = store.get_category(category.id).expect("reload category");
@@ -9599,28 +9632,28 @@ fn category_manager_date_condition_today_after_saves_as_same_day_range() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
     for _ in 0..5 {
-        app.handle_category_manager_key(KeyCode::Char('l'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('l').into(), &aglet)
             .expect("cycle to today after");
     }
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus today-after value");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.value_input.set("1pm".to_string());
     }
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save condition");
 
     let saved = store.get_category(category.id).expect("load category");
@@ -9653,28 +9686,28 @@ fn category_manager_date_condition_today_before_saves_as_same_day_range() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
     for _ in 0..6 {
-        app.handle_category_manager_key(KeyCode::Char('l'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('l').into(), &aglet)
             .expect("cycle to today before");
     }
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus today-before value");
     if let Some(edit) = app.category_manager_condition_edit_mut() {
         edit.draft_date.value_input.set("11:30am".to_string());
     }
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save condition");
 
     let saved = store.get_category(category.id).expect("load category");
@@ -9708,19 +9741,19 @@ fn category_manager_date_condition_this_afternoon_saves_and_renders_as_shortcut(
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Conditions);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open condition list");
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("open date editor");
-    app.handle_category_manager_key(KeyCode::Down, &aglet)
+    app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
         .expect("focus match");
     for _ in 0..7 {
-        app.handle_category_manager_key(KeyCode::Char('l'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('l').into(), &aglet)
             .expect("cycle to this afternoon");
     }
 
@@ -9729,7 +9762,7 @@ fn category_manager_date_condition_this_afternoon_saves_and_renders_as_shortcut(
         .expect("condition editor open");
     assert_eq!(edit.draft_date.kind, DateConditionDraftKind::ThisAfternoon);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save condition");
 
     let saved = store.get_category(category.id).expect("load category");
@@ -9768,7 +9801,7 @@ fn category_manager_action_edit_add_and_save_assign_action() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9776,29 +9809,29 @@ fn category_manager_action_edit_add_and_save_assign_action() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to actions");
     assert_eq!(
         app.category_manager_details_focus(),
         Some(CategoryManagerDetailsFocus::Actions)
     );
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open action list");
     assert!(app.category_manager_action_edit().is_some());
     assert!(!app.category_manager_action_edit().unwrap().picker_open);
 
-    app.handle_category_manager_key(KeyCode::Char('a'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('a').into(), &aglet)
         .expect("add action");
     assert!(app.category_manager_action_edit().unwrap().picker_open);
 
@@ -9810,12 +9843,12 @@ fn category_manager_action_edit_add_and_save_assign_action() {
                 break;
             }
         }
-        app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+        app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
             .expect("navigate picker");
     }
-    app.handle_category_manager_key(KeyCode::Char(' '), &aglet)
+    app.handle_category_manager_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle target");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save action");
 
     let cat = store.get_category(escalated.id).expect("load escalated");
@@ -9849,7 +9882,7 @@ fn category_manager_action_edit_can_switch_existing_action_kind() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9857,27 +9890,27 @@ fn category_manager_action_edit_can_switch_existing_action_kind() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to actions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open action list");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("edit existing action");
 
     assert!(app.category_manager_action_edit().unwrap().picker_open);
-    app.handle_category_manager_key(KeyCode::Char('2'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('2').into(), &aglet)
         .expect("switch to remove");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save action");
 
     let cat = store.get_category(escalated.id).expect("load escalated");
@@ -9906,7 +9939,7 @@ fn category_manager_action_edit_delete_action() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     loop {
@@ -9914,21 +9947,21 @@ fn category_manager_action_edit_delete_action() {
         if row.name == "Escalated" {
             break;
         }
-        app.handle_category_manager_key(KeyCode::Down, &aglet)
+        app.handle_category_manager_key(KeyCode::Down.into(), &aglet)
             .expect("down");
     }
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to details");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to also-match");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to conditions");
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to actions");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("open action list");
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("delete action");
 
     let cat = store.get_category(escalated.id).expect("load escalated");
@@ -10024,18 +10057,18 @@ fn normal_mode_space_toggles_selection_and_esc_clears_before_filter() {
     app.mode = Mode::Normal;
     let focused_item_id = app.selected_item_id().expect("focused item");
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space selects focused item");
     assert_eq!(app.selected_count(), 1);
     assert!(app.is_item_selected(focused_item_id));
 
     app.section_filters = vec![Some("first".to_string())];
-    app.handle_normal_key(KeyCode::Esc, &aglet)
+    app.handle_normal_key(KeyCode::Esc.into(), &aglet)
         .expect("esc clears selection first");
     assert_eq!(app.selected_count(), 0);
     assert_eq!(app.section_filters, vec![Some("first".to_string())]);
 
-    app.handle_normal_key(KeyCode::Esc, &aglet)
+    app.handle_normal_key(KeyCode::Esc.into(), &aglet)
         .expect("second esc clears filter");
     assert_eq!(app.section_filters, vec![None]);
 }
@@ -10068,7 +10101,7 @@ fn refresh_prunes_selected_items_that_are_no_longer_visible() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select item");
     assert_eq!(app.selected_count(), 1);
 
@@ -10107,7 +10140,7 @@ fn cycle_view_clears_transient_selection() {
     app.refresh(&store).expect("refresh A");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select item");
     assert_eq!(app.selected_count(), 1);
 
@@ -10148,9 +10181,9 @@ fn normal_mode_header_and_footer_reflect_active_selection() {
         .selected_item()
         .map(|item| item.text.clone())
         .expect("selected item");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select item");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("move focus to next item");
 
     let backend = TestBackend::new(220, 18);
@@ -10212,13 +10245,13 @@ fn normal_mode_a_with_selection_opens_batch_assign_picker() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
 
     assert_eq!(app.mode, Mode::ItemAssignPicker);
@@ -10262,15 +10295,15 @@ fn batch_assign_picker_space_assigns_existing_category_to_selected_items() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle category across selected items");
 
     let first_updated = store.get_item(first.id).expect("reload first");
@@ -10323,15 +10356,15 @@ fn batch_assign_picker_enter_assigns_existing_category_and_closes() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should apply and close");
 
     let first_updated = store.get_item(first.id).expect("reload first");
@@ -10377,20 +10410,20 @@ fn batch_assign_input_creates_category_and_assigns_selected_items() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char('n'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('n').into(), &aglet)
         .expect("open typed category entry");
     app.set_input("Sprint".to_string());
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("first enter arms the create confirm");
-    app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
         .expect("second enter creates and assigns category");
 
     let sprint = app
@@ -10411,7 +10444,7 @@ fn batch_assign_input_creates_category_and_assigns_selected_items() {
         app.status
     );
 
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("close assign picker");
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.selected_count(), 0);
@@ -10453,13 +10486,13 @@ fn batch_assign_picker_renders_mixed_checkbox_state_for_selected_items() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
 
     let backend = TestBackend::new(100, 20);
@@ -10587,15 +10620,15 @@ fn item_assign_picker_backtab_cycles_between_panes() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
 
-    app.handle_item_assign_category_key(KeyCode::BackTab, &aglet)
+    app.handle_item_assign_category_key(KeyCode::BackTab.into(), &aglet)
         .expect("backtab should move to view pane");
     assert_eq!(app.item_assign_pane, super::ItemAssignPane::ViewSection);
 
-    app.handle_item_assign_category_key(KeyCode::BackTab, &aglet)
+    app.handle_item_assign_category_key(KeyCode::BackTab.into(), &aglet)
         .expect("backtab should move back to category pane");
     assert_eq!(app.item_assign_pane, super::ItemAssignPane::Categories);
 }
@@ -10617,7 +10650,7 @@ fn assign_picker_hides_reserved_categories_and_selects_first_visible_row() {
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
 
     assert_eq!(app.mode, Mode::ItemAssignPicker);
@@ -10674,9 +10707,9 @@ fn assign_picker_space_then_enter_keeps_single_item_assignment() {
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle assignment with space");
     assert_eq!(app.mode, Mode::ItemAssignPicker);
 
@@ -10686,7 +10719,7 @@ fn assign_picker_space_then_enter_keeps_single_item_assignment() {
         "space should assign the category immediately"
     );
 
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should close without undoing prior toggle");
 
     let after_enter = store.get_item(item.id).expect("reload after enter");
@@ -10735,10 +10768,10 @@ fn item_assign_picker_unassign_reprocesses_live_profile_assignments() {
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_item_assign_category_selection_by_id(escalated.id);
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("unassign escalated via picker");
 
     let after = store.get_item(item.id).expect("reload after unassign");
@@ -10774,7 +10807,7 @@ fn item_assign_picker_shows_veto_marker_and_space_clears_it() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_item_assign_category_selection_by_id(meetings.id);
 
@@ -10788,7 +10821,7 @@ fn item_assign_picker_shows_veto_marker_and_space_clears_it() {
     );
 
     // Space on a vetoed row is an explicit yes: clears the veto and assigns.
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space assigns");
     let after = store.get_item(item.id).expect("reload");
     assert!(after.assignments.contains_key(&meetings.id));
@@ -10822,7 +10855,7 @@ fn item_assign_picker_unassigns_rule_derived_row_with_veto() {
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.set_item_assign_category_selection_by_id(tui.id);
 
@@ -10835,7 +10868,7 @@ fn item_assign_picker_unassigns_rule_derived_row_with_veto() {
         "assign picker should show inline provenance for rule-derived rows: {rendered}"
     );
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space should unassign the rule-derived assignment");
 
     let after = store.get_item(item.id).expect("reload after toggle");
@@ -10907,7 +10940,7 @@ fn item_assign_view_pane_enter_applies_and_closes() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
     app.set_item_selection_by_id(item.id);
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
     app.item_assign_pane = ItemAssignPane::ViewSection;
     app.item_assign_view_row_index = app
@@ -10921,7 +10954,7 @@ fn item_assign_view_pane_enter_applies_and_closes() {
         })
         .expect("ready section row should exist");
 
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should move item and close");
 
     let updated = store.get_item(item.id).expect("reload item");
@@ -11139,13 +11172,13 @@ fn item_assign_input_rejects_reserved_category_names() {
     let initial_category_count = app.categories.len();
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
 
     for reserved_name in ["Done", "When", "Entry"] {
         app.mode = Mode::ItemAssignInput;
         app.input.set(reserved_name.to_string());
-        app.handle_item_assign_category_input_key(KeyCode::Enter, &aglet)
+        app.handle_item_assign_category_input_key(KeyCode::Enter.into(), &aglet)
             .expect("submit reserved category");
 
         assert_eq!(
@@ -11211,15 +11244,15 @@ fn batch_assign_picker_esc_preserves_selection_without_changes() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
-    app.handle_item_assign_category_key(KeyCode::Esc, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel assign picker");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -11262,17 +11295,17 @@ fn batch_assign_picker_esc_after_changes_clears_selection() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open batch assign picker");
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("assign category");
-    app.handle_item_assign_category_key(KeyCode::Esc, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Esc.into(), &aglet)
         .expect("close assign picker");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -11312,9 +11345,9 @@ fn assign_picker_view_unmatched_row_inserts_item_into_view() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Tab.into(), &aglet)
         .expect("switch to view pane");
     app.item_assign_view_row_index = app
         .view_assign_rows
@@ -11332,7 +11365,7 @@ fn assign_picker_view_unmatched_row_inserts_item_into_view() {
         .expect("work board unmatched row should exist");
     app.compute_assignment_preview(&aglet);
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("assign to unmatched row");
 
     let updated = store.get_item(item.id).expect("reload item");
@@ -11385,9 +11418,9 @@ fn assign_picker_view_repeated_space_keeps_operating_on_original_item() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(first.id);
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Tab.into(), &aglet)
         .expect("switch to view pane");
 
     let target_row_index = app
@@ -11407,7 +11440,7 @@ fn assign_picker_view_repeated_space_keeps_operating_on_original_item() {
     app.item_assign_view_row_index = target_row_index;
     app.compute_assignment_preview(&aglet);
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("first space applies target view");
 
     let first_updated = store.get_item(first.id).expect("reload first");
@@ -11435,7 +11468,7 @@ fn assign_picker_view_repeated_space_keeps_operating_on_original_item() {
         "the target row should keep showing the original item as assigned"
     );
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("second space should be a no-op for the same target item");
 
     let first_updated = store.get_item(first.id).expect("reload first again");
@@ -11476,9 +11509,9 @@ fn assign_picker_view_remove_skips_items_absent_from_target_view() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Tab.into(), &aglet)
         .expect("switch to view pane");
     app.item_assign_view_row_index = app
         .view_assign_rows
@@ -11496,7 +11529,7 @@ fn assign_picker_view_remove_skips_items_absent_from_target_view() {
         .expect("work board unmatched row should exist");
     app.compute_assignment_preview(&aglet);
 
-    app.handle_item_assign_category_key(KeyCode::Char('r'), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char('r').into(), &aglet)
         .expect("remove from target view");
 
     let updated = store.get_item(item.id).expect("reload item");
@@ -11538,9 +11571,9 @@ fn assign_picker_hides_system_views_from_assignment_targets() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker");
-    app.handle_item_assign_category_key(KeyCode::Tab, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Tab.into(), &aglet)
         .expect("switch to view pane");
 
     let labels: Vec<String> = app
@@ -11598,13 +11631,13 @@ fn normal_mode_x_with_selection_opens_batch_delete_confirm() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('x'), &aglet)
+    app.handle_normal_key(KeyCode::Char('x').into(), &aglet)
         .expect("open batch delete confirm");
 
     assert_eq!(app.mode, Mode::ConfirmDelete);
@@ -11650,9 +11683,9 @@ fn batch_delete_confirm_y_deletes_selected_items_and_clears_selection() {
     app.toggle_selected_item(first.id);
     app.toggle_selected_item(second.id);
     app.set_item_selection_by_id(second.id);
-    app.handle_normal_key(KeyCode::Char('x'), &aglet)
+    app.handle_normal_key(KeyCode::Char('x').into(), &aglet)
         .expect("open batch delete confirm");
-    app.handle_confirm_delete_key(KeyCode::Char('y'), &aglet)
+    app.handle_confirm_delete_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm batch delete");
 
     assert!(store.get_item(first.id).is_err());
@@ -11697,15 +11730,15 @@ fn batch_delete_confirm_esc_preserves_selected_items() {
     app.refresh(&store).expect("refresh board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select first");
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("focus second");
-    app.handle_normal_key(KeyCode::Char(' '), &aglet)
+    app.handle_normal_key(KeyCode::Char(' ').into(), &aglet)
         .expect("select second");
-    app.handle_normal_key(KeyCode::Char('x'), &aglet)
+    app.handle_normal_key(KeyCode::Char('x').into(), &aglet)
         .expect("open batch delete confirm");
-    app.handle_confirm_delete_key(KeyCode::Esc, &aglet)
+    app.handle_confirm_delete_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel batch delete");
 
     assert!(store.get_item(first.id).is_ok());
@@ -11737,11 +11770,11 @@ fn normal_mode_jk_scrolls_preview_when_preview_is_focused() {
     app.normal_focus = super::NormalFocus::Preview;
     app.preview_mode = super::PreviewMode::Summary;
 
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("scroll summary down");
     assert_eq!(app.preview_summary_scroll, 1);
 
-    app.handle_normal_key(KeyCode::Char('k'), &aglet)
+    app.handle_normal_key(KeyCode::Char('k').into(), &aglet)
         .expect("scroll summary up");
     assert_eq!(app.preview_summary_scroll, 0);
 
@@ -12070,7 +12103,7 @@ fn category_manager_enter_focuses_details_instead_of_opening_config_editor() {
         .position(|row| row.id == category.id)
         .expect("work category row should exist");
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("focus details");
 
     assert_eq!(app.mode, Mode::CategoryManager);
@@ -12103,7 +12136,7 @@ fn category_manager_enter_on_reserved_category_stays_inline_in_manager() {
         .position(|row| row.is_reserved)
         .expect("reserved row should exist");
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("focus details on reserved");
 
     assert_eq!(app.mode, Mode::CategoryManager);
@@ -12127,7 +12160,7 @@ fn category_manager_uses_category_specific_note_placeholder() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_category_selection_by_id(category.id);
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.sync_category_manager_state_from_selection();
@@ -12165,7 +12198,7 @@ fn category_manager_note_placeholder_remains_visible_in_narrow_details_pane() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_category_selection_by_id(category.id);
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.sync_category_manager_state_from_selection();
@@ -12199,7 +12232,7 @@ fn category_manager_reserved_details_render_as_read_only() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
     let reserved_index = app
@@ -12251,7 +12284,7 @@ fn category_manager_tree_focus_does_not_render_details_row_cursor() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_category_selection_by_id(category.id);
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.sync_category_manager_state_from_selection();
@@ -12305,7 +12338,7 @@ fn category_manager_details_titles_show_focus_for_note_and_also_match() {
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
     app.set_category_selection_by_id(category.id);
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.sync_category_manager_state_from_selection();
@@ -12364,7 +12397,7 @@ fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() 
     app.refresh(&store).expect("refresh app");
     app.set_category_selection_by_id(category.id);
 
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     assert_eq!(app.mode, Mode::CategoryManager);
     let state = app
@@ -12375,7 +12408,7 @@ fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() 
     assert_eq!(state.selected_category_id, Some(category.id));
     assert_eq!(state.tree_index, app.category_index);
 
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("close category manager");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.category_manager.is_none());
@@ -12449,9 +12482,9 @@ fn category_create_panel_opens_and_creates_root_category() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
     assert_eq!(app.mode, Mode::InputPanel);
     assert!(app.input_panel.is_some(), "panel should be open");
@@ -12466,14 +12499,14 @@ fn category_create_panel_opens_and_creates_root_category() {
 
     // Type category name in the panel
     for c in "Projects".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type create name");
     }
     // Save (S from text focus won't work, Tab to Save button + Enter)
     // Use capital S from a non-text focus
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to parent");
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save category");
 
     assert!(
@@ -12510,23 +12543,23 @@ fn category_create_panel_n_creates_sibling_under_selected_parent() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(selected.id);
 
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
     assert_eq!(app.mode, Mode::InputPanel);
     assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(parent.id));
     assert!(app.status.contains("same level as Selected"));
 
     for c in "Sibling".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type sibling name");
     }
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to type picker");
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save category");
 
     let sibling = app
@@ -12559,18 +12592,18 @@ fn category_create_panel_upper_n_creates_child_of_selected_category() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
 
-    app.handle_category_manager_key(KeyCode::Char('N'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('N').into(), &aglet)
         .expect("open create panel");
     assert!(app.status.contains("child category under Alpha"));
     for c in "Child".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type child name");
     }
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to type picker");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
@@ -12578,7 +12611,7 @@ fn category_create_panel_upper_n_creates_child_of_selected_category() {
     );
     assert_eq!(app.input_panel.as_ref().unwrap().parent_id, Some(alpha.id));
 
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save category create");
     assert_eq!(app.mode, Mode::CategoryManager);
     assert!(app.input_panel.is_none());
@@ -12612,22 +12645,22 @@ fn category_create_panel_n_on_root_selection_creates_top_level_sibling() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
 
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
     assert_eq!(app.input_panel.as_ref().unwrap().parent_id, None);
     assert!(app.status.contains("same level as Alpha"));
 
     for c in "Beta".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type sibling name");
     }
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to type picker");
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save category");
 
     let beta = app
@@ -12656,9 +12689,9 @@ fn category_create_panel_render_uses_category_manager_backdrop() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
 
     let backend = TestBackend::new(120, 40);
@@ -12707,22 +12740,22 @@ fn category_create_panel_save_updates_visible_rows_without_reopening_manager() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     let before_visible_len = app
         .category_manager_visible_row_indices()
         .map(|rows| rows.len())
         .unwrap_or(0);
 
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
     for c in "ShowsImmediately".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type category name");
     }
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab off text focus");
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save category");
 
     assert_eq!(app.mode, Mode::CategoryManager);
@@ -12767,13 +12800,13 @@ fn category_create_panel_numeric_via_type_toggle() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
 
     for c in "Cost".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type create name");
     }
 
@@ -12784,13 +12817,13 @@ fn category_create_panel_numeric_via_type_toggle() {
     );
 
     // Tab to TypePicker, toggle to Numeric
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to type picker");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::TypePicker
     );
-    app.handle_input_panel_key(KeyCode::Char(' '), &aglet)
+    app.handle_input_panel_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle to numeric");
     assert_eq!(
         app.input_panel.as_ref().unwrap().value_kind,
@@ -12798,7 +12831,7 @@ fn category_create_panel_numeric_via_type_toggle() {
     );
 
     // Save
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("save category");
 
     let cost = app
@@ -12827,13 +12860,13 @@ fn category_create_panel_esc_with_empty_name_cancels() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
 
     // Esc with empty text cancels without creating
-    app.handle_input_panel_key(KeyCode::Esc, &aglet)
+    app.handle_input_panel_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel empty create");
 
     assert_eq!(app.mode, Mode::CategoryManager);
@@ -12858,18 +12891,18 @@ fn category_create_panel_esc_cancels_without_saving() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
 
     for c in "Score".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type create name");
     }
 
     // Esc cancels (single-field editor = immediate cancel)
-    app.handle_input_panel_key(KeyCode::Esc, &aglet)
+    app.handle_input_panel_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel create");
 
     assert_eq!(app.mode, Mode::CategoryManager);
@@ -12902,18 +12935,18 @@ fn category_create_panel_rejects_duplicate_name() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
     for c in "Work".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type duplicate name");
     }
     // Tab to save button and press enter to save
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("attempt save");
 
     assert!(app.status.contains("already exists"));
@@ -12942,18 +12975,18 @@ fn category_create_panel_rejects_reserved_name() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("open create panel");
     for c in "Done".chars() {
-        app.handle_input_panel_key(KeyCode::Char(c), &aglet)
+        app.handle_input_panel_key(KeyCode::Char(c).into(), &aglet)
             .expect("type reserved name");
     }
     // Tab and S to attempt save
-    app.handle_input_panel_key(KeyCode::Tab, &aglet)
+    app.handle_input_panel_key(KeyCode::Tab.into(), &aglet)
         .expect("tab");
-    app.handle_input_panel_key(KeyCode::Char('S'), &aglet)
+    app.handle_input_panel_key(KeyCode::Char('S').into(), &aglet)
         .expect("attempt save");
 
     assert!(app.status.contains("reserved category"));
@@ -12981,10 +13014,10 @@ fn category_manager_inline_rename_avoids_input_panel_and_updates_name() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
-    app.handle_category_manager_key(KeyCode::Char('r'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('r').into(), &aglet)
         .expect("start rename");
     assert!(
         app.input_panel.is_none(),
@@ -12992,14 +13025,14 @@ fn category_manager_inline_rename_avoids_input_panel_and_updates_name() {
     );
 
     for _ in 0.."Work".len() {
-        app.handle_category_manager_key(KeyCode::Backspace, &aglet)
+        app.handle_category_manager_key(KeyCode::Backspace.into(), &aglet)
             .expect("clear rename buffer");
     }
     for c in "Office".chars() {
-        app.handle_category_manager_key(KeyCode::Char(c), &aglet)
+        app.handle_category_manager_key(KeyCode::Char(c).into(), &aglet)
             .expect("type rename");
     }
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("apply rename");
 
     let loaded = store.get_category(category.id).expect("load renamed");
@@ -13032,12 +13065,12 @@ fn category_manager_inline_rename_unchanged_cancels_cleanly() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
-    app.handle_category_manager_key(KeyCode::Char('r'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('r').into(), &aglet)
         .expect("start rename");
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("apply unchanged rename");
 
     assert!(app.status.contains("unchanged"));
@@ -13067,7 +13100,7 @@ fn category_manager_inline_rename_reserved_category_is_blocked() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     let reserved_index = app
         .category_rows
@@ -13077,7 +13110,7 @@ fn category_manager_inline_rename_reserved_category_is_blocked() {
     app.category_index = reserved_index;
     app.sync_category_manager_state_from_selection();
 
-    app.handle_category_manager_key(KeyCode::Char('r'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('r').into(), &aglet)
         .expect("attempt rename reserved");
 
     assert!(app.status.contains("reserved"));
@@ -13107,11 +13140,11 @@ fn category_manager_inline_delete_confirm_stays_in_manager_mode() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
 
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("open inline delete confirm");
     assert_eq!(app.mode, Mode::CategoryManager);
     assert!(matches!(
@@ -13121,7 +13154,7 @@ fn category_manager_inline_delete_confirm_stays_in_manager_mode() {
         Some(CategoryInlineAction::DeleteConfirm { .. })
     ));
 
-    app.handle_category_manager_key(KeyCode::Char('y'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm delete");
     assert_eq!(app.mode, Mode::CategoryManager);
     assert!(matches!(
@@ -13156,12 +13189,12 @@ fn category_manager_inline_delete_cancel_keeps_category() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("start delete");
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel delete");
 
     assert!(store.get_category(category.id).is_ok());
@@ -13197,12 +13230,12 @@ fn category_manager_inline_delete_non_leaf_shows_error_and_stays_in_manager() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(parent.id);
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("start delete");
-    app.handle_category_manager_key(KeyCode::Char('y'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm delete");
 
     assert_eq!(app.mode, Mode::CategoryManager);
@@ -13241,18 +13274,18 @@ fn category_manager_filter_focus_types_text_instead_of_triggering_commands() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('/'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus filter");
     assert_eq!(
         app.category_manager_focus(),
         Some(CategoryManagerFocus::Filter)
     );
 
-    app.handle_category_manager_key(KeyCode::Char('n'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('n').into(), &aglet)
         .expect("type filter n");
-    app.handle_category_manager_key(KeyCode::Char('o'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('o').into(), &aglet)
         .expect("type filter o");
 
     let state = app.category_manager.as_ref().expect("manager state");
@@ -13286,12 +13319,12 @@ fn category_manager_filter_uses_fuzzy_mode_for_category_names() {
         ..App::default()
     };
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
-    app.handle_category_manager_key(KeyCode::Char('/'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus filter");
     for ch in "ns".chars() {
-        app.handle_category_manager_key(KeyCode::Char(ch), &aglet)
+        app.handle_category_manager_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type fuzzy category filter");
     }
 
@@ -13322,12 +13355,12 @@ fn category_manager_slash_arms_filter_without_inserting_slash() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
 
-    app.handle_category_manager_key(KeyCode::Char('/'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('/').into(), &aglet)
         .expect("arm filter");
-    app.handle_category_manager_key(KeyCode::Char('/'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('/').into(), &aglet)
         .expect("slash again should not insert");
 
     let state = app.category_manager.as_ref().expect("manager state");
@@ -13358,11 +13391,11 @@ fn category_manager_tab_focuses_details_and_p_no_longer_opens_reparent_ui() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(child.id);
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("focus details pane");
     assert_eq!(
         app.category_manager_focus(),
@@ -13370,7 +13403,7 @@ fn category_manager_tab_focuses_details_and_p_no_longer_opens_reparent_ui() {
     );
     assert!(!app.category_manager.as_ref().expect("state").filter_editing);
 
-    app.handle_category_manager_key(KeyCode::Char('p'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('p').into(), &aglet)
         .expect("p should be ignored");
 
     let state = app.category_manager.as_ref().expect("manager state");
@@ -13404,11 +13437,11 @@ fn category_manager_upper_k_reorders_selected_category_up_among_siblings() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(beta.id);
 
-    app.handle_category_manager_key(KeyCode::Char('K'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('K').into(), &aglet)
         .expect("reorder up");
 
     let loaded_parent = store.get_category(parent.id).expect("load parent");
@@ -13443,11 +13476,11 @@ fn category_manager_upper_k_on_first_sibling_is_noop_with_status() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
 
-    app.handle_category_manager_key(KeyCode::Char('K'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('K').into(), &aglet)
         .expect("reorder boundary noop");
 
     let loaded_parent = store.get_category(parent.id).expect("load parent");
@@ -13481,11 +13514,11 @@ fn category_manager_upper_j_reorders_selected_category_down_among_siblings() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
 
-    app.handle_category_manager_key(KeyCode::Char('J'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('J').into(), &aglet)
         .expect("reorder down");
 
     let loaded_parent = store.get_category(parent.id).expect("load parent");
@@ -13517,11 +13550,11 @@ fn category_manager_upper_l_indents_selected_category_under_previous_sibling() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(beta.id);
 
-    app.handle_category_manager_key(KeyCode::Char('L'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('L').into(), &aglet)
         .expect("indent under previous sibling");
 
     let loaded_alpha = store.get_category(alpha.id).expect("load alpha");
@@ -13565,11 +13598,11 @@ fn category_manager_upper_l_on_first_sibling_is_noop_with_status() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
 
-    app.handle_category_manager_key(KeyCode::Char('L'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('L').into(), &aglet)
         .expect("indent boundary noop");
 
     assert_eq!(
@@ -13606,11 +13639,11 @@ fn category_manager_double_angle_right_indents_selected_category_under_previous_
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(beta.id);
 
-    app.handle_category_manager_key(KeyCode::Char('>'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('>').into(), &aglet)
         .expect("arm double-angle indent");
     assert_eq!(
         store.get_category(beta.id).expect("beta before").parent,
@@ -13618,7 +13651,7 @@ fn category_manager_double_angle_right_indents_selected_category_under_previous_
     );
     assert!(app.status.contains("Press > again"));
 
-    app.handle_category_manager_key(KeyCode::Char('>'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('>').into(), &aglet)
         .expect("indent with >>");
 
     let loaded_alpha = store.get_category(alpha.id).expect("load alpha");
@@ -13653,11 +13686,11 @@ fn category_manager_double_angle_left_outdents_selected_category() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(child.id);
 
-    app.handle_category_manager_key(KeyCode::Char('<'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('<').into(), &aglet)
         .expect("arm double-angle outdent");
     assert_eq!(
         store.get_category(child.id).expect("child before").parent,
@@ -13665,7 +13698,7 @@ fn category_manager_double_angle_left_outdents_selected_category() {
     );
     assert!(app.status.contains("Press < again"));
 
-    app.handle_category_manager_key(KeyCode::Char('<'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('<').into(), &aglet)
         .expect("outdent with <<");
 
     let loaded_parent = store.get_category(parent.id).expect("load parent");
@@ -13709,11 +13742,11 @@ fn category_manager_upper_h_outdents_selected_category_after_parent() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(child.id);
 
-    app.handle_category_manager_key(KeyCode::Char('H'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('H').into(), &aglet)
         .expect("outdent");
 
     let loaded_gp = store
@@ -13754,11 +13787,11 @@ fn category_manager_upper_h_outdents_child_to_root() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(child.id);
 
-    app.handle_category_manager_key(KeyCode::Char('H'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('H').into(), &aglet)
         .expect("outdent to root");
 
     let loaded_child = store.get_category(child.id).expect("load child");
@@ -13803,11 +13836,11 @@ fn category_manager_upper_h_on_root_is_noop_with_status() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(root.id);
 
-    app.handle_category_manager_key(KeyCode::Char('H'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('H').into(), &aglet)
         .expect("outdent noop");
 
     assert_eq!(store.get_category(root.id).expect("root").parent, None);
@@ -13837,16 +13870,16 @@ fn category_manager_direct_moves_are_blocked_while_filter_active() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
-    app.handle_category_manager_key(KeyCode::Char('/'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('/').into(), &aglet)
         .expect("focus filter");
-    app.handle_category_manager_key(KeyCode::Char('a'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('a').into(), &aglet)
         .expect("type filter");
     app.set_category_manager_focus(CategoryManagerFocus::Tree);
 
-    app.handle_category_manager_key(KeyCode::Char('J'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('J').into(), &aglet)
         .expect("move should be blocked");
 
     let root_names: Vec<_> = app
@@ -13881,20 +13914,20 @@ fn category_manager_details_note_tab_auto_saves() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
     for c in "Ship".chars() {
-        app.handle_category_manager_key(KeyCode::Char(c), &aglet)
+        app.handle_category_manager_key(KeyCode::Char(c).into(), &aglet)
             .expect("type note");
     }
     assert!(app.category_manager_details_note_editing());
 
     // Tab should auto-save
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab away from note");
     let saved = store.get_category(category.id).expect("load category");
     assert_eq!(saved.note.as_deref(), Some("Ship"));
@@ -13921,19 +13954,19 @@ fn category_manager_details_note_shift_s_modifier_saves() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
     for c in "Ship".chars() {
-        app.handle_category_manager_key(KeyCode::Char(c), &aglet)
+        app.handle_category_manager_key(KeyCode::Char(c).into(), &aglet)
             .expect("type note");
     }
     assert!(app.category_manager_details_note_editing());
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("leave note edit without saving");
     assert!(!app.category_manager_details_note_editing());
 
@@ -13967,7 +14000,7 @@ fn category_manager_details_also_match_save_persists_one_entry_per_line() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
@@ -13984,16 +14017,16 @@ fn category_manager_details_also_match_save_persists_one_entry_per_line() {
         KeyCode::Char('n'),
         KeyCode::Char('g'),
     ] {
-        app.handle_category_manager_key(code, &aglet)
+        app.handle_category_manager_key(code.into(), &aglet)
             .expect("edit also-match");
     }
     assert!(app.category_manager_details_also_match_editing());
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("leave also-match edit");
     assert!(!app.category_manager_details_also_match_editing());
 
-    app.handle_category_manager_key(KeyCode::Char('S'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('S').into(), &aglet)
         .expect("save also-match");
     let saved = store.get_category(category.id).expect("load category");
     assert_eq!(
@@ -14024,18 +14057,18 @@ fn category_manager_details_also_match_esc_auto_saves() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AlsoMatch);
 
-    app.handle_category_manager_key(KeyCode::Char('d'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('d').into(), &aglet)
         .expect("start also-match edit");
     assert!(app.category_manager_details_also_match_editing());
     assert!(app.category_manager_details_also_match_dirty());
 
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("leave also-match edit");
     assert!(!app.category_manager_details_also_match_editing());
 
@@ -14065,7 +14098,7 @@ fn category_manager_details_also_match_tab_away_auto_saves() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
@@ -14077,13 +14110,13 @@ fn category_manager_details_also_match_tab_away_auto_saves() {
         KeyCode::Char('a'),
         KeyCode::Char('l'),
     ] {
-        app.handle_category_manager_key(code, &aglet)
+        app.handle_category_manager_key(code.into(), &aglet)
             .expect("edit also-match");
     }
     assert!(app.category_manager_details_also_match_editing());
     assert!(app.category_manager_details_also_match_dirty());
 
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab auto-saves and moves to note");
     assert!(!app.category_manager_details_also_match_editing());
 
@@ -14112,18 +14145,18 @@ fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("type lowercase j in note");
     assert!(app.category_manager_details_note_editing());
     assert_eq!(app.category_manager_details_note_text(), Some("j"));
 
-    app.handle_category_manager_key(KeyCode::Char('S'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('S').into(), &aglet)
         .expect("type uppercase S in note");
     assert!(app.category_manager_details_note_editing());
     assert_eq!(app.category_manager_details_note_text(), Some("jS"));
@@ -14133,10 +14166,10 @@ fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
     assert_eq!(unsaved.note, None, "typing uppercase S should not save");
 
     // Leave note edit mode, then save with S command
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("leave note edit");
     assert!(!app.category_manager_details_note_editing());
-    app.handle_category_manager_key(KeyCode::Char('S'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('S').into(), &aglet)
         .expect("save note with S");
     let saved = store.get_category(category.id).expect("load category");
     assert_eq!(saved.note.as_deref(), Some("jS"));
@@ -14163,19 +14196,19 @@ fn category_manager_details_note_edit_esc_auto_saves() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("begin note edit");
-    app.handle_category_manager_key(KeyCode::Char('!'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('!').into(), &aglet)
         .expect("type note");
     assert!(app.category_manager_details_note_dirty());
 
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("esc auto-saves note");
 
     // Esc should auto-save the note.
@@ -14206,26 +14239,26 @@ fn category_manager_esc_auto_saves_then_closes() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("begin note edit");
-    app.handle_category_manager_key(KeyCode::Char('!'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('!').into(), &aglet)
         .expect("type note");
 
     // First Esc auto-saves the note and leaves edit mode.
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("esc auto-saves note");
     let saved = store.get_category(category.id).expect("load category");
     assert_eq!(saved.note.as_deref(), Some("seed!"));
     assert!(!app.category_manager_details_note_dirty());
 
     // Second Esc closes the manager (no discard prompt needed).
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("close category manager");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.category_manager.is_none());
@@ -14252,26 +14285,26 @@ fn category_manager_tab_auto_saves_note_then_esc_closes() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("begin note edit");
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("type note");
 
     // Tab auto-saves the note.
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab auto-saves note");
     let saved = store.get_category(category.id).expect("load category");
     assert_eq!(saved.note.as_deref(), Some("x"));
     assert!(!app.category_manager_details_note_dirty());
 
     // Esc should close directly (no discard confirm needed).
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("close category manager");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.category_manager.is_none());
@@ -14298,19 +14331,19 @@ fn category_manager_note_auto_saved_on_tab_then_esc_closes_cleanly() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("begin note edit");
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("type note");
 
     // Tab auto-saves.
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab auto-saves");
     assert_eq!(
         store.get_category(category.id).expect("load category").note,
@@ -14318,7 +14351,7 @@ fn category_manager_note_auto_saved_on_tab_then_esc_closes_cleanly() {
     );
 
     // Esc closes cleanly (no discard prompt).
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("close");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.category_manager.is_none());
@@ -14346,19 +14379,19 @@ fn category_manager_note_auto_saved_on_tab_persists_to_db() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("begin note edit");
-    app.handle_category_manager_key(KeyCode::Char('!'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('!').into(), &aglet)
         .expect("type note");
 
     // Tab auto-saves the modified note.
-    app.handle_category_manager_key(KeyCode::Tab, &aglet)
+    app.handle_category_manager_key(KeyCode::Tab.into(), &aglet)
         .expect("tab auto-saves");
     assert_eq!(
         store.get_category(category.id).expect("load category").note,
@@ -14389,23 +14422,23 @@ fn category_manager_details_dirty_note_saved_on_selection_change() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Note);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("begin note edit");
-    app.handle_category_manager_key(KeyCode::Char('x'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('x').into(), &aglet)
         .expect("type note");
     assert!(app.category_manager_details_note_dirty());
 
     // Esc auto-saves the note, then switch to Tree.
-    app.handle_category_manager_key(KeyCode::Esc, &aglet)
+    app.handle_category_manager_key(KeyCode::Esc.into(), &aglet)
         .expect("esc auto-saves");
     app.set_category_manager_focus(CategoryManagerFocus::Tree);
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("move selection");
 
     assert_eq!(app.selected_category_id(), Some(beta.id));
@@ -14439,19 +14472,19 @@ fn category_manager_details_and_quick_flag_toggles_work_inline() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle exclusive from details");
-    app.handle_category_manager_key(KeyCode::Char('i'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('i').into(), &aglet)
         .expect("quick toggle auto-match");
-    app.handle_category_manager_key(KeyCode::Char('g'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('g').into(), &aglet)
         .expect("quick toggle match-category-name");
-    app.handle_category_manager_key(KeyCode::Char('a'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('a').into(), &aglet)
         .expect("quick toggle actionable");
 
     let loaded = store.get_category(category.id).expect("load category");
@@ -14486,13 +14519,13 @@ fn category_manager_enter_on_flag_toggles_and_returns_to_tree() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::AutoMatch);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle auto-match and leave details");
 
     let loaded = store.get_category(category.id).expect("load category");
@@ -14523,13 +14556,13 @@ fn category_manager_semantic_match_toggle_persists() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::SemanticMatch);
 
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle semantic match and leave details");
 
     let loaded = store.get_category(category.id).expect("load category");
@@ -14545,9 +14578,9 @@ fn category_manager_semantic_match_toggle_persists() {
 
 fn open_global_settings_for_test(app: &mut App, aglet: &Aglet<'_>) {
     app.mode = Mode::Normal;
-    app.handle_normal_key(KeyCode::Char('g'), aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), aglet)
         .expect("gs should open global settings");
     assert_eq!(app.mode, Mode::GlobalSettings);
 }
@@ -14558,7 +14591,7 @@ fn select_global_settings_row_for_test(
     target: GlobalSettingsRow,
 ) {
     while app.global_settings_selected_kind() != target {
-        app.handle_key(KeyCode::Char('j'), aglet)
+        app.handle_key(KeyCode::Char('j').into(), aglet)
             .expect("move global settings selection");
     }
 }
@@ -14575,7 +14608,7 @@ fn select_workflow_picker_category_for_test(app: &mut App, aglet: &Aglet<'_>, ta
         if app.category_rows[row_idx].name == target_name {
             return;
         }
-        app.handle_key(KeyCode::Char('j'), aglet)
+        app.handle_key(KeyCode::Char('j').into(), aglet)
             .expect("move workflow picker selection");
     }
     panic!("workflow picker row not found: {target_name}");
@@ -14602,10 +14635,10 @@ fn workflow_ready_role_assignment_disables_implicit_match() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
     select_workflow_picker_category_for_test(&mut app, &aglet, "Ready");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign ready role");
 
     let updated = store.get_category(ready.id).expect("load ready");
@@ -14638,9 +14671,9 @@ fn workflow_claim_role_assignment_disables_implicit_match() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowClaim);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open claim result picker");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign claim target role");
 
     let updated = store.get_category(claim.id).expect("load claim target");
@@ -14673,15 +14706,15 @@ fn workflow_role_disable_does_not_reenable_implicit_match() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
     select_workflow_picker_category_for_test(&mut app, &aglet, "Ready");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign ready role");
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("reopen ready queue picker");
-    app.handle_key(KeyCode::Char('x'), &aglet)
+    app.handle_key(KeyCode::Char('x').into(), &aglet)
         .expect("remove ready role");
 
     let updated = store.get_category(ready.id).expect("load ready");
@@ -14716,7 +14749,7 @@ fn global_settings_workflow_picker_opens_and_closes() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowClaim);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open claim result picker");
     assert_eq!(
         app.settings
@@ -14735,7 +14768,7 @@ fn global_settings_workflow_picker_opens_and_closes() {
         WorkflowRolePickerOrigin::GlobalSettings
     );
 
-    app.handle_key(KeyCode::Esc, &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("close workflow picker");
     assert!(app.settings.workflow_role_picker.is_none());
     assert_eq!(app.mode, Mode::GlobalSettings);
@@ -14761,7 +14794,7 @@ fn global_settings_workflow_picker_scroll_offset_stays_stable_while_selection_is
     app.refresh(&store).expect("refresh app");
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
 
     let backend = TestBackend::new(100, 20);
@@ -14781,14 +14814,14 @@ fn global_settings_workflow_picker_scroll_offset_stays_stable_while_selection_is
             first_scrolled_offset = Some(offset);
             break;
         }
-        app.handle_key(KeyCode::Char('j'), &aglet)
+        app.handle_key(KeyCode::Char('j').into(), &aglet)
             .expect("move picker selection");
     }
 
     let first_scrolled_offset =
         first_scrolled_offset.expect("picker should scroll once selection reaches lower edge");
 
-    app.handle_key(KeyCode::Char('k'), &aglet)
+    app.handle_key(KeyCode::Char('k').into(), &aglet)
         .expect("move within visible scrolled window");
     terminal.draw(|frame| app.draw(frame)).expect("draw picker");
     let next_offset = app
@@ -14834,11 +14867,11 @@ fn workflow_role_replacement_only_sanitizes_new_category() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
-    app.handle_key(KeyCode::Char('j'), &aglet)
+    app.handle_key(KeyCode::Char('j').into(), &aglet)
         .expect("pick replacement ready role");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("replace ready role");
 
     let updated_a = store.get_category(ready_a.id).expect("load ready a");
@@ -14876,10 +14909,10 @@ fn workflow_role_assignment_warns_when_conditions_exist() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
     select_workflow_picker_category_for_test(&mut app, &aglet, "Ready");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign ready role");
 
     assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -14919,10 +14952,10 @@ fn workflow_role_assignment_warns_when_actions_exist() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
     select_workflow_picker_category_for_test(&mut app, &aglet, "Ready");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign ready role");
 
     assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -14964,10 +14997,10 @@ fn workflow_role_assignment_combines_cleanup_and_single_warning() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
     select_workflow_picker_category_for_test(&mut app, &aglet, "Ready");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign ready role");
 
     let updated = store.get_category(ready.id).expect("load ready");
@@ -15017,9 +15050,9 @@ fn workflow_role_assignment_reclassifies_items_after_disabling_implicit_match() 
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("assign ready role");
 
     assert!(
@@ -15055,7 +15088,7 @@ fn global_settings_workflow_picker_filters_reserved_and_numeric_categories() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowReady);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open ready queue picker");
     let visible_names: Vec<String> = app
         .workflow_role_picker_row_indices()
@@ -15099,9 +15132,9 @@ fn global_settings_workflow_picker_blocks_cross_role_conflicts() {
     open_global_settings_for_test(&mut app, &aglet);
     select_global_settings_row_for_test(&mut app, &aglet, GlobalSettingsRow::WorkflowClaim);
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open claim result picker");
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt conflicting claim assignment");
 
     assert_eq!(app.workflow_config.ready_category_id, Some(ready.id));
@@ -15133,13 +15166,13 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(alpha.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
 
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("details next field");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -15147,7 +15180,7 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
     );
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("details next field");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -15155,7 +15188,7 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
     );
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
-    app.handle_category_manager_key(KeyCode::Char('j'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('j').into(), &aglet)
         .expect("details next field");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -15163,7 +15196,7 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
     );
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
-    app.handle_category_manager_key(KeyCode::Char('k'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('k').into(), &aglet)
         .expect("details previous field");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -15171,7 +15204,7 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
     );
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
-    app.handle_category_manager_key(KeyCode::Char('k'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('k').into(), &aglet)
         .expect("details previous field");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -15179,7 +15212,7 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
     );
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
-    app.handle_category_manager_key(KeyCode::Char('k'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('k').into(), &aglet)
         .expect("details previous field");
     assert_eq!(
         app.category_manager_details_focus(),
@@ -15214,27 +15247,27 @@ fn category_manager_details_blocks_shift_hjkl_structure_moves() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(beta.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Exclusive);
 
-    app.handle_category_manager_key(KeyCode::Char('J'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('J').into(), &aglet)
         .expect("shift-j ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('H'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('H').into(), &aglet)
         .expect("shift-h ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('L'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('L').into(), &aglet)
         .expect("shift-l ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('K'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('K').into(), &aglet)
         .expect("shift-k ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('>'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('>').into(), &aglet)
         .expect("first > ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('>'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('>').into(), &aglet)
         .expect("second > ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('<'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('<').into(), &aglet)
         .expect("first < ignored in details");
-    app.handle_category_manager_key(KeyCode::Char('<'), &aglet)
+    app.handle_category_manager_key(KeyCode::Char('<').into(), &aglet)
         .expect("second < ignored in details");
 
     let parent_loaded = store.get_category(parent.id).expect("load parent");
@@ -15270,7 +15303,7 @@ fn category_manager_numeric_initial_focus_is_integer_toggle() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(cost.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
@@ -15302,13 +15335,13 @@ fn category_manager_numeric_integer_toggle_restores_two_decimal_default() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(cost.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
 
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle integer on");
     let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
     assert_eq!(fmt.decimal_places, 0);
@@ -15319,7 +15352,7 @@ fn category_manager_numeric_integer_toggle_restores_two_decimal_default() {
 
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::Integer);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle integer off");
     let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
     assert_eq!(fmt.decimal_places, 2);
@@ -15345,31 +15378,31 @@ fn category_manager_numeric_fields_edit_and_persist() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(cost.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
 
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::DecimalPlaces);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("start decimal edit");
     if let Some(input) = app.category_manager_details_inline_input_mut() {
         input.buffer.set("3".to_string());
     }
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save decimal edit");
 
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::CurrencySymbol);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("start currency edit");
     if let Some(input) = app.category_manager_details_inline_input_mut() {
         input.buffer.set("EUR".to_string());
     }
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("save currency edit");
 
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::ThousandsSeparator);
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle thousands");
 
     let fmt = store.get_category(cost.id).unwrap().numeric_format.unwrap();
@@ -15398,7 +15431,7 @@ fn category_manager_numeric_details_render_preview_line() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(cost.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
@@ -15449,7 +15482,7 @@ fn category_manager_tree_rows_render_only_non_default_suffix_badges() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(category.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
@@ -15536,14 +15569,14 @@ fn category_manager_format_cycle_does_not_reclassify_items() {
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh app");
-    app.handle_normal_key(KeyCode::Char('c'), &aglet)
+    app.handle_normal_key(KeyCode::Char('c').into(), &aglet)
         .expect("open category manager");
     app.set_category_selection_by_id(cost.id);
     app.set_category_manager_focus(CategoryManagerFocus::Details);
     app.set_category_manager_details_focus(CategoryManagerDetailsFocus::ThousandsSeparator);
 
     // Toggle format-only field — should NOT trigger reclassification.
-    app.handle_category_manager_key(KeyCode::Enter, &aglet)
+    app.handle_category_manager_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle thousands");
 
     let after = store
@@ -15582,13 +15615,13 @@ fn normal_mode_ga_jumps_to_all_items_view() {
     app.set_view_selection_by_name("Work Board");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
     assert_eq!(
         app.current_view().map(|view| view.name.as_str()),
         Some("Work Board")
     );
-    app.handle_normal_key(KeyCode::Char('a'), &aglet)
+    app.handle_normal_key(KeyCode::Char('a').into(), &aglet)
         .expect("ga should jump to all items view");
     assert_eq!(
         app.current_view().map(|view| view.name.as_str()),
@@ -15611,9 +15644,9 @@ fn normal_mode_gs_opens_global_settings_and_esc_returns_to_normal() {
     app.refresh(&store).expect("refresh test view");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('s'), &aglet)
+    app.handle_normal_key(KeyCode::Char('s').into(), &aglet)
         .expect("gs should open global settings");
     assert_eq!(app.mode, Mode::GlobalSettings);
     assert_eq!(
@@ -15621,7 +15654,7 @@ fn normal_mode_gs_opens_global_settings_and_esc_returns_to_normal() {
         GlobalSettingsRow::AutoRefresh
     );
 
-    app.handle_key(KeyCode::Esc, &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("Esc should close global settings");
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.status, "Closed Global Settings");
@@ -15641,7 +15674,7 @@ fn normal_mode_f10_opens_global_settings() {
     app.refresh(&store).expect("refresh test view");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::F(10), &aglet)
+    app.handle_normal_key(KeyCode::F(10).into(), &aglet)
         .expect("F10 should open global settings");
 
     assert_eq!(app.mode, Mode::GlobalSettings);
@@ -15666,9 +15699,9 @@ fn normal_mode_g_slash_opens_global_search_session() {
     app.refresh(&store).expect("refresh test view");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("g/ should open global search");
 
     assert_eq!(app.mode, Mode::SearchBarFocused);
@@ -15740,13 +15773,13 @@ fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
     app.search_buffer.set("timeout".to_string());
     app.refresh(&store).expect("refresh with local filter");
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("g/ should open global search");
 
     for ch in "buy".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type global query");
     }
     assert!(
@@ -15756,7 +15789,7 @@ fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
         "global search should apply filter to all slots"
     );
 
-    app.handle_search_bar_key(KeyCode::Enter, &aglet)
+    app.handle_search_bar_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should reveal top visible result");
     assert_eq!(
         app.mode,
@@ -15774,14 +15807,14 @@ fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
         "session remains active until Esc"
     );
 
-    app.handle_normal_key(KeyCode::Char('e'), &aglet)
+    app.handle_normal_key(KeyCode::Char('e').into(), &aglet)
         .expect("e should edit the revealed item");
     assert_eq!(app.mode, Mode::InputPanel, "e edits as everywhere else");
-    app.handle_input_panel_key(KeyCode::Esc, &aglet)
+    app.handle_input_panel_key(KeyCode::Esc.into(), &aglet)
         .expect("Esc should close edit panel");
     assert_eq!(app.mode, Mode::Normal);
 
-    app.handle_normal_key(KeyCode::Esc, &aglet)
+    app.handle_normal_key(KeyCode::Esc.into(), &aglet)
         .expect("Esc should restore previous view");
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(
@@ -15819,15 +15852,15 @@ fn global_search_enter_with_no_results_does_not_create_item() {
     app.refresh(&store).expect("refresh test view");
     app.mode = Mode::Normal;
 
-    app.handle_normal_key(KeyCode::Char('g'), &aglet)
+    app.handle_normal_key(KeyCode::Char('g').into(), &aglet)
         .expect("g prefix should start");
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("g/ should open global search");
     for ch in "kanban task".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type global query");
     }
-    app.handle_search_bar_key(KeyCode::Enter, &aglet)
+    app.handle_search_bar_key(KeyCode::Enter.into(), &aglet)
         .expect("enter should keep search focused");
 
     assert_eq!(
@@ -15845,7 +15878,7 @@ fn global_search_enter_with_no_results_does_not_create_item() {
         "status should explain why nothing opened"
     );
 
-    app.handle_normal_key(KeyCode::Esc, &aglet)
+    app.handle_normal_key(KeyCode::Esc.into(), &aglet)
         .expect("Esc should restore prior view");
     assert_eq!(
         app.current_view().map(|view| view.name.as_str()),
@@ -15883,11 +15916,11 @@ fn normal_mode_d_toggles_done_state() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("d should mark done");
     assert!(store.get_item(item.id).expect("load item").is_done);
 
-    app.handle_normal_key(KeyCode::Char('D'), &aglet)
+    app.handle_normal_key(KeyCode::Char('D').into(), &aglet)
         .expect("D should clear done");
     assert!(!store.get_item(item.id).expect("load item").is_done);
 
@@ -15922,7 +15955,7 @@ fn normal_mode_d_refuses_done_for_non_actionable_item() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(item.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("d should be handled");
     assert!(!store.get_item(item.id).expect("load item").is_done);
     assert_eq!(
@@ -15961,7 +15994,7 @@ fn batch_done_marks_selected_items_done_and_clears_selection() {
     app.toggle_selected_item(second.id);
     app.set_item_selection_by_id(second.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
 
     assert!(store.get_item(first.id).expect("reload first").is_done);
@@ -16004,7 +16037,7 @@ fn batch_done_all_done_marks_selected_items_not_done() {
     app.toggle_selected_item(second.id);
     app.set_item_selection_by_id(first.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch not-done");
 
     assert!(!store.get_item(first.id).expect("reload first").is_done);
@@ -16051,7 +16084,7 @@ fn batch_done_partial_failure_preserves_selection() {
     app.toggle_selected_item(second.id);
     app.set_item_selection_by_id(first.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
 
     assert!(store.get_item(first.id).expect("reload first").is_done);
@@ -16100,7 +16133,7 @@ fn batch_done_with_blockers_opens_confirm_prompt() {
     app.toggle_selected_item(plain.id);
     app.set_item_selection_by_id(plain.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
 
     assert_eq!(app.mode, Mode::ConfirmDelete);
@@ -16147,9 +16180,9 @@ fn batch_done_confirm_y_marks_done_and_removes_links() {
     app.toggle_selected_item(plain.id);
     app.set_item_selection_by_id(blocker.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
-    app.handle_confirm_delete_key(KeyCode::Char('y'), &aglet)
+    app.handle_confirm_delete_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm batch done with cleanup");
 
     assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
@@ -16201,9 +16234,9 @@ fn batch_done_confirm_n_marks_done_and_keeps_links() {
     app.toggle_selected_item(plain.id);
     app.set_item_selection_by_id(plain.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
-    app.handle_confirm_delete_key(KeyCode::Char('n'), &aglet)
+    app.handle_confirm_delete_key(KeyCode::Char('n').into(), &aglet)
         .expect("confirm batch done without cleanup");
 
     assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
@@ -16253,7 +16286,7 @@ fn normal_mode_d_prompts_then_y_clears_blocker_links() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(blocker.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("d should open done confirm");
     assert_eq!(app.mode, Mode::ConfirmDelete);
     assert!(
@@ -16261,7 +16294,7 @@ fn normal_mode_d_prompts_then_y_clears_blocker_links() {
         "item should not be marked done until confirm"
     );
 
-    app.handle_confirm_delete_key(KeyCode::Char('y'), &aglet)
+    app.handle_confirm_delete_key(KeyCode::Char('y').into(), &aglet)
         .expect("y should confirm done + link cleanup");
 
     assert!(store.get_item(blocker.id).expect("load blocker").is_done);
@@ -16311,11 +16344,11 @@ fn normal_mode_d_prompt_n_keeps_blocker_links() {
     app.mode = Mode::Normal;
     app.set_item_selection_by_id(blocker.id);
 
-    app.handle_normal_key(KeyCode::Char('d'), &aglet)
+    app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("d should open done confirm");
     assert_eq!(app.mode, Mode::ConfirmDelete);
 
-    app.handle_confirm_delete_key(KeyCode::Char('n'), &aglet)
+    app.handle_confirm_delete_key(KeyCode::Char('n').into(), &aglet)
         .expect("n should mark done and keep links");
 
     assert!(store.get_item(blocker.id).expect("load blocker").is_done);
@@ -16366,7 +16399,7 @@ fn item_assign_hidden_reserved_done_does_not_open_confirm_or_change_item() {
         .position(|row| row.name.eq_ignore_ascii_case("Done"))
         .expect("Done category row should exist");
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space on hidden reserved category should no-op");
     assert_eq!(app.mode, Mode::ItemAssignPicker);
     assert!(
@@ -16429,7 +16462,7 @@ fn batch_item_assign_hidden_reserved_done_keeps_picker_and_selection() {
         .position(|row| row.name.eq_ignore_ascii_case("Done"))
         .expect("Done category row should exist");
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space on hidden reserved category should no-op");
     assert_eq!(app.mode, Mode::ItemAssignPicker);
     assert_eq!(app.selected_count(), 2);
@@ -16494,7 +16527,7 @@ fn batch_item_assign_hidden_reserved_done_does_not_mark_selected_items_done() {
         .position(|row| row.name.eq_ignore_ascii_case("Done"))
         .expect("Done category row should exist");
 
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space on hidden reserved category should no-op");
 
     assert!(!store.get_item(blocker.id).expect("load blocker").is_done);
@@ -16523,18 +16556,18 @@ fn text_input_editing_supports_navigation_insert_backspace_and_delete() {
     let mut app = App::default();
     app.set_input("ac".to_string());
 
-    assert!(app.handle_text_input_key(KeyCode::Left));
+    assert!(app.handle_text_input_key(KeyCode::Left.into()));
     assert_eq!(app.input.cursor(), 1);
 
-    assert!(app.handle_text_input_key(KeyCode::Char('b')));
+    assert!(app.handle_text_input_key(KeyCode::Char('b').into()));
     assert_eq!(app.input.text(), "abc");
     assert_eq!(app.input.cursor(), 2);
 
-    assert!(app.handle_text_input_key(KeyCode::Backspace));
+    assert!(app.handle_text_input_key(KeyCode::Backspace.into()));
     assert_eq!(app.input.text(), "ac");
     assert_eq!(app.input.cursor(), 1);
 
-    assert!(app.handle_text_input_key(KeyCode::Delete));
+    assert!(app.handle_text_input_key(KeyCode::Delete.into()));
     assert_eq!(app.input.text(), "a");
     assert_eq!(app.input.cursor(), 1);
 }
@@ -17673,7 +17706,7 @@ fn view_picker_e_opens_view_edit() {
         .position(|view| view.name == "TestView")
         .expect("TestView should exist");
 
-    app.handle_view_picker_key(KeyCode::Char('e'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('e').into(), &aglet)
         .expect("open view edit");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -17692,7 +17725,7 @@ fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
     app.refresh(&store).expect("refresh");
     app.mode = Mode::ViewPicker;
 
-    app.handle_view_picker_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('n').into(), &aglet)
         .expect("open new view editor");
 
     let state = app
@@ -17728,11 +17761,11 @@ fn normal_v_then_e_opens_view_edit_for_active_view() {
     app.refresh(&store)
         .expect("refresh with test view selected");
 
-    app.handle_key(KeyCode::Char('v'), &aglet)
+    app.handle_key(KeyCode::Char('v').into(), &aglet)
         .expect("open view picker");
     assert_eq!(app.mode, Mode::ViewPicker);
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("edit selected view from picker");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -17752,7 +17785,7 @@ fn view_picker_e_clamps_stale_picker_index_before_editing() {
     app.mode = Mode::ViewPicker;
     app.picker_index = usize::MAX;
 
-    app.handle_view_picker_key(KeyCode::Char('e'), &aglet)
+    app.handle_view_picker_key(KeyCode::Char('e').into(), &aglet)
         .expect("edit with stale picker index");
 
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -17808,7 +17841,7 @@ fn view_edit_criteria_rows_render_in_draft_order_and_space_toggles_selected_row(
         "criteria rows should preserve draft order in details pane"
     );
 
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space toggles first criteria row");
     let state = app.view_edit_state.as_ref().expect("view edit state");
     assert_eq!(state.draft.criteria.criteria[0].category_id, medium.id);
@@ -17845,7 +17878,7 @@ fn view_edit_existing_criteria_enter_opens_category_picker() {
         .expect("refreshed TestView");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter opens category picker from criteria row");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -17877,7 +17910,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     app.open_view_edit(view);
 
     // No criteria yet — Space opens the picker
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space opens picker when criteria empty");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -17895,7 +17928,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     app.view_edit_state.as_mut().unwrap().picker_index = complete_picker_idx;
 
     // Space cycles: off → Require → Exclude → Or → off
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("picker space 1");
     assert_eq!(
         app.view_edit_state
@@ -17908,7 +17941,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
         "Space from off → Require"
     );
 
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("picker space 2");
     assert_eq!(
         app.view_edit_state
@@ -17921,7 +17954,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
         "Space from Require → Exclude"
     );
 
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("picker space 3");
     assert_eq!(
         app.view_edit_state
@@ -17934,7 +17967,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
         "Space from Exclude → Or"
     );
 
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("picker space 4");
     assert_eq!(
         app.view_edit_state
@@ -17948,7 +17981,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     );
 
     // '+' key: sets Require directly
-    app.handle_view_edit_key(KeyCode::Char('+'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('+').into(), &aglet)
         .expect("picker + for require");
     assert_eq!(
         app.view_edit_state
@@ -17962,7 +17995,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     );
 
     // '-' key: sets Exclude directly
-    app.handle_view_edit_key(KeyCode::Char('-'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('-').into(), &aglet)
         .expect("picker - for exclude");
     assert_eq!(
         app.view_edit_state
@@ -17976,7 +18009,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     );
 
     // '3' key: sets Or
-    app.handle_view_edit_key(KeyCode::Char('3'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('3').into(), &aglet)
         .expect("picker 3 for one-of");
     assert_eq!(
         app.view_edit_state
@@ -17990,7 +18023,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     );
 
     // '0' key: clears
-    app.handle_view_edit_key(KeyCode::Char('0'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('0').into(), &aglet)
         .expect("picker 0 clears");
     assert_eq!(
         app.view_edit_state
@@ -18004,7 +18037,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     );
 
     // Set Exclude via '-' so we have a criterion for inline cycling test
-    app.handle_view_edit_key(KeyCode::Char('-'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('-').into(), &aglet)
         .expect("picker - sets exclude");
     assert_eq!(
         app.view_edit_state
@@ -18017,12 +18050,12 @@ fn view_edit_picker_space_cycles_criterion_mode() {
     );
 
     // Close picker with Esc
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close picker");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
 
     // Back in criteria region, Space should cycle the criterion mode
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("space cycles in criteria region");
     assert_eq!(
         app.view_edit_state
@@ -18059,7 +18092,8 @@ fn view_edit_tab_cycles_panes() {
         ViewEditPaneFocus::Details
     );
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
@@ -18069,7 +18103,8 @@ fn view_edit_tab_cycles_panes() {
         ViewEditRegion::Sections
     );
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Details
@@ -18079,7 +18114,7 @@ fn view_edit_tab_cycles_panes() {
         ViewEditRegion::Sections
     );
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab wraps to top settings");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -18108,7 +18143,7 @@ fn view_edit_shift_tab_cycles_panes_backwards() {
         app.view_edit_state.as_ref().unwrap().region,
         ViewEditRegion::Criteria
     );
-    app.handle_view_edit_key(KeyCode::BackTab, &aglet)
+    app.handle_view_edit_key(KeyCode::BackTab.into(), &aglet)
         .expect("shift-tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -18133,7 +18168,8 @@ fn view_edit_esc_returns_to_view_picker() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Esc, &aglet).expect("esc");
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
+        .expect("esc");
 
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.view_edit_state.is_none());
@@ -18152,28 +18188,28 @@ fn view_edit_esc_on_dirty_prompts_save_confirm() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('m'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle view display mode");
 
     // Esc on dirty state should show confirm dialog, not close
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("esc shows confirm");
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.as_ref().unwrap().discard_confirm);
 
     // Esc again cancels the dialog (keep editing)
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("esc cancels confirm");
     assert!(!app.view_edit_state.as_ref().unwrap().discard_confirm);
     assert_eq!(app.mode, Mode::ViewEdit);
 
     // Esc again re-opens confirm
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("esc shows confirm again");
     assert!(app.view_edit_state.as_ref().unwrap().discard_confirm);
 
     // 'n' discards and closes
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("n discards");
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.view_edit_state.is_none());
@@ -18203,12 +18239,13 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
     app.open_view_edit(view);
 
     // Move to Sections pane, then select first section row
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
     );
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("move to first section");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18216,12 +18253,12 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
     );
 
     // Press 't' to start inline edit
-    app.handle_view_edit_key(KeyCode::Char('t'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('t').into(), &aglet)
         .expect("t");
     assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_some());
 
     // Tab should go into inline buf, NOT cycle regions
-    app.handle_view_edit_key(KeyCode::Char('X'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('X').into(), &aglet)
         .expect("type");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18229,7 +18266,7 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
     );
 
     // Esc cancels inline input, stays in ViewEdit
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("esc inline");
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_none());
@@ -18252,12 +18289,12 @@ fn view_edit_category_picker_tab_closes_and_cycles_panes() {
     app.open_view_edit(view);
 
     // Press 'N' to open overlay
-    app.handle_view_edit_key(KeyCode::Char('N'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('N').into(), &aglet)
         .expect("N");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
     // Tab finishes the picker and continues through the editable pane loop.
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab during overlay");
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
@@ -18295,7 +18332,7 @@ fn view_edit_criteria_picker_enter_closes_without_toggling() {
         .expect("Work in category rows");
     app.view_edit_state.as_mut().unwrap().picker_index = work_picker_idx;
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter closes criteria picker");
     let state = app.view_edit_state.as_ref().unwrap();
     assert!(state.overlay.is_none());
@@ -18322,7 +18359,7 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
         ViewEditRegion::Criteria
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("criteria -> when include");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18333,7 +18370,7 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
         0
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("when include -> when exclude");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18344,105 +18381,105 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
         1
     );
 
-    app.handle_view_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("when exclude -> show unmatched");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         5
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("show unmatched -> aliases");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         8
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("aliases -> empty sections");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         4
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("empty sections -> section flow");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         3
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("section flow -> display mode");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         2
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("display mode -> section flow");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         3
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("section flow -> empty sections");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         4
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("empty sections -> aliases");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         8
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("aliases -> show unmatched");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         5
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("show unmatched -> hide dependent");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         6
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("hide dependent -> unmatched label");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         7
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("unmatched label stays at bottom");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         7
     );
 
-    app.handle_view_edit_key(KeyCode::Char('h'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('h').into(), &aglet)
         .expect("unmatched label -> date exclude");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         1
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("when exclude -> when include");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         0
     );
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("when include -> criteria");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18463,7 +18500,7 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to when include row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().region,
@@ -18474,9 +18511,9 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
         0
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to when exclude row");
-    app.handle_view_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to unmatched visible row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -18484,23 +18521,23 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
     );
 
     let before_visible = app.view_edit_state.as_ref().unwrap().draft.show_unmatched;
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle unmatched visible via enter");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.show_unmatched,
         !before_visible
     );
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("move to hide dependent row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("move to unmatched label row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         7
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("begin unmatched label edit");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().inline_input,
@@ -18521,7 +18558,7 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -18532,14 +18569,14 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
         EmptySections::Show
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle empty sections to collapse");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.empty_sections,
         EmptySections::Collapse
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle empty sections to hide");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.empty_sections,
@@ -18560,9 +18597,9 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("to section flow row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -18573,14 +18610,14 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
         SectionFlow::Vertical
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle section flow to horizontal");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.section_flow,
         SectionFlow::Horizontal
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle section flow back to vertical");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.section_flow,
@@ -18604,16 +18641,16 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to aliases row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         8
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open aliases picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -18629,7 +18666,7 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
         .position(|row| row.id == category.id)
         .expect("project row");
     app.view_edit_state.as_mut().unwrap().picker_index = project_idx;
-    app.handle_view_edit_key(KeyCode::Char('A'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('A').into(), &aglet)
         .expect("start alias input");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().inline_input,
@@ -18640,7 +18677,7 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
     if let Some(state) = &mut app.view_edit_state {
         state.inline_buf = super::text_buffer::TextBuffer::new("Client".to_string());
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("save alias");
     assert_eq!(
         app.view_edit_state
@@ -18673,9 +18710,9 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
     app.open_view_edit(view);
 
     // Enter unmatched details, then open aliases picker.
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("move to unmatched details");
-    app.handle_view_edit_key(KeyCode::Char('A'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('A').into(), &aglet)
         .expect("open aliases picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -18690,12 +18727,12 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
         .position(|row| row.id == category.id)
         .expect("project row");
     app.view_edit_state.as_mut().unwrap().picker_index = project_idx;
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("start alias input");
     if let Some(state) = &mut app.view_edit_state {
         state.inline_buf = super::text_buffer::TextBuffer::new(String::new());
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("commit empty alias");
     assert!(
         !app.view_edit_state
@@ -18721,13 +18758,13 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to when include row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
         0
     );
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open when include picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -18735,16 +18772,16 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
             target: super::BucketEditTarget::ViewVirtualInclude
         })
     ));
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close bucket picker");
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("back to criteria row");
-    app.handle_view_edit_key(KeyCode::Char('l'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('l').into(), &aglet)
         .expect("to empty sections row");
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("to section flow row");
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("to display mode row");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().unmatched_field_index,
@@ -18756,7 +18793,7 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
         .unwrap()
         .draft
         .board_display_mode;
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle display mode via details row");
     assert_ne!(
         app.view_edit_state
@@ -18802,7 +18839,7 @@ fn datebook_keys_step_bucket_and_window_independently() {
         (config.browse_offset, config.browse_interval_offset)
     };
 
-    app.handle_normal_key(KeyCode::Char('}'), &aglet)
+    app.handle_normal_key(KeyCode::Char('}').into(), &aglet)
         .expect("} steps one bucket");
     assert_eq!(
         offsets(&store),
@@ -18815,7 +18852,7 @@ fn datebook_keys_step_bucket_and_window_independently() {
         app.status
     );
 
-    app.handle_normal_key(KeyCode::Char(')'), &aglet)
+    app.handle_normal_key(KeyCode::Char(')').into(), &aglet)
         .expect(") steps a full window");
     assert_eq!(
         offsets(&store),
@@ -18823,7 +18860,7 @@ fn datebook_keys_step_bucket_and_window_independently() {
         ") should step the window, composing with the bucket offset"
     );
 
-    app.handle_normal_key(KeyCode::Char('{'), &aglet)
+    app.handle_normal_key(KeyCode::Char('{').into(), &aglet)
         .expect("{ steps back one bucket");
     assert_eq!(offsets(&store), (1, 0));
     assert!(
@@ -18832,7 +18869,7 @@ fn datebook_keys_step_bucket_and_window_independently() {
         app.status
     );
 
-    app.handle_normal_key(KeyCode::Char('0'), &aglet)
+    app.handle_normal_key(KeyCode::Char('0').into(), &aglet)
         .expect("0 resets both offsets");
     assert_eq!(offsets(&store), (0, 0));
     assert!(
@@ -18854,10 +18891,10 @@ fn view_edit_view_type_row_toggles_board_and_datebook() {
     view.sections
         .push(App::view_edit_default_section("New section"));
     app.open_view_edit_new_view_focus_name(view);
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close name input");
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("move from criteria to view type");
     assert!(app
         .view_edit_state
@@ -18871,7 +18908,7 @@ fn view_edit_view_type_row_toggles_board_and_datebook() {
         .datebook_config
         .is_none());
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle to datebook");
     assert!(app
         .view_edit_state
@@ -18881,7 +18918,7 @@ fn view_edit_view_type_row_toggles_board_and_datebook() {
         .datebook_config
         .is_some());
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle back to board");
     let state = app.view_edit_state.as_ref().unwrap();
     assert!(state.draft.datebook_config.is_none());
@@ -18904,9 +18941,9 @@ fn view_edit_view_type_row_is_locked_for_saved_views() {
     let view = test_view_from_app(&app);
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("move from criteria to view type");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt locked toggle");
 
     let state = app.view_edit_state.as_ref().unwrap();
@@ -18941,7 +18978,7 @@ fn view_edit_empty_criteria_enter_opens_category_picker() {
         .criteria
         .is_empty());
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("enter on empty criteria opens picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -18979,11 +19016,11 @@ fn view_edit_section_details_field_count_is_nine() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections pane");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select section row");
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to details pane");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -18992,7 +19029,7 @@ fn view_edit_section_details_field_count_is_nine() {
 
     // Navigate to the last field (index 8 with 9 fields)
     for _ in 0..15 {
-        app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+        app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
             .expect("advance details field");
     }
     assert_eq!(
@@ -19075,17 +19112,17 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select section");
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to details");
 
     // Field 1: Criteria
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to criteria field");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open section criteria picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -19093,13 +19130,13 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
             target: super::CategoryEditTarget::SectionCriteria
         })
     ));
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close picker");
 
     // Field 2: Columns
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to columns field");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open section columns picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -19107,17 +19144,17 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
             target: super::CategoryEditTarget::SectionColumns
         })
     ));
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close picker");
 
     // Field 3: Display mode (no picker, just toggle)
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to display mode field");
 
     // Field 4: On insert assign
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to on-insert field");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open on-insert picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -19125,13 +19162,13 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
             target: super::CategoryEditTarget::SectionOnInsertAssign
         })
     ));
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close picker");
 
     // Field 5: On remove unassign
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("to on-remove field");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("open on-remove picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -19139,7 +19176,7 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
             target: super::CategoryEditTarget::SectionOnRemoveUnassign
         })
     ));
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close picker");
 
     let _ = std::fs::remove_file(&db_path);
@@ -19171,15 +19208,15 @@ fn view_edit_section_layout_space_toggles_split_mode() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select section");
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to details");
 
     for _ in 0..6 {
-        app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+        app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
             .expect("move to section layout field");
     }
     assert_eq!(
@@ -19198,7 +19235,7 @@ fn view_edit_section_layout_space_toggles_split_mode() {
             .show_children
     );
 
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle section layout");
     assert!(
         app.view_edit_state
@@ -19238,15 +19275,15 @@ fn view_edit_h_does_not_toggle_section_layout() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select section");
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to details");
 
     for _ in 0..6 {
-        app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+        app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
             .expect("move to section layout field");
     }
     assert_eq!(
@@ -19257,7 +19294,7 @@ fn view_edit_h_does_not_toggle_section_layout() {
         6
     );
 
-    app.handle_view_edit_key(KeyCode::Char('h'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('h').into(), &aglet)
         .expect("h should be ignored");
     assert!(
         !app.view_edit_state
@@ -19298,16 +19335,16 @@ fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections pane");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select section row");
 
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.sections.len(),
         1
     );
-    app.handle_view_edit_key(KeyCode::Char('x'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('x').into(), &aglet)
         .expect("request delete");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.sections.len(),
@@ -19318,7 +19355,7 @@ fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
         Some(0)
     );
 
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("decline delete");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().section_delete_confirm,
@@ -19329,9 +19366,9 @@ fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
         1
     );
 
-    app.handle_view_edit_key(KeyCode::Char('x'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('x').into(), &aglet)
         .expect("request delete again");
-    app.handle_view_edit_key(KeyCode::Char('y'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm delete");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.sections.len(),
@@ -19375,11 +19412,11 @@ fn view_edit_section_details_x_prompts_before_delete() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to sections");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select section");
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("to details");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -19390,7 +19427,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
         ViewEditRegion::Sections
     );
 
-    app.handle_view_edit_key(KeyCode::Char('x'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('x').into(), &aglet)
         .expect("details x requests delete");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().section_delete_confirm,
@@ -19401,7 +19438,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
         1
     );
 
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel delete confirm");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().section_delete_confirm,
@@ -19436,7 +19473,7 @@ fn view_edit_category_picker_allows_multi_select_with_space() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("open category picker");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
@@ -19454,7 +19491,7 @@ fn view_edit_category_picker_allows_multi_select_with_space() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = work_idx;
     }
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle work");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
     assert!(app
@@ -19469,7 +19506,7 @@ fn view_edit_category_picker_allows_multi_select_with_space() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = home_idx;
     }
-    app.handle_view_edit_key(KeyCode::Char(' '), &aglet)
+    app.handle_view_edit_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle home");
     assert!(app
         .view_edit_state
@@ -19481,7 +19518,7 @@ fn view_edit_category_picker_allows_multi_select_with_space() {
         .is_some());
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_some());
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("close category picker");
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
     assert_eq!(app.mode, Mode::ViewEdit);
@@ -19510,13 +19547,14 @@ fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
     );
 
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("add section");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.sections.len(),
@@ -19529,10 +19567,10 @@ fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
             ..
         })
     ));
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm default section title");
 
-    app.handle_view_edit_key(KeyCode::Char('f'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('f').into(), &aglet)
         .expect("open section criteria picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -19560,12 +19598,13 @@ fn view_edit_section_e_starts_section_title_edit() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("add section");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm default section title");
-    app.handle_view_edit_key(KeyCode::Char('e'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('e').into(), &aglet)
         .expect("start section title edit");
 
     assert!(matches!(
@@ -19595,8 +19634,9 @@ fn view_edit_section_uppercase_n_adds_and_starts_section_title_edit() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_view_edit_key(KeyCode::Char('N'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
+    app.handle_view_edit_key(KeyCode::Char('N').into(), &aglet)
         .expect("add section and start title edit");
 
     let state = app.view_edit_state.as_ref().expect("view edit state");
@@ -19650,14 +19690,15 @@ fn view_edit_section_lowercase_n_inserts_below_current_and_starts_title_edit() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select first section");
     if let Some(state) = &mut app.view_edit_state {
         state.section_index = 0;
     }
 
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("insert below");
 
     let state = app.view_edit_state.as_ref().expect("view edit state");
@@ -19713,13 +19754,14 @@ fn view_edit_section_uppercase_n_inserts_above_current_and_starts_title_edit() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select first section");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select second section");
 
-    app.handle_view_edit_key(KeyCode::Char('N'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('N').into(), &aglet)
         .expect("insert above");
 
     let state = app.view_edit_state.as_ref().expect("view edit state");
@@ -19775,22 +19817,22 @@ fn view_edit_section_uppercase_jk_reorders_sections() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to sections");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select first section");
-    app.handle_view_edit_key(KeyCode::Char('j'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('j').into(), &aglet)
         .expect("select second section");
     assert_eq!(app.view_edit_state.as_ref().unwrap().section_index, 1);
 
-    app.handle_view_edit_key(KeyCode::Char('K'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('K').into(), &aglet)
         .expect("move selected section up");
     let state = app.view_edit_state.as_ref().unwrap();
     assert_eq!(state.section_index, 0);
     assert_eq!(state.draft.sections[0].title, "Bravo");
     assert_eq!(state.draft.sections[1].title, "Alpha");
 
-    app.handle_view_edit_key(KeyCode::Char('J'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('J').into(), &aglet)
         .expect("move selected section down");
     let state = app.view_edit_state.as_ref().unwrap();
     assert_eq!(state.section_index, 1);
@@ -19826,7 +19868,7 @@ fn view_edit_sections_up_from_first_row_focuses_view_settings() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to sections");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -19837,7 +19879,7 @@ fn view_edit_sections_up_from_first_row_focuses_view_settings() {
     assert_eq!(state.region, ViewEditRegion::Sections);
     assert_eq!(state.section_index, 0, "section cursor is preserved");
 
-    app.handle_view_edit_key(KeyCode::Char('k'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('k').into(), &aglet)
         .expect("up should focus view settings");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -19867,7 +19909,7 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('r'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('r').into(), &aglet)
         .expect("start view rename");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().inline_input,
@@ -19877,7 +19919,7 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
     if let Some(state) = &mut app.view_edit_state {
         state.inline_buf = super::text_buffer::TextBuffer::new("UX Board".to_string());
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("commit view name");
 
     let state = app.view_edit_state.as_ref().expect("state");
@@ -19903,12 +19945,12 @@ fn view_edit_name_tab_commits_and_moves_to_view_type() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('r'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('r').into(), &aglet)
         .expect("start view rename");
     if let Some(state) = &mut app.view_edit_state {
         state.inline_buf = super::text_buffer::TextBuffer::new("Tabbed Name".to_string());
     }
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab commits name and moves focus");
 
     let state = app.view_edit_state.as_ref().expect("state");
@@ -19959,7 +20001,7 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
     });
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Char('/'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('/').into(), &aglet)
         .expect("open section filter");
     let state = app.view_edit_state.as_ref().expect("view edit state");
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Sections);
@@ -19968,7 +20010,7 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
         Some(super::ViewEditInlineInput::SectionsFilter)
     ));
 
-    app.handle_view_edit_key(KeyCode::Char('b'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('b').into(), &aglet)
         .expect("type filter");
     assert_eq!(
         app.view_edit_state
@@ -19979,7 +20021,7 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
         "b"
     );
 
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("finish filter edit");
     assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_none());
     assert_eq!(
@@ -19991,7 +20033,7 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
         "b"
     );
 
-    app.handle_view_edit_key(KeyCode::Esc, &aglet)
+    app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("esc clears active filter before closing");
     assert_eq!(app.mode, Mode::ViewEdit, "editor should stay open");
     assert_eq!(
@@ -20074,17 +20116,17 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
     );
 
     // p toggles preview off
-    app.handle_view_edit_key(KeyCode::Char('p'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('p').into(), &aglet)
         .expect("hide preview");
     assert!(!app.view_edit_state.as_ref().unwrap().preview_visible);
 
     // p toggles it back on
-    app.handle_view_edit_key(KeyCode::Char('p'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('p').into(), &aglet)
         .expect("show preview again");
     assert!(app.view_edit_state.as_ref().unwrap().preview_visible);
 
     // Tab moves through the pane loop: top settings -> sections.
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("details -> sections");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -20092,7 +20134,7 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
     );
 
     // Shift-P focuses preview directly
-    app.handle_view_edit_key(KeyCode::Char('P'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('P').into(), &aglet)
         .expect("P focuses preview");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -20100,7 +20142,7 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
     );
 
     // Tab from an explicitly focused preview returns to the editable pane loop.
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("preview -> top settings via tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -20112,9 +20154,9 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
     );
 
     // Focus preview again, then hide it with p
-    app.handle_view_edit_key(KeyCode::Char('P'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('P').into(), &aglet)
         .expect("P focuses preview again");
-    app.handle_view_edit_key(KeyCode::Char('p'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('p').into(), &aglet)
         .expect("hide preview while preview focused");
     let state = app.view_edit_state.as_ref().unwrap();
     assert!(!state.preview_visible);
@@ -20148,9 +20190,9 @@ fn view_edit_preview_renders_on_narrow_terminal_without_panic() {
         board_display_mode_override: None,
     });
     app.open_view_edit(view);
-    app.handle_view_edit_key(KeyCode::Char('p'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('p').into(), &aglet)
         .expect("show preview");
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("details -> preview focus");
 
     let backend = TestBackend::new(90, 28);
@@ -20226,13 +20268,14 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
         .expect("TestView should exist");
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
         .expect("add section");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm default section title");
 
-    app.handle_view_edit_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('c').into(), &aglet)
         .expect("open section columns picker");
     assert!(matches!(
         app.view_edit_state.as_ref().unwrap().overlay,
@@ -20250,7 +20293,7 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = work_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("toggle section column");
     assert!(app.view_edit_state.as_ref().unwrap().draft.sections[0]
         .columns
@@ -20280,11 +20323,13 @@ fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Char('c').into(), &aglet)
         .unwrap();
 
     let leaf_idx = app
@@ -20315,7 +20360,8 @@ fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = leaf_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
 
     // OrphanTag should NOT have been added (filtered out).
     assert!(
@@ -20355,11 +20401,13 @@ fn section_column_picker_includes_non_leaf_tag_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Char('c').into(), &aglet)
         .unwrap();
 
     let status_idx = app
@@ -20370,7 +20418,8 @@ fn section_column_picker_includes_non_leaf_tag_headings() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = status_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
 
     assert!(
         app.view_edit_state.as_ref().unwrap().draft.sections[0]
@@ -20408,11 +20457,13 @@ fn section_column_picker_includes_nested_non_leaf_tag_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Char('c').into(), &aglet)
         .unwrap();
 
     let phase_idx = app
@@ -20423,7 +20474,8 @@ fn section_column_picker_includes_nested_non_leaf_tag_headings() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = phase_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
 
     assert!(
         app.view_edit_state.as_ref().unwrap().draft.sections[0]
@@ -20456,11 +20508,13 @@ fn section_column_picker_includes_numeric_leaf_headings() {
         .unwrap();
     app.open_view_edit(view);
 
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('n'), &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .unwrap();
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
-    app.handle_view_edit_key(KeyCode::Char('c'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('n').into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
+    app.handle_view_edit_key(KeyCode::Char('c').into(), &aglet)
         .unwrap();
 
     let cost_idx = app
@@ -20471,7 +20525,8 @@ fn section_column_picker_includes_numeric_leaf_headings() {
     if let Some(state) = &mut app.view_edit_state {
         state.picker_index = cost_idx;
     }
-    app.handle_view_edit_key(KeyCode::Enter, &aglet).unwrap();
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
+        .unwrap();
 
     assert!(
         app.view_edit_state.as_ref().unwrap().draft.sections[0]
@@ -20504,21 +20559,22 @@ fn view_edit_save_persists_view() {
     app.open_view_edit(view);
 
     // Add a section via 'N' in Sections region
-    app.handle_view_edit_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
+        .expect("tab");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Sections
     );
-    app.handle_view_edit_key(KeyCode::Char('N'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('N').into(), &aglet)
         .expect("N adds section");
-    app.handle_view_edit_key(KeyCode::Enter, &aglet)
+    app.handle_view_edit_key(KeyCode::Enter.into(), &aglet)
         .expect("confirm default section title");
     // After confirming new section title, focus auto-moves to Details pane
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
         ViewEditPaneFocus::Details
     );
-    app.handle_view_edit_key(KeyCode::Char('m'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle section display override");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().draft.sections.len(),
@@ -20531,7 +20587,7 @@ fn view_edit_save_persists_view() {
 
     // Move from section details to view criteria details.
     // Tab skips preview because it is read-only.
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("focus view settings");
     assert_eq!(
         app.view_edit_state.as_ref().unwrap().pane_focus,
@@ -20543,7 +20599,7 @@ fn view_edit_save_persists_view() {
     );
 
     // Toggle view default display mode in Criteria details
-    app.handle_view_edit_key(KeyCode::Char('m'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('m').into(), &aglet)
         .expect("toggle view display mode");
     assert_eq!(
         app.view_edit_state
@@ -20553,7 +20609,7 @@ fn view_edit_save_persists_view() {
             .board_display_mode,
         BoardDisplayMode::MultiLine
     );
-    app.handle_view_edit_key(KeyCode::Tab, &aglet)
+    app.handle_view_edit_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to sections");
 
     // Verify draft has section before save
@@ -20594,7 +20650,7 @@ fn view_edit_save_persists_view() {
     );
 
     // Save with S (save + exit)
-    app.handle_view_edit_key(KeyCode::Char('S'), &aglet)
+    app.handle_view_edit_key(KeyCode::Char('S').into(), &aglet)
         .expect("S save");
     assert_eq!(app.mode, Mode::ViewPicker);
     assert!(app.view_edit_state.is_none());
@@ -20769,7 +20825,7 @@ fn normal_mode_right_bracket_moves_item_and_reports_category_delta() {
     app.slot_index = 0;
     app.item_index = 0;
 
-    app.handle_normal_key(KeyCode::Char(']'), &aglet)
+    app.handle_normal_key(KeyCode::Char(']').into(), &aglet)
         .expect("right bracket moves item to next section");
 
     assert_eq!(app.slot_index, 1);
@@ -20851,11 +20907,11 @@ fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_inde
     assert_eq!(app.slot_index, 0);
     assert_eq!(app.item_index, 0);
 
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("move down in first lane");
     assert_eq!(app.item_index, 1, "first lane selection should advance");
 
-    app.handle_normal_key(KeyCode::Char('l'), &aglet)
+    app.handle_normal_key(KeyCode::Char('l').into(), &aglet)
         .expect("move to second lane");
     assert_eq!(app.slot_index, 1);
     assert_eq!(
@@ -20863,11 +20919,11 @@ fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_inde
         "second lane should start at its own row index"
     );
 
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("move down in second lane");
     assert_eq!(app.item_index, 1, "second lane selection should advance");
 
-    app.handle_normal_key(KeyCode::Char('h'), &aglet)
+    app.handle_normal_key(KeyCode::Char('h').into(), &aglet)
         .expect("move back to first lane");
     assert_eq!(app.slot_index, 0);
     assert_eq!(
@@ -20892,11 +20948,11 @@ fn vertical_section_tab_restores_section_item_index() {
     assert_eq!(app.slot_index, 0);
     assert_eq!(app.item_index, 0);
 
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("move down in first section");
     assert_eq!(app.item_index, 1, "first section selection should advance");
 
-    app.handle_normal_key(KeyCode::Tab, &aglet)
+    app.handle_normal_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to second section");
     assert_eq!(app.slot_index, 1);
     assert_eq!(
@@ -20904,11 +20960,11 @@ fn vertical_section_tab_restores_section_item_index() {
         "second section should start at its own remembered row"
     );
 
-    app.handle_normal_key(KeyCode::Char('j'), &aglet)
+    app.handle_normal_key(KeyCode::Char('j').into(), &aglet)
         .expect("move down in second section");
     assert_eq!(app.item_index, 1, "second section selection should advance");
 
-    app.handle_normal_key(KeyCode::BackTab, &aglet)
+    app.handle_normal_key(KeyCode::BackTab.into(), &aglet)
         .expect("shift-tab to first section");
     assert_eq!(app.slot_index, 0);
     assert_eq!(
@@ -20916,7 +20972,7 @@ fn vertical_section_tab_restores_section_item_index() {
         "first section should restore its remembered row selection"
     );
 
-    app.handle_normal_key(KeyCode::Tab, &aglet)
+    app.handle_normal_key(KeyCode::Tab.into(), &aglet)
         .expect("tab back to second section");
     assert_eq!(app.slot_index, 1);
     assert_eq!(
@@ -21015,7 +21071,7 @@ fn vertical_section_tab_keeps_section_scroll_offset_stable() {
         "deep selection should establish a non-zero section scroll offset"
     );
 
-    app.handle_normal_key(KeyCode::Tab, &aglet)
+    app.handle_normal_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to ready section");
     terminal
         .draw(|frame| app.draw(frame))
@@ -21347,7 +21403,7 @@ fn horizontal_section_tab_keeps_lane_scroll_offset_stable() {
         "deep selection should establish a non-zero lane scroll offset"
     );
 
-    app.handle_normal_key(KeyCode::Tab, &aglet)
+    app.handle_normal_key(KeyCode::Tab.into(), &aglet)
         .expect("tab to ready lane");
     terminal
         .draw(|frame| app.draw(frame))
@@ -21448,17 +21504,17 @@ fn section_filters_are_independent() {
 
     // Filter slot 0 for "timeout" via search bar
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
     assert_eq!(app.mode, Mode::SearchBarFocused);
 
     // Type "timeout" — live-filters as we type
     for ch in "timeout".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
     // Unfocus to keep filter active
-    app.handle_search_bar_key(KeyCode::Down, &aglet)
+    app.handle_search_bar_key(KeyCode::Down.into(), &aglet)
         .expect("unfocus search bar");
 
     // slot 0 now shows only 1 item, slot 1 is unaffected
@@ -21487,7 +21543,7 @@ fn section_filter_cleared_by_esc_in_normal_mode() {
 
     // Esc in slot 0 clears its filter
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Esc, &aglet)
+    app.handle_normal_key(KeyCode::Esc.into(), &aglet)
         .expect("esc clears filter");
 
     assert!(
@@ -21517,16 +21573,16 @@ fn search_bar_esc_clears_filter_and_buffer() {
 
     // Type something in search bar
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
     for ch in "fix".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
     assert_eq!(app.section_filters[0], Some("fix".to_string()));
 
     // Esc should clear both buffer and filter
-    app.handle_search_bar_key(KeyCode::Esc, &aglet)
+    app.handle_search_bar_key(KeyCode::Esc.into(), &aglet)
         .expect("esc clears");
     assert_eq!(app.mode, Mode::Normal);
     assert!(
@@ -21583,11 +21639,11 @@ fn search_bar_live_filtering() {
     app.refresh(&store).expect("refresh TestView");
 
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
 
     // Type 'f' — should filter live
-    app.handle_search_bar_key(KeyCode::Char('f'), &aglet)
+    app.handle_search_bar_key(KeyCode::Char('f').into(), &aglet)
         .expect("type f");
     assert_eq!(
         app.section_filters[0],
@@ -21614,10 +21670,10 @@ fn search_bar_filters_match_assigned_category_names() {
     // Personal section items do not contain the word "personal" in text,
     // so this only matches once category-name search is enabled.
     app.slot_index = 1;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
     for ch in "personal".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
 
@@ -21658,10 +21714,10 @@ fn search_bar_filters_match_item_uuid_prefix() {
     app.refresh(&store).expect("refresh TestView");
 
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
     for ch in uuid_prefix.chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
 
@@ -21719,9 +21775,9 @@ fn fuzzy_search_ranks_title_matches_before_substring_fallback_and_uses_sort_as_t
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
     app.column_index = 0;
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("sort item asc");
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("sort item desc");
     let sorted_order: Vec<String> = app.slots[0]
         .items
@@ -21829,14 +21885,14 @@ fn search_bar_enter_reveals_top_visible_item() {
     app.refresh(&store).expect("refresh TestView");
 
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
 
     for ch in "fix".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
-    app.handle_search_bar_key(KeyCode::Enter, &aglet)
+    app.handle_search_bar_key(KeyCode::Enter.into(), &aglet)
         .expect("enter");
 
     assert_eq!(
@@ -21866,14 +21922,14 @@ fn search_bar_enter_with_no_match_does_not_create_item() {
     app.refresh(&store).expect("refresh TestView");
 
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
 
     for ch in "Brand new task".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
-    app.handle_search_bar_key(KeyCode::Enter, &aglet)
+    app.handle_search_bar_key(KeyCode::Enter.into(), &aglet)
         .expect("enter stays in search");
 
     assert_eq!(app.mode, Mode::SearchBarFocused, "search stays focused");
@@ -21913,15 +21969,15 @@ fn search_bar_down_unfocuses_keeps_filter() {
     app.refresh(&store).expect("refresh TestView");
 
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
 
     for ch in "fix".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
 
-    app.handle_search_bar_key(KeyCode::Down, &aglet)
+    app.handle_search_bar_key(KeyCode::Down.into(), &aglet)
         .expect("down unfocuses");
     assert_eq!(app.mode, Mode::Normal, "back to normal");
     assert_eq!(
@@ -21945,21 +22001,21 @@ fn search_bar_slash_resumes_with_text() {
     app.refresh(&store).expect("refresh TestView");
 
     app.slot_index = 0;
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("open search bar");
 
     for ch in "fix".chars() {
-        app.handle_search_bar_key(KeyCode::Char(ch), &aglet)
+        app.handle_search_bar_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type char");
     }
 
     // Unfocus
-    app.handle_search_bar_key(KeyCode::Down, &aglet)
+    app.handle_search_bar_key(KeyCode::Down.into(), &aglet)
         .expect("down");
     assert_eq!(app.mode, Mode::Normal);
 
     // Re-focus with /
-    app.handle_normal_key(KeyCode::Char('/'), &aglet)
+    app.handle_normal_key(KeyCode::Char('/').into(), &aglet)
         .expect("reopen search bar");
     assert_eq!(app.mode, Mode::SearchBarFocused);
     assert_eq!(app.search_buffer.text(), "fix", "buffer retains text");
@@ -22031,10 +22087,10 @@ fn board_sorting_new_column_becomes_primary_and_previous_becomes_secondary() {
     app.refresh(&store).expect("refresh board");
 
     app.column_index = 0;
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("sort item asc");
     app.column_index = 1;
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("sort priority asc");
 
     let order: Vec<String> = app.slots[0]
@@ -22118,7 +22174,7 @@ fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
     app.refresh(&store).expect("refresh board");
 
     app.column_index = 1;
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("sort cost asc");
     assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Asc);
     let asc_order: Vec<String> = app.slots[0]
@@ -22131,7 +22187,7 @@ fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
         vec!["Five".to_string(), "Ten".to_string(), "Missing".to_string()]
     );
 
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("sort cost desc");
     assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Desc);
     let desc_order: Vec<String> = app.slots[0]
@@ -22144,7 +22200,7 @@ fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
         vec!["Ten".to_string(), "Five".to_string(), "Missing".to_string()]
     );
 
-    app.handle_key(KeyCode::Char('s'), &aglet)
+    app.handle_key(KeyCode::Char('s').into(), &aglet)
         .expect("clear sort");
     assert!(
         app.slot_sort_keys[0].is_empty(),
@@ -22215,11 +22271,11 @@ fn board_sorting_angle_brackets_alias_ascending_and_descending_sort() {
     app.refresh(&store).expect("refresh board");
 
     app.column_index = 1;
-    app.handle_key(KeyCode::Char('<'), &aglet)
+    app.handle_key(KeyCode::Char('<').into(), &aglet)
         .expect("ascending sort alias");
     assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Asc);
 
-    app.handle_key(KeyCode::Char('>'), &aglet)
+    app.handle_key(KeyCode::Char('>').into(), &aglet)
         .expect("descending sort alias");
     assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Desc);
 
@@ -22387,13 +22443,13 @@ fn shift_f_cycles_column_summary_fn() {
     assert_eq!(col.summary_fn, None);
 
     // Press F to cycle: None -> Sum
-    app.handle_normal_key(KeyCode::Char('F'), &aglet)
+    app.handle_normal_key(KeyCode::Char('F').into(), &aglet)
         .expect("press F");
     let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
     assert_eq!(col.summary_fn, Some(SummaryFn::Sum));
 
     // Press F again: Sum -> Avg
-    app.handle_normal_key(KeyCode::Char('F'), &aglet)
+    app.handle_normal_key(KeyCode::Char('F').into(), &aglet)
         .expect("press F again");
     let col = &store.get_view(view.id).expect("get view").sections[0].columns[0];
     assert_eq!(col.summary_fn, Some(SummaryFn::Avg));
@@ -22444,7 +22500,7 @@ fn shift_f_on_non_numeric_column_is_noop() {
     app.refresh(&store).expect("refresh board");
     app.column_index = 1; // section column 0 maps to board index 1 (item at 0)
 
-    app.handle_normal_key(KeyCode::Char('F'), &aglet)
+    app.handle_normal_key(KeyCode::Char('F').into(), &aglet)
         .expect("press F on tag column");
 
     // Should remain None — tag columns don't support summary functions
@@ -22525,7 +22581,7 @@ fn numeric_column_enter_opens_numeric_editor_not_category_picker() {
     // Column 0 = item, column 1 = Cost
     app.column_index = 1;
 
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("press Enter on numeric column");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -22557,18 +22613,18 @@ fn numeric_column_edit_saves_value_and_returns_to_normal() {
     app.column_index = 1;
 
     // Open editor
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open numeric editor");
     assert_eq!(app.mode, Mode::InputPanel);
 
     // Type a value
     for ch in "245.96".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type digit");
     }
 
     // Enter in value field saves directly.
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("save numeric value");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -22599,17 +22655,17 @@ fn numeric_column_edit_invalid_input_shows_error_and_keeps_panel_open() {
     app.column_index = 1;
 
     // Open editor
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open numeric editor");
 
     // Type invalid input
     for ch in "abc".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("type invalid");
     }
 
     // Enter in value field attempts save and should fail validation.
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("attempt save");
 
     // Panel should still be open
@@ -22645,7 +22701,7 @@ fn numeric_column_edit_prefills_existing_value() {
     app.column_index = 1;
 
     // Open editor
-    app.handle_key(KeyCode::Enter, &aglet)
+    app.handle_key(KeyCode::Enter.into(), &aglet)
         .expect("open numeric editor");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -22734,7 +22790,7 @@ fn edit_panel_shows_numeric_buffers_for_assigned_numeric_categories() {
     app.refresh(&store).expect("refresh board");
 
     // Press 'e' to open edit panel
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
     assert_eq!(app.mode, Mode::InputPanel);
 
@@ -22769,7 +22825,7 @@ fn edit_panel_inline_category_toggle_applies_diff_on_save() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
 
     // Inline checklist starts checked from the item's assignments.
@@ -22779,7 +22835,7 @@ fn edit_panel_inline_category_toggle_applies_diff_on_save() {
 
     // Tab to Categories, toggle Home on and Work off, save.
     for _ in 0..3 {
-        app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+        app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     }
     let home_row = app
         .input_panel_visible_category_row_indices()
@@ -22789,7 +22845,7 @@ fn edit_panel_inline_category_toggle_applies_diff_on_save() {
     if let Some(panel) = app.input_panel.as_mut() {
         panel.category_cursor = home_row;
     }
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle home on");
     let work_row = app
         .input_panel_visible_category_row_indices()
@@ -22799,9 +22855,9 @@ fn edit_panel_inline_category_toggle_applies_diff_on_save() {
     if let Some(panel) = app.input_panel.as_mut() {
         panel.category_cursor = work_row;
     }
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle work off");
-    app.handle_key(KeyCode::Char('S'), &aglet)
+    app.handle_key(KeyCode::Char('S').into(), &aglet)
         .expect("save edit");
 
     assert_eq!(app.mode, Mode::Normal);
@@ -22838,7 +22894,7 @@ fn edit_panel_renders_inline_categories_pane_not_actions() {
     app.refresh(&store).expect("refresh");
     app.set_item_selection_by_id(item.id);
     app.mode = Mode::Normal;
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
 
     let backend = TestBackend::new(110, 30);
@@ -22872,19 +22928,19 @@ fn edit_panel_actions_open_assign_and_return_to_edit() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
 
     // Tab to Categories: Text -> When -> Note -> Categories
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Categories
     );
 
-    app.handle_key(KeyCode::Char('a'), &aglet)
+    app.handle_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker from edit");
     assert_eq!(app.mode, Mode::ItemAssignPicker);
 
@@ -22894,9 +22950,9 @@ fn edit_panel_actions_open_assign_and_return_to_edit() {
         .position(|r| r.id == extra.id)
         .expect("Bug should be in category_rows");
     app.item_assign_category_index = bug_idx;
-    app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
+    app.handle_item_assign_category_key(KeyCode::Char(' ').into(), &aglet)
         .expect("toggle bug in assign picker");
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("return to edit panel");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -22926,17 +22982,17 @@ fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
 
     for ch in " updated".chars() {
-        app.handle_key(KeyCode::Char(ch), &aglet)
+        app.handle_key(KeyCode::Char(ch).into(), &aglet)
             .expect("update title draft");
     }
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Char('a'), &aglet)
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Char('a').into(), &aglet)
         .expect("open assign picker from edit");
     let idea_idx = app
         .category_rows
@@ -22944,7 +23000,7 @@ fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
         .position(|r| r.id == extra.id)
         .expect("Idea should be in category_rows");
     app.item_assign_category_index = idea_idx;
-    app.handle_item_assign_category_key(KeyCode::Enter, &aglet)
+    app.handle_item_assign_category_key(KeyCode::Enter.into(), &aglet)
         .expect("apply idea and return");
 
     assert_eq!(app.mode, Mode::InputPanel);
@@ -22953,14 +23009,14 @@ fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
         "Test item updated"
     );
     // Esc triggers discard-confirm since panel is dirty
-    app.handle_key(KeyCode::Esc, &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("trigger discard confirm");
     assert!(
         app.input_panel.as_ref().is_some_and(|p| p.discard_confirm),
         "dirty edit panel should show discard confirm"
     );
     // y saves
-    app.handle_key(KeyCode::Char('y'), &aglet)
+    app.handle_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm save");
 
     let saved = store.get_item(item_id).expect("load item");
@@ -23001,7 +23057,7 @@ fn edit_panel_focus_cycle_actions_always_present() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
     assert_eq!(app.mode, Mode::InputPanel);
 
@@ -23009,23 +23065,23 @@ fn edit_panel_focus_cycle_actions_always_present() {
     assert!(panel.numeric_buffers.is_empty());
 
     // Tab cycle matches Add Item: Text -> When -> Note -> Categories -> Text
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::When
     );
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Note
     );
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Categories
     );
     // Tab from Categories wraps back to Text
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Text
@@ -23059,17 +23115,17 @@ fn edit_panel_actions_support_arrow_selection_and_enter() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
 
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Categories
     );
-    app.handle_key(KeyCode::Char('I'), &aglet)
+    app.handle_key(KeyCode::Char('I').into(), &aglet)
         .expect("open details with the inspector shortcut");
     assert!(app.input_panel.as_ref().unwrap().details_popup_open);
 }
@@ -23120,11 +23176,11 @@ fn edit_panel_suggestions_can_be_toggled_before_actions() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Categories,
@@ -23137,7 +23193,7 @@ fn edit_panel_suggestions_can_be_toggled_before_actions() {
         SuggestionDecision::Pending
     );
 
-    app.handle_key(KeyCode::Char(' '), &aglet)
+    app.handle_key(KeyCode::Char(' ').into(), &aglet)
         .expect("accept suggestion");
 
     assert_eq!(
@@ -23150,7 +23206,7 @@ fn edit_panel_suggestions_can_be_toggled_before_actions() {
         app.status
     );
 
-    app.handle_key(KeyCode::Down, &aglet)
+    app.handle_key(KeyCode::Down.into(), &aglet)
         .expect("move past suggestions into category rows");
     assert!(
         app.input_panel.as_ref().unwrap().category_cursor >= 1,
@@ -23191,27 +23247,27 @@ fn edit_item_details_popup_opens_and_scrolls() {
     app.set_view_selection_by_name("Board");
     app.refresh(&store).expect("refresh board");
 
-    app.handle_key(KeyCode::Char('e'), &aglet)
+    app.handle_key(KeyCode::Char('e').into(), &aglet)
         .expect("open edit panel");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
-    app.handle_key(KeyCode::Tab, &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
+    app.handle_key(KeyCode::Tab.into(), &aglet).expect("tab");
     assert_eq!(
         app.input_panel.as_ref().unwrap().focus,
         input_panel::InputPanelFocus::Categories
     );
-    app.handle_key(KeyCode::Char('I'), &aglet)
+    app.handle_key(KeyCode::Char('I').into(), &aglet)
         .expect("open details popup");
     assert!(app.input_panel.as_ref().unwrap().details_popup_open);
     assert_eq!(app.input_panel.as_ref().unwrap().details_scroll, 0);
 
-    app.handle_key(KeyCode::PageDown, &aglet)
+    app.handle_key(KeyCode::PageDown.into(), &aglet)
         .expect("scroll details");
     assert!(
         app.input_panel.as_ref().unwrap().details_scroll > 0,
         "details popup should scroll"
     );
-    app.handle_key(KeyCode::Esc, &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("close details popup");
     assert!(!app.input_panel.as_ref().unwrap().details_popup_open);
 }

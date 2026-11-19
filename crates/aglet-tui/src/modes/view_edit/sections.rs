@@ -157,8 +157,9 @@ impl App {
 
     pub(crate) fn handle_view_edit_section_details_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let field_count = 9usize;
         let section_index = self
             .view_edit_state
@@ -188,22 +189,22 @@ impl App {
             }
             KeyCode::Char(' ') | KeyCode::Enter => match current_index {
                 0 => {
-                    return self.handle_view_edit_sections_key(KeyCode::Char('e'));
+                    return self.handle_view_edit_sections_key(KeyCode::Char('e').into());
                 }
                 1 => {
-                    return self.handle_view_edit_sections_key(KeyCode::Char('f'));
+                    return self.handle_view_edit_sections_key(KeyCode::Char('f').into());
                 }
                 2 => {
-                    return self.handle_view_edit_sections_key(KeyCode::Char('c'));
+                    return self.handle_view_edit_sections_key(KeyCode::Char('c').into());
                 }
                 3 => {
-                    return self.handle_view_edit_sections_key(KeyCode::Char('m'));
+                    return self.handle_view_edit_sections_key(KeyCode::Char('m').into());
                 }
                 4 => {
-                    return self.handle_view_edit_sections_key(KeyCode::Char('a'));
+                    return self.handle_view_edit_sections_key(KeyCode::Char('a').into());
                 }
                 5 => {
-                    return self.handle_view_edit_sections_key(KeyCode::Char('r'));
+                    return self.handle_view_edit_sections_key(KeyCode::Char('r').into());
                 }
                 6 => {
                     self.toggle_view_edit_section_show_children(section_index);
@@ -230,13 +231,14 @@ impl App {
                 _ => {}
             },
             _ => {
-                return self.handle_view_edit_sections_key(code);
+                return self.handle_view_edit_sections_key(key);
             }
         }
         Ok(true)
     }
 
-    pub(crate) fn handle_view_edit_sections_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    pub(crate) fn handle_view_edit_sections_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };

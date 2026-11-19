@@ -36,7 +36,8 @@ impl App {
         self.status = format!("Alias for {}: type text  Enter:save  Esc:cancel", row.name);
     }
 
-    pub(crate) fn handle_view_edit_inline_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    pub(crate) fn handle_view_edit_inline_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         let Some(state) = &self.view_edit_state else {
             return Ok(false);
         };
@@ -178,7 +179,7 @@ impl App {
             }
             _ => {
                 let mut filter_status: Option<String> = None;
-                let text_key = self.text_key_event(code);
+                let text_key = key;
                 if let Some(state) = &mut self.view_edit_state {
                     match inline {
                         Some(ViewEditInlineInput::SectionsFilter) => {

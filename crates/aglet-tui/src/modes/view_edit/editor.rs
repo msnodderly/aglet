@@ -204,7 +204,7 @@ impl App {
 
     pub(crate) fn handle_view_edit_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
         if self
@@ -213,7 +213,7 @@ impl App {
             .map(|s| s.inline_input.is_some())
             .unwrap_or(false)
         {
-            self.handle_view_edit_inline_key(code)?;
+            self.handle_view_edit_inline_key(key)?;
             return Ok(false);
         }
 
@@ -223,7 +223,7 @@ impl App {
             .map(|s| s.overlay.is_some())
             .unwrap_or(false)
         {
-            self.handle_view_edit_overlay_key(code)?;
+            self.handle_view_edit_overlay_key(key)?;
             return Ok(false);
         }
 
@@ -233,7 +233,7 @@ impl App {
             .and_then(|s| s.section_delete_confirm)
             .is_some()
         {
-            self.handle_view_edit_section_delete_confirm_key(code)?;
+            self.handle_view_edit_section_delete_confirm_key(key)?;
             return Ok(false);
         }
 
@@ -243,15 +243,16 @@ impl App {
             .map(|s| s.discard_confirm)
             .unwrap_or(false)
         {
-            self.handle_view_edit_discard_confirm_key(code, aglet)?;
+            self.handle_view_edit_discard_confirm_key(key, aglet)?;
             return Ok(false);
         }
 
-        self.handle_view_edit_region_key(code, aglet)?;
+        self.handle_view_edit_region_key(key, aglet)?;
         Ok(false)
     }
 
-    fn handle_view_edit_section_delete_confirm_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    fn handle_view_edit_section_delete_confirm_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('y') => {
                 self.confirm_view_edit_section_delete();
@@ -269,9 +270,10 @@ impl App {
 
     fn handle_view_edit_discard_confirm_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('y') => {
                 self.handle_view_edit_save(aglet)?;
@@ -301,7 +303,8 @@ impl App {
         Ok(true)
     }
 
-    fn handle_view_edit_region_key(&mut self, code: KeyCode, aglet: &Aglet<'_>) -> TuiResult<bool> {
+    fn handle_view_edit_region_key(&mut self, key: KeyEvent, aglet: &Aglet<'_>) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc => {
                 let filter_active = self
@@ -348,10 +351,10 @@ impl App {
                 self.cycle_view_edit_pane_focus(false);
                 return Ok(true);
             }
-            KeyCode::Char('S') if !self.is_ctrl_s_code(code) => {
+            KeyCode::Char('S') if !is_ctrl_s(key) => {
                 return self.handle_view_edit_save(aglet);
             }
-            _ if self.is_ctrl_s_code(code) => {
+            _ if is_ctrl_s(key) => {
                 return self.handle_view_edit_save(aglet);
             }
             KeyCode::Char('p') => {
@@ -386,20 +389,20 @@ impl App {
 
         match state.pane_focus {
             ViewEditPaneFocus::Sections if state.draft.datebook_config.is_some() => {
-                self.handle_view_edit_datebook_key(code)
+                self.handle_view_edit_datebook_key(key)
             }
-            ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(code),
+            ViewEditPaneFocus::Sections => self.handle_view_edit_sections_key(key),
             ViewEditPaneFocus::Details => {
                 if state.draft.datebook_config.is_some() && state.region == ViewEditRegion::Sections
                 {
-                    self.handle_view_edit_preview_key(code)
+                    self.handle_view_edit_preview_key(key)
                 } else if Self::view_edit_showing_view_details(state) {
-                    self.handle_view_edit_settings_key(code)
+                    self.handle_view_edit_settings_key(key)
                 } else {
-                    self.handle_view_edit_section_details_key(code)
+                    self.handle_view_edit_section_details_key(key)
                 }
             }
-            ViewEditPaneFocus::Preview => self.handle_view_edit_preview_key(code),
+            ViewEditPaneFocus::Preview => self.handle_view_edit_preview_key(key),
         }
     }
 

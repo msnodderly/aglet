@@ -174,6 +174,21 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_s_reaches_the_input_panel_as_a_modified_key() {
+        let mut h = Harness::new();
+        h.keys("n").type_text("Call the vet").keys("<C-s>");
+        assert_eq!(h.app.mode, Mode::Normal, "status: {}", h.app.status);
+        let texts: Vec<String> = h
+            .store
+            .list_items()
+            .expect("list items")
+            .into_iter()
+            .map(|item| item.text)
+            .collect();
+        assert_eq!(texts, ["Call the vet"]);
+    }
+
+    #[test]
     fn adds_an_item_and_shows_it_on_screen() {
         let mut h = Harness::new();
         h.keys("n").type_text("Buy milk").keys("<Enter>");
