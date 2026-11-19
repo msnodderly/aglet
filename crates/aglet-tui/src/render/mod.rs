@@ -6,7 +6,7 @@ use crate::*;
 use aglet_core::date_rules::render_date_source;
 use aglet_core::model::ConditionMatchMode;
 
-const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
+pub(crate) const MUTED_TEXT_COLOR: Color = Color::Rgb(140, 140, 140);
 const CATEGORY_MANAGER_PANE_IDLE: Color = Color::Rgb(82, 92, 112);
 const CATEGORY_MANAGER_PANE_FOCUS: Color = Color::LightCyan;
 const CATEGORY_MANAGER_TEXT_ENTRY: Color = Color::LightMagenta;
@@ -630,9 +630,7 @@ impl App {
                 frame.set_cursor_position((x, y));
             }
         }
-        if self.mode == Mode::ConfirmDelete {
-            self.render_confirm_delete_popup(frame, frame.area());
-        }
+        self.render_confirm_popup(frame, frame.area());
         if let Mode::HelpPanel { scroll } = self.mode {
             // Wide terminals get a wider popup so the help content can render
             // in two side-by-side columns.
@@ -642,114 +640,6 @@ impl App {
         if self.mode == Mode::SuggestionReview {
             self.render_suggestion_review(frame, centered_rect(80, 70, frame.area()));
         }
-    }
-
-    /// Centered confirm popup for Mode::ConfirmDelete. The mode is multiplexed:
-    /// it hosts both the delete confirmation and the done-blocker-cleanup
-    /// prompt, so both branches render here (the footer keeps its dynamic
-    /// copy as a secondary cue).
-    fn render_confirm_delete_popup(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let muted = Style::default().fg(MUTED_TEXT_COLOR);
-        let mut lines: Vec<Line<'_>> = Vec::new();
-        let popup_title;
-        let border_color;
-        let keys_hint;
-
-        if let Some(done_confirm) = &self.done_blocks_confirm {
-            popup_title = "Mark Done";
-            border_color = Color::Yellow;
-            keys_hint = "y:remove links + done   n:done only   Esc:cancel";
-            let message = match &done_confirm.scope {
-                DoneBlocksConfirmScope::Single {
-                    blocked_item_ids, ..
-                } => {
-                    let blocked_count = blocked_item_ids.len();
-                    let suffix = if blocked_count == 1 { "" } else { "s" };
-                    format!(
-                        "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
-                    )
-                }
-                DoneBlocksConfirmScope::Batch {
-                    blocking_item_count,
-                    blocked_link_count,
-                    ..
-                } => {
-                    let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
-                    let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
-                    format!(
-                        "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
-                    )
-                }
-            };
-            lines.push(Line::from(message));
-        } else {
-            popup_title = "Confirm Delete";
-            border_color = Color::Red;
-            keys_hint = "y:confirm   Esc:cancel";
-            const TITLE_WIDTH: usize = 52;
-            const SHOWN_TITLES: usize = 3;
-            if let Some(batch_ids) = &self.batch_delete_item_ids {
-                let count = batch_ids.len();
-                let suffix = if count == 1 { "" } else { "s" };
-                lines.push(Line::from(format!("Delete {count} item{suffix}?")));
-                for id in batch_ids.iter().take(SHOWN_TITLES) {
-                    let title = self
-                        .item_title_for_id(*id)
-                        .unwrap_or_else(|| "(unknown item)".to_string());
-                    lines.push(Line::from(format!(
-                        "  \u{2022} {}",
-                        truncate_board_cell(&title, TITLE_WIDTH)
-                    )));
-                }
-                if count > SHOWN_TITLES {
-                    lines.push(Line::from(Span::styled(
-                        format!("  \u{2026} and {} more", count - SHOWN_TITLES),
-                        muted,
-                    )));
-                }
-            } else {
-                let title = self
-                    .selected_item()
-                    .map(|item| item.text.clone())
-                    .unwrap_or_else(|| "item".to_string());
-                lines.push(Line::from(format!(
-                    "Delete \"{}\"?",
-                    truncate_board_cell(&title, TITLE_WIDTH)
-                )));
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Logged \u{2014} restorable via 'aglet deleted' / 'aglet restore'",
-                muted,
-            )));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(keys_hint, muted)));
-
-        let width = area.width.saturating_sub(4).clamp(20, 66);
-        let height = (lines.len() as u16).saturating_add(2);
-        let popup = centered_fixed_rect(area, width, height);
-        frame.render_widget(Clear, popup);
-        let block = Block::default()
-            .title(popup_title)
-            .title_style(Style::default().fg(Color::White))
-            .borders(Borders::ALL)
-            .border_style(
-                Style::default()
-                    .fg(border_color)
-                    .add_modifier(Modifier::BOLD),
-            );
-        frame.render_widget(Paragraph::new(lines).block(block), popup);
-    }
-
-    /// Looks up an item's title in the currently loaded slots.
-    fn item_title_for_id(&self, item_id: ItemId) -> Option<String> {
-        self.slots
-            .iter()
-            .flat_map(|slot| slot.items.iter())
-            .find(|item| item.id == item_id)
-            .map(|item| item.text.clone())
     }
 
     fn is_category_direct_edit_dirty(&self) -> bool {
@@ -2077,8 +1967,9 @@ impl App {
             | Mode::ViewPicker { .. }
             | Mode::ViewEdit
             | Mode::ViewDeleteConfirm { .. }
-            | Mode::ConfirmDelete
-            | Mode::BoardColumnDeleteConfirm
+            | Mode::ConfirmDelete(_)
+            | Mode::DoneBlocksConfirm(_)
+            | Mode::BoardColumnDeleteConfirm { .. }
             | Mode::CategoryManager
             | Mode::CategoryDirectEdit
             | Mode::CategoryColumnPicker
@@ -4378,7 +4269,7 @@ impl App {
     }
 
     fn footer_status_text(&self) -> String {
-        match self.mode {
+        match &self.mode {
             Mode::SearchBarFocused => {
                 let section_name = self
                     .slots
@@ -4391,46 +4282,17 @@ impl App {
                     self.search_mode_label()
                 )
             }
-            Mode::ConfirmDelete => {
-                if let Some(done_confirm) = &self.done_blocks_confirm {
-                    match &done_confirm.scope {
-                        DoneBlocksConfirmScope::Single {
-                            blocked_item_ids, ..
-                        } => {
-                            let blocked_count = blocked_item_ids.len();
-                            let suffix = if blocked_count == 1 { "" } else { "s" };
-                            format!(
-                                "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
-                            )
-                        }
-                        DoneBlocksConfirmScope::Batch {
-                            blocking_item_count,
-                            blocked_link_count,
-                            ..
-                        } => {
-                            let item_suffix = if *blocking_item_count == 1 { "" } else { "s" };
-                            let blocked_suffix = if *blocked_link_count == 1 { "" } else { "s" };
-                            format!(
-                                "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
-                            )
-                        }
-                    }
-                } else if let Some(batch_delete_item_ids) = &self.batch_delete_item_ids {
-                    let selected_count = batch_delete_item_ids.len();
-                    let item_suffix = if selected_count == 1 { "" } else { "s" };
-                    format!(
-                        "Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel"
-                    )
-                } else {
-                    "Delete item? y:confirm Esc:cancel".to_string()
-                }
+            Mode::DoneBlocksConfirm(confirm) => {
+                modes::confirm_delete::done_blocks_message(&confirm.scope)
             }
-            Mode::BoardColumnDeleteConfirm => {
-                if let Some(name) = &self.board_pending_delete_column_label {
-                    format!("Delete column '{name}'? y:confirm Esc:cancel")
-                } else {
-                    "Delete column? y:confirm Esc:cancel".to_string()
-                }
+            Mode::ConfirmDelete(modes::confirm_delete::DeleteTarget::Items(item_ids)) => {
+                let selected_count = item_ids.len();
+                let item_suffix = if selected_count == 1 { "" } else { "s" };
+                format!("Delete {selected_count} selected item{item_suffix}? y:confirm Esc:cancel")
+            }
+            Mode::ConfirmDelete(_) => "Delete item? y:confirm Esc:cancel".to_string(),
+            Mode::BoardColumnDeleteConfirm { label } => {
+                format!("Delete column '{label}'? y:confirm Esc:cancel")
             }
             Mode::ViewDeleteConfirm { .. } => "Delete view? y:confirm Esc:cancel".to_string(),
             Mode::ItemAssignPicker => {
@@ -4716,14 +4578,10 @@ impl App {
             Mode::CategoryDirectEdit => CATEGORY_DIRECT_EDIT_HINTS.to_vec(),
             Mode::CategoryColumnPicker => CATEGORY_COLUMN_PICKER_HINTS.to_vec(),
             Mode::BoardAddColumnPicker => BOARD_ADD_COLUMN_HINTS.to_vec(),
-            Mode::ConfirmDelete => {
-                if self.done_blocks_confirm.is_some() {
-                    DONE_BLOCKER_HINTS.to_vec()
-                } else {
-                    CONFIRM_HINTS.to_vec()
-                }
+            Mode::DoneBlocksConfirm(_) => DONE_BLOCKER_HINTS.to_vec(),
+            Mode::ConfirmDelete(_) | Mode::BoardColumnDeleteConfirm { .. } => {
+                CONFIRM_HINTS.to_vec()
             }
-            Mode::BoardColumnDeleteConfirm => CONFIRM_HINTS.to_vec(),
             Mode::SearchBarFocused => {
                 if self.global_search_active() {
                     vec![

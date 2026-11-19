@@ -9,7 +9,11 @@ fn confirm_delete_popup_names_single_item() {
         .expect("create item");
     let mut h = Harness::with_store(store);
     h.size(110, 28).keys("x");
-    assert_eq!(h.app.mode, Mode::ConfirmDelete, "status: {}", h.app.status);
+    assert!(
+        matches!(h.app.mode, Mode::ConfirmDelete(_)),
+        "status: {}",
+        h.app.status
+    );
 
     let screen = h.screen();
     assert!(

@@ -38,9 +38,17 @@ impl App {
             Mode::ViewPicker { index } => self.handle_view_picker_key(index, key, aglet),
             Mode::ViewEdit => self.handle_view_edit_key(key, aglet),
             Mode::ViewDeleteConfirm { index } => self.handle_view_delete_key(index, key, aglet),
-            Mode::ConfirmDelete => self.handle_confirm_delete_key(key, aglet),
-            Mode::BoardColumnDeleteConfirm => {
-                self.handle_board_column_delete_confirm_key(key, aglet)
+            Mode::ConfirmDelete(ref target) => {
+                let target = target.clone();
+                self.handle_confirm_delete_key(target, key, aglet)
+            }
+            Mode::DoneBlocksConfirm(ref confirm) => {
+                let confirm = confirm.clone();
+                self.handle_done_blocks_confirm_key(confirm, key, aglet)
+            }
+            Mode::BoardColumnDeleteConfirm { ref label } => {
+                let label = label.clone();
+                self.handle_board_column_delete_confirm_key(label, key, aglet)
             }
             Mode::CategoryManager => self.handle_category_manager_key(key, aglet),
             Mode::CategoryDirectEdit => self.handle_category_direct_edit_key(key, aglet),

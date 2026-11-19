@@ -167,7 +167,7 @@ pub(crate) enum DoneToggleOrigin {
     ItemAssignPicker,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DoneBlocksConfirmScope {
     Single {
         item_id: ItemId,
@@ -180,7 +180,7 @@ pub(crate) enum DoneBlocksConfirmScope {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DoneBlocksConfirmState {
     pub(crate) scope: DoneBlocksConfirmScope,
     pub(crate) origin: DoneToggleOrigin,
