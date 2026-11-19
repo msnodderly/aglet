@@ -1291,6 +1291,40 @@ fn manual_assignment_applies_subsumption_to_all_ancestors() {
 }
 
 #[test]
+fn preview_gives_up_quickly_while_another_connection_writes() {
+    let path = std::env::temp_dir().join(format!("aglet-preview-busy-{}.ag", uuid::Uuid::new_v4()));
+    let store = Store::open(&path).unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let urgent = category("Urgent", false);
+    store.create_category(&urgent).unwrap();
+    let item = Item::new("Pay rent".to_string());
+    store.create_item(&item).unwrap();
+
+    let writer = rusqlite::Connection::open(&path).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    let busy = aglet.preview(|| aglet.preview_manual_category_toggle(item.id, urgent.id));
+    assert!(matches!(busy, Err(AgletError::Busy)), "{busy:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "preview waited {:?}",
+        started.elapsed()
+    );
+
+    writer.execute_batch("ROLLBACK").unwrap();
+    let preview = aglet
+        .preview(|| aglet.preview_manual_category_toggle(item.id, urgent.id))
+        .unwrap();
+    assert!(preview.assignments.contains_key(&urgent.id));
+
+    drop(writer);
+    drop(aglet);
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn preview_inside_a_committed_transaction_still_writes_nothing() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;

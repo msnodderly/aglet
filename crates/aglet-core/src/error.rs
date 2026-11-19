@@ -22,6 +22,10 @@ pub enum AgletError {
     /// Operation not valid in current state (e.g., assigning to deleted item).
     InvalidOperation { message: String },
 
+    /// Another connection held the write lock past a bounded wait. Only
+    /// returned by callers that chose a short wait, such as previews.
+    Busy,
+
     /// SQLite or other storage failure.
     StorageError {
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -49,6 +53,9 @@ impl fmt::Display for AgletError {
             }
             AgletError::InvalidOperation { message } => {
                 write!(f, "invalid operation: {message}")
+            }
+            AgletError::Busy => {
+                write!(f, "the database is busy with another write; try again")
             }
             AgletError::StorageError { source } => {
                 write!(f, "storage error: {source}")

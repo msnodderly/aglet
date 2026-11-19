@@ -705,6 +705,14 @@ impl<'a> Aglet<'a> {
         self.reprocess_existing_item(item_id)
     }
 
+    /// Run several previews against one rolled-back transaction, waiting at
+    /// most `PREVIEW_LOCK_WAIT` for the write lock. Returns
+    /// `AgletError::Busy` when another process is writing.
+    pub fn preview<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.store
+            .with_rolled_back_transaction_waiting(crate::store::PREVIEW_LOCK_WAIT, |_| f())
+    }
+
     /// The item as it would look after a manual toggle of `category_id`,
     /// with rules and actions applied. Runs on the real store inside a
     /// transaction that is rolled back, so nothing is kept.
