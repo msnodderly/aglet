@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use aglet_core::aglet::Aglet;
+use aglet_core::aglet::{Aglet, SaveOptions};
 use aglet_core::date_rules::{parse_date_value_expr, render_date_condition};
 use aglet_core::dates::{BasicDateParser, DateParser};
 use aglet_core::error::AgletError;

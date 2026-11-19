@@ -1836,14 +1836,34 @@ impl App {
                 };
                 let action_ids = self.effective_action_item_ids();
                 let reference_date = jiff::Zoned::now().date();
+                // One short-wait transaction for every item, so a busy writer
+                // costs one bounded wait per picker movement, not one per item.
+                let hypotheticals = aglet.preview(|| {
+                    Ok(action_ids
+                        .iter()
+                        .filter_map(|item_id| {
+                            aglet
+                                .preview_manual_category_toggle(*item_id, row.id)
+                                .ok()
+                                .map(|item| (*item_id, item))
+                        })
+                        .collect::<HashMap<_, _>>())
+                });
+                let mut hypotheticals = match hypotheticals {
+                    Ok(hypotheticals) => hypotheticals,
+                    Err(aglet_core::error::AgletError::Busy) => {
+                        self.item_assign_preview.unavailable = true;
+                        return;
+                    }
+                    Err(_) => return,
+                };
 
                 for item_id in &action_ids {
                     let Some(item) = self.all_items.iter().find(|i| i.id == *item_id).cloned()
                     else {
                         continue;
                     };
-                    let Ok(hypothetical) = aglet.preview_manual_category_toggle(*item_id, row.id)
-                    else {
+                    let Some(hypothetical) = hypotheticals.remove(item_id) else {
                         continue;
                     };
                     let current_assignments: HashSet<_> =

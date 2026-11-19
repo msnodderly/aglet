@@ -29,7 +29,7 @@ pub(crate) fn cmd_add(
     item.note = note;
 
     let reference_date = jiff::Zoned::now().date();
-    let result = aglet.create_item_with_reference_date(&item, reference_date)?;
+    let result = aglet.create_item_with(&item, SaveOptions::on(reference_date))?;
     if let Some(explicit_when) = parsed_when {
         aglet.set_item_when_date(
             item.id,
@@ -247,7 +247,7 @@ pub(crate) fn cmd_edit(
 
         item.modified_at = jiff::Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
-        aglet.update_item_with_reference_date(&item, reference_date)?;
+        aglet.update_item_with(&item, SaveOptions::on(reference_date))?;
 
         let updated = aglet.store().get_item(item_id)?;
         println!("updated {}", item_id);

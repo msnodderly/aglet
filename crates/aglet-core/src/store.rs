@@ -24,6 +24,11 @@ use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY
 
 const SCHEMA_VERSION: i32 = 20;
 pub const DEFAULT_VIEW_NAME: &str = "All Items";
+/// How long a write waits for another connection's write to finish.
+const LOCK_WAIT: Duration = Duration::from_secs(2);
+/// How long a preview waits. Previews run on every picker movement, so a
+/// busy writer must not stall the UI for the full `LOCK_WAIT`.
+pub const PREVIEW_LOCK_WAIT: Duration = Duration::from_millis(100);
 
 pub fn canonical_system_view_name(name: &str) -> Option<&'static str> {
     if name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME) {
@@ -2035,6 +2040,46 @@ impl Store {
         result
     }
 
+    /// Run `f` in a transaction that is always rolled back, and return what
+    /// `f` returned. Previews use it to ask "what would this change do"
+    /// against the real data without keeping any of the writes.
+    pub fn with_rolled_back_transaction<T>(
+        &self,
+        f: impl FnOnce(&Store) -> Result<T>,
+    ) -> Result<T> {
+        self.with_rolled_back_transaction_waiting(LOCK_WAIT, f)
+    }
+
+    /// Like `with_rolled_back_transaction`, but waits at most `lock_wait`
+    /// for another connection's write lock and returns `AgletError::Busy`
+    /// after that. Nested calls are savepoints and never wait.
+    pub fn with_rolled_back_transaction_waiting<T>(
+        &self,
+        lock_wait: Duration,
+        f: impl FnOnce(&Store) -> Result<T>,
+    ) -> Result<T> {
+        let rollback = if self.conn.is_autocommit() {
+            self.conn.busy_timeout(lock_wait)?;
+            let begun = self.conn.execute_batch("BEGIN IMMEDIATE TRANSACTION");
+            self.conn.busy_timeout(LOCK_WAIT)?;
+            match begun {
+                Err(rusqlite::Error::SqliteFailure(err, _))
+                    if err.code == rusqlite::ErrorCode::DatabaseBusy =>
+                {
+                    return Err(AgletError::Busy);
+                }
+                other => other?,
+            }
+            "ROLLBACK"
+        } else {
+            self.conn.execute_batch("SAVEPOINT aglet_preview")?;
+            "ROLLBACK TO SAVEPOINT aglet_preview; RELEASE SAVEPOINT aglet_preview"
+        };
+        let result = f(self);
+        self.conn.execute_batch(rollback)?;
+        result
+    }
+
     fn with_category_order_transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
         self.with_immediate_transaction(f)
     }
@@ -2308,7 +2353,7 @@ impl Store {
         self.conn.pragma_update(None, "foreign_keys", "ON")?;
         // Allow short waits on write contention so transactional claim paths can
         // resolve to precondition failures instead of immediate lock errors.
-        self.conn.busy_timeout(Duration::from_secs(2))?;
+        self.conn.busy_timeout(LOCK_WAIT)?;
 
         let version: i32 = self
             .conn

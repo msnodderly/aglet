@@ -7,7 +7,7 @@ use jiff::civil::{Date, DateTime};
 use jiff::Timestamp;
 use rust_decimal::Decimal;
 
-use super::Aglet;
+use super::{Aglet, SaveOptions};
 use crate::classification::{
     ChatCompletion, ChatEndpoint, ChatTransport, ClassificationConfig, LiteralClassificationMode,
     SemanticClassificationMode, SuggestionStatus, PROVIDER_ID_IMPLICIT_STRING,
@@ -214,7 +214,7 @@ fn create_item_in_suggest_review_mode_queues_pending_suggestions_without_assigni
 
     let item = Item::new("Book travel next Tuesday".to_string());
     let result = aglet
-        .create_item_with_reference_date(&item, date(2026, 3, 20))
+        .create_item_with(&item, SaveOptions::on(date(2026, 3, 20)))
         .unwrap();
     assert_eq!(result.new_assignments.len(), 1);
     let when_id = store
@@ -419,7 +419,7 @@ fn semantic_review_skips_exclusive_sibling_when_other_child_already_assigned() {
     aglet.assign_item_manual(item.id, high.id, None).unwrap();
 
     let result = aglet
-        .process_item_save(item.id, jiff::Zoned::now().date(), false)
+        .process_item_save(item.id, false, SaveOptions::default())
         .unwrap();
 
     assert_eq!(result.semantic_candidates_seen, 1);
@@ -747,7 +747,7 @@ fn when_parser_follows_literal_policy_and_is_skipped_when_literal_mode_is_off() 
 
     let item = Item::new("Book travel next Tuesday".to_string());
     let result = aglet
-        .create_item_with_reference_date(&item, date(2026, 3, 20))
+        .create_item_with(&item, SaveOptions::on(date(2026, 3, 20)))
         .unwrap();
     assert!(result.new_assignments.is_empty());
 
@@ -927,7 +927,7 @@ fn create_item_parses_date_and_sets_when_provenance() {
 
     let item = Item::new("next Tuesday at 3pm".to_string());
     aglet
-        .create_item_with_reference_date(&item, date(2026, 2, 18))
+        .create_item_with(&item, SaveOptions::on(date(2026, 2, 18)))
         .unwrap();
 
     let loaded = store.get_item(item.id).unwrap();
@@ -947,7 +947,7 @@ fn update_item_parses_new_date_text_and_sets_when_date() {
 
     let item = Item::new("plain task".to_string());
     aglet
-        .create_item_with_reference_date(&item, date(2026, 2, 16))
+        .create_item_with(&item, SaveOptions::on(date(2026, 2, 16)))
         .unwrap();
 
     let mut updated = store.get_item(item.id).unwrap();
@@ -955,7 +955,7 @@ fn update_item_parses_new_date_text_and_sets_when_date() {
     updated.modified_at = Timestamp::now();
 
     aglet
-        .update_item_with_reference_date(&updated, date(2026, 2, 16))
+        .update_item_with(&updated, SaveOptions::on(date(2026, 2, 16)))
         .unwrap();
 
     let loaded = store.get_item(item.id).unwrap();
@@ -970,7 +970,7 @@ fn update_item_without_parse_does_not_auto_clear_when_date() {
 
     let item = Item::new("tomorrow".to_string());
     aglet
-        .create_item_with_reference_date(&item, date(2026, 2, 16))
+        .create_item_with(&item, SaveOptions::on(date(2026, 2, 16)))
         .unwrap();
 
     let mut updated = store.get_item(item.id).unwrap();
@@ -978,7 +978,7 @@ fn update_item_without_parse_does_not_auto_clear_when_date() {
     updated.modified_at = Timestamp::now();
 
     aglet
-        .update_item_with_reference_date(&updated, date(2026, 2, 16))
+        .update_item_with(&updated, SaveOptions::on(date(2026, 2, 16)))
         .unwrap();
 
     let loaded = store.get_item(item.id).unwrap();
@@ -993,7 +993,7 @@ fn update_item_note_only_does_not_reparse_relative_when_date() {
 
     let item = Item::new("tomorrow".to_string());
     aglet
-        .create_item_with_reference_date(&item, date(2026, 2, 16))
+        .create_item_with(&item, SaveOptions::on(date(2026, 2, 16)))
         .unwrap();
 
     let mut updated = store.get_item(item.id).unwrap();
@@ -1001,7 +1001,7 @@ fn update_item_note_only_does_not_reparse_relative_when_date() {
     updated.modified_at = Timestamp::now();
 
     aglet
-        .update_item_with_reference_date(&updated, date(2026, 2, 20))
+        .update_item_with(&updated, SaveOptions::on(date(2026, 2, 20)))
         .unwrap();
 
     let loaded = store.get_item(item.id).unwrap();
@@ -1073,7 +1073,7 @@ fn set_item_when_date_none_clears_datetime_and_reserved_when_assignment() {
 
     let item = Item::new("tomorrow".to_string());
     aglet
-        .create_item_with_reference_date(&item, date(2026, 2, 16))
+        .create_item_with(&item, SaveOptions::on(date(2026, 2, 16)))
         .unwrap();
     assert!(store
         .get_assignments_for_item(item.id)
@@ -1104,7 +1104,7 @@ fn parsed_when_date_places_item_in_expected_bucket() {
 
     let item = Item::new("today at noon".to_string());
     aglet
-        .create_item_with_reference_date(&item, reference_date)
+        .create_item_with(&item, SaveOptions::on(reference_date))
         .unwrap();
 
     let loaded = store.get_item(item.id).unwrap();
@@ -1288,6 +1288,64 @@ fn manual_assignment_applies_subsumption_to_all_ancestors() {
             .map(|assignment| assignment.source),
         Some(AssignmentSource::Subsumption)
     );
+}
+
+#[test]
+fn preview_gives_up_quickly_while_another_connection_writes() {
+    let path = std::env::temp_dir().join(format!("aglet-preview-busy-{}.ag", uuid::Uuid::new_v4()));
+    let store = Store::open(&path).unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let urgent = category("Urgent", false);
+    store.create_category(&urgent).unwrap();
+    let item = Item::new("Pay rent".to_string());
+    store.create_item(&item).unwrap();
+
+    let writer = rusqlite::Connection::open(&path).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    let busy = aglet.preview(|| aglet.preview_manual_category_toggle(item.id, urgent.id));
+    assert!(matches!(busy, Err(AgletError::Busy)), "{busy:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "preview waited {:?}",
+        started.elapsed()
+    );
+
+    writer.execute_batch("ROLLBACK").unwrap();
+    let preview = aglet
+        .preview(|| aglet.preview_manual_category_toggle(item.id, urgent.id))
+        .unwrap();
+    assert!(preview.assignments.contains_key(&urgent.id));
+
+    drop(writer);
+    drop(aglet);
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn preview_inside_a_committed_transaction_still_writes_nothing() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let urgent = category("Urgent", false);
+    store.create_category(&urgent).unwrap();
+    let item = Item::new("Pay rent".to_string());
+    store.create_item(&item).unwrap();
+
+    aglet
+        .transaction(|| -> Result<(), AgletError> {
+            let preview = aglet.preview_manual_category_toggle(item.id, urgent.id)?;
+            assert!(preview.assignments.contains_key(&urgent.id));
+            Ok(())
+        })
+        .unwrap();
+
+    assert!(!store
+        .get_assignments_for_item(item.id)
+        .unwrap()
+        .contains_key(&urgent.id));
 }
 
 #[test]
@@ -4347,7 +4405,9 @@ fn semantic_classification_after_cheap_save_queues_the_llm_suggestion() {
     store.create_category(&travel).unwrap();
 
     let item = Item::new("Work trip planning".to_string());
-    aglet.create_item_cheap(&item, date(2026, 1, 5)).unwrap();
+    aglet
+        .create_item_with(&item, SaveOptions::on(date(2026, 1, 5)).without_semantic())
+        .unwrap();
     assert!(
         aglet
             .list_pending_classification_suggestions_for_item(item.id)

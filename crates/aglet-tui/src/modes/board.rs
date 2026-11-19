@@ -4880,7 +4880,8 @@ impl App {
         // Create item (applies on_insert_assign via insert_into_context).
         let item = Item::new(text.clone());
         let reference_date = jiff::Zoned::now().date();
-        let mut process_result = aglet.create_item_cheap(&item, reference_date)?;
+        let mut process_result =
+            aglet.create_item_with(&item, SaveOptions::on(reference_date).without_semantic())?;
 
         // Parse and apply when-date + recurrence from panel buffer.
         let mut when_parse_error: Option<String> = None;
@@ -4913,7 +4914,8 @@ impl App {
             let mut loaded = aglet.store().get_item(item.id)?;
             loaded.note = note;
             loaded.modified_at = Timestamp::now();
-            let note_update_result = aglet.update_item_cheap(&loaded, reference_date)?;
+            let note_update_result = aglet
+                .update_item_with(&loaded, SaveOptions::on(reference_date).without_semantic())?;
             process_result
                 .new_assignments
                 .extend(note_update_result.new_assignments);
@@ -5106,7 +5108,8 @@ impl App {
         item.note = updated_note;
         item.modified_at = Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
-        let process_result = aglet.update_item_cheap(&item, reference_date)?;
+        let process_result =
+            aglet.update_item_with(&item, SaveOptions::on(reference_date).without_semantic())?;
 
         // Apply when-date change.
         if let Some(new_when) = parsed_when {

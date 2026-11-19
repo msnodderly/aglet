@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use aglet_core::aglet::Aglet;
+use aglet_core::aglet::{Aglet, SaveOptions};
 use aglet_core::model::{Assignment, AssignmentSource, CategoryId, Item, ItemId, ItemLinkKind};
 use jiff::Timestamp;
 use rust_decimal::Decimal;
@@ -158,19 +158,19 @@ impl App {
                 item.note = old_note;
                 item.modified_at = Timestamp::now();
                 let reference_date = jiff::Zoned::now().date();
-                aglet.update_item_with_reference_date(&item, reference_date)?;
+                aglet.update_item_with(&item, SaveOptions::on(reference_date))?;
                 inverse
             }
             UndoEntry::ItemDeleted { item } => {
                 let item_id = item.id;
                 let reference_date = jiff::Zoned::now().date();
-                aglet.create_item_with_reference_date(&item, reference_date)?;
+                aglet.create_item_with(&item, SaveOptions::on(reference_date))?;
                 let mut restored = aglet.store().get_item(item.id)?;
                 restored.note = item.note.clone();
                 restored.is_done = item.is_done;
                 restored.done_date = item.done_date;
                 restored.modified_at = Timestamp::now();
-                aglet.update_item_with_reference_date(&restored, reference_date)?;
+                aglet.update_item_with(&restored, SaveOptions::on(reference_date))?;
                 for (cat_id, assignment) in &item.assignments {
                     if assignment.source == AssignmentSource::Manual {
                         if let Some(numeric_value) = assignment.numeric_value {

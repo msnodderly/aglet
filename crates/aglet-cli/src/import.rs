@@ -146,7 +146,7 @@ pub(crate) fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportComman
 
                     let mut item = Item::new(title);
                     item.note = note;
-                    aglet.create_item_cheap(&item, today)?;
+                    aglet.create_item_with(&item, SaveOptions::on(today).without_semantic())?;
                     if let Some(when_date) = parsed_when {
                         aglet.set_item_when_date(
                             item.id,

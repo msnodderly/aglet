@@ -14,7 +14,7 @@ use super::{
     OllamaModelPickerState, SearchMode, SectionBorderMode, SortDirection, SuggestionDecision,
     ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
 };
-use aglet_core::aglet::Aglet;
+use aglet_core::aglet::{Aglet, SaveOptions};
 use aglet_core::classification::{
     CandidateAssignment, ClassificationConfig, ClassificationSuggestion, LiteralClassificationMode,
     SemanticClassificationMode, SuggestionStatus, PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
@@ -5028,7 +5028,9 @@ fn save_input_panel_edit_status_reports_when_interpretation() {
     let aglet = Aglet::new(&store, &classifier);
     let item = Item::new("Demo".to_string());
     let reference = jiff::Zoned::now().date();
-    aglet.create_item_cheap(&item, reference).expect("create");
+    aglet
+        .create_item_with(&item, SaveOptions::on(reference).without_semantic())
+        .expect("create");
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
@@ -5065,7 +5067,9 @@ fn save_input_panel_edit_status_reports_when_cleared() {
     let aglet = Aglet::new(&store, &classifier);
     let item = Item::new("Demo".to_string());
     let reference = jiff::Zoned::now().date();
-    aglet.create_item_cheap(&item, reference).expect("create");
+    aglet
+        .create_item_with(&item, SaveOptions::on(reference).without_semantic())
+        .expect("create");
     aglet
         .set_item_when_date(
             item.id,
@@ -8493,7 +8497,7 @@ fn g_question_opens_suggestion_review_with_pending() {
 
     let item = Item::new("Book travel next Tuesday".to_string());
     aglet
-        .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+        .create_item_with(&item, SaveOptions::on(Date::new(2026, 3, 20).unwrap()))
         .expect("create item");
 
     let mut app = App::default();
@@ -8548,7 +8552,7 @@ fn suggestion_review_confirm_accepts_and_advances() {
 
     let item = Item::new("Book travel next Tuesday".to_string());
     aglet
-        .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+        .create_item_with(&item, SaveOptions::on(Date::new(2026, 3, 20).unwrap()))
         .expect("create item");
 
     let mut app = App::default();
@@ -8592,7 +8596,7 @@ fn suggestion_review_space_toggles_and_esc_cancels() {
 
     let item = Item::new("Book travel soon".to_string());
     aglet
-        .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+        .create_item_with(&item, SaveOptions::on(Date::new(2026, 3, 20).unwrap()))
         .expect("create item");
 
     let mut app = App::default();
@@ -11238,6 +11242,48 @@ fn item_assign_preview_matches_subsumption_driven_section_membership() {
             .contains(&(board_view_index, Some(0))),
         "preview should show the item entering the Work section via subsumption"
     );
+}
+
+#[test]
+fn item_assign_preview_says_when_the_database_is_busy() {
+    let db_path = std::env::temp_dir().join(format!("aglet-tui-busy-{}.ag", Uuid::new_v4()));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let errands = Category::new("Errands".to_string());
+    store.create_category(&errands).expect("create errands");
+    let item = Item::new("Buy stamps".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::ItemAssignPicker;
+    app.item_assign_pane = ItemAssignPane::Categories;
+    app.set_item_assign_category_selection_by_id(errands.id);
+
+    // A second connection holds the write lock while the picker previews.
+    let writer = Store::open(&db_path).expect("second connection");
+    let rendered = writer
+        .with_immediate_transaction(|_| -> Result<String, aglet_core::error::AgletError> {
+            app.compute_assignment_preview(&aglet);
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
+            terminal.draw(|frame| app.draw(frame)).expect("render");
+            Ok(terminal_buffer_lines(&terminal).join("\n"))
+        })
+        .expect("hold write lock");
+    assert!(
+        rendered.contains("Preview unavailable: the database is busy"),
+        "the picker should say why there is no preview: {rendered}"
+    );
+
+    app.compute_assignment_preview(&aglet);
+    assert!(!app.item_assign_preview.unavailable);
+    assert!(app.item_assign_preview.cat_to_add.contains(&errands.id));
+
+    drop(writer);
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
 }
 
 #[test]
