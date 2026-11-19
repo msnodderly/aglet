@@ -2,7 +2,7 @@
 title: Codebase Review and Simplification Plan
 status: active
 created: 2026-11-16
-updated: 2026-11-17
+updated: 2026-11-18
 ---
 
 # Codebase Review and Simplification Plan
@@ -213,13 +213,16 @@ One PR per item. None changes stored data.
 6. **Preview via savepoint (F10).** First find out why the in-memory copy
    exists. Replace only if nothing depends on it.
 
-Status 2026-11-17: item 1 done (commit `8fa2a00`, 343 added, 670 removed).
-The plan said "one PR per item", but the work so far is on a single branch,
-`simplify/phase-3-core-cli-consolidation`; see the handoff for how to split
-it. Item 2 is half done: core helpers exist (`808cdb2`), callers not yet
-switched. Items 3 to 6 not started.
+Status 2026-11-18: all six items done, in three PRs. #160: items 1 and 2.
+#161: items 3 and 4; item 3 uses a `CliResult` alias over
+`Box<dyn Error>` instead of a custom `CliError`. #162: items 5 and 6; the
+preview copy existed for no recorded reason and was replaced with a
+rolled-back transaction, with a bounded lock wait added after review.
 
 ### Phase 4. TUI
+
+Status 2026-11-18: step 1 done (#165), step 2 done (#166). Step 3: HelpPanel
+done (#167); the rest not started. Step 4 not started.
 
 Order matters here: the harness comes first so later steps do not rewrite
 tests twice.
@@ -261,10 +264,10 @@ its own step.
 
 | ID | Question | Why it blocks |
 |---|---|---|
-| D1 | Squash migrations to one schema, or declare the `.ag` format stable? | AGENTS.md says greenfield, the Homebrew release says otherwise. Squashing is not reversible for existing files and needs its own plan. |
+| D1 | Squash migrations to one schema, or declare the `.ag` format stable? | **Decided 2026-11-18: squash.** Plan and rollback in `schema-squash-v21.md`; implemented in #164. |
 | D2 | During import, run semantic classification after the transaction commits? | Otherwise Phase 1 holds the write lock across LLM calls. Recommended: yes, use the cheap path inside the transaction. |
-| D3 | Collapse `Assignment` provenance into `explanation` (F9)? | Touches stored columns. Recommended first step is read-only: count rows where `explanation` is null and where `source` disagrees with it, then write a decision record. `sticky` stays either way, since older sticky derived rows cannot be re-derived. |
-| D4 | Flat screen enum or a screen stack? | Some modes return to a caller (`ItemAssignReturnTarget`, `NameInputContext`). Settle after the first two mode migrations in Phase 4 step 3. |
+| D3 | Collapse `Assignment` provenance into `explanation` (F9)? | **Decided 2026-11-18: collapse `source` only.** `origin` carries detail `explanation` lacks (`manual:done`, `recurrence:carry`, LLM category names) and stays. Code-only step in #163, column drop in #164. The real-data row count was not run; the feature DB is not on the dev machine. |
+| D4 | Flat screen enum or a screen stack? | **Decided 2026-11-18: flat enum.** Children that return to a caller carry what they need to return. Revisit only if chains deeper than two levels appear. |
 
 ## Rollback
 
