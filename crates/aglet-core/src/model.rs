@@ -16,6 +16,13 @@ pub const RESERVED_CATEGORY_NAMES: [&str; 3] = [
     RESERVED_CATEGORY_NAME_DONE,
 ];
 
+/// True for `When`, `Entry`, or `Done`, ignoring ASCII case.
+pub fn is_reserved_category_name(name: &str) -> bool {
+    RESERVED_CATEGORY_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+}
+
 pub type CategoryId = Uuid;
 pub type ItemId = Uuid;
 

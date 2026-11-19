@@ -11,7 +11,7 @@ use super::{
     CategoryDirectEditFocus, CategoryDirectEditRow, CategoryDirectEditState, CategoryInlineAction,
     CategoryListRow, CategoryManagerDetailsFocus, CategoryManagerFocus, DateConditionDraftKind,
     DateConditionField, GlobalSettingsRow, ItemAssignPane, Mode, NameInputContext,
-    OllamaModelPickerState, SearchMode, SectionBorderMode, SlotSortDirection, SuggestionDecision,
+    OllamaModelPickerState, SearchMode, SectionBorderMode, SortDirection, SuggestionDecision,
     ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
 };
 use aglet_core::aglet::Aglet;
@@ -22302,6 +22302,59 @@ fn board_sorting_new_column_becomes_primary_and_previous_becomes_secondary() {
 }
 
 #[test]
+fn board_sorting_childless_category_column_puts_assigned_items_first() {
+    let store = Store::open_memory().expect("store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+
+    let urgent = Category::new("Urgent".to_string());
+    store.create_category(&urgent).expect("create urgent");
+    let alpha = Item::new("Alpha".to_string());
+    let bravo = Item::new("Bravo".to_string());
+    store.create_item(&alpha).expect("create alpha");
+    store.create_item(&bravo).expect("create bravo");
+    aglet
+        .assign_item_manual(alpha.id, urgent.id, Some("test:assign".to_string()))
+        .expect("assign alpha urgent");
+
+    let mut view = View::new("Board".to_string());
+    view.sections.push(Section {
+        title: "Main".to_string(),
+        criteria: Query::default(),
+        columns: vec![Column {
+            kind: ColumnKind::Standard,
+            heading: urgent.id,
+            width: 12,
+            summary_fn: None,
+        }],
+        item_column_index: 0,
+        on_insert_assign: std::collections::HashSet::new(),
+        on_remove_unassign: std::collections::HashSet::new(),
+        show_children: false,
+        board_display_mode_override: None,
+    });
+    store.create_view(&view).expect("create board view");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_view_selection_by_name("Board");
+    app.refresh(&store).expect("refresh board");
+    let order = |app: &App| -> Vec<String> {
+        app.slots[0]
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect()
+    };
+    assert_eq!(order(&app), ["Bravo", "Alpha"]);
+
+    app.column_index = 1;
+    app.handle_key(KeyCode::Char('s'), &aglet)
+        .expect("sort urgent asc");
+    assert_eq!(order(&app), ["Alpha", "Bravo"]);
+}
+
+#[test]
 fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -22366,7 +22419,7 @@ fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
     app.column_index = 1;
     app.handle_key(KeyCode::Char('s'), &aglet)
         .expect("sort cost asc");
-    assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Asc);
+    assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Asc);
     let asc_order: Vec<String> = app.slots[0]
         .items
         .iter()
@@ -22379,7 +22432,7 @@ fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
 
     app.handle_key(KeyCode::Char('s'), &aglet)
         .expect("sort cost desc");
-    assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Desc);
+    assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Desc);
     let desc_order: Vec<String> = app.slots[0]
         .items
         .iter()
@@ -22463,11 +22516,11 @@ fn board_sorting_angle_brackets_alias_ascending_and_descending_sort() {
     app.column_index = 1;
     app.handle_key(KeyCode::Char('<'), &aglet)
         .expect("ascending sort alias");
-    assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Asc);
+    assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Asc);
 
     app.handle_key(KeyCode::Char('>'), &aglet)
         .expect("descending sort alias");
-    assert_eq!(app.slot_sort_keys[0][0].direction, SlotSortDirection::Desc);
+    assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Desc);
 
     let _ = std::fs::remove_file(&db_path);
 }

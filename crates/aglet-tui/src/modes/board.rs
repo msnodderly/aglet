@@ -2415,7 +2415,7 @@ impl App {
                 self.sort_current_slot_by_active_column(None, aglet)?;
             }
             KeyCode::Char('S') | KeyCode::Char('>') => {
-                self.sort_current_slot_by_active_column(Some(SlotSortDirection::Desc), aglet)?;
+                self.sort_current_slot_by_active_column(Some(SortDirection::Desc), aglet)?;
             }
             KeyCode::Char('F') => {
                 self.cycle_column_summary_fn(aglet)?;
@@ -2987,7 +2987,7 @@ impl App {
 
     fn sort_current_slot_by_active_column(
         &mut self,
-        preferred_direction: Option<SlotSortDirection>,
+        preferred_direction: Option<SortDirection>,
         aglet: &Aglet<'_>,
     ) -> TuiResult<()> {
         let Some(column) = self.current_slot_sort_column() else {
@@ -3010,7 +3010,7 @@ impl App {
             if sort_keys.is_empty() {
                 sort_keys.push(SlotSortKey {
                     column,
-                    direction: preferred_direction.unwrap_or(SlotSortDirection::Asc),
+                    direction: preferred_direction.unwrap_or(SortDirection::Asc),
                 });
             } else if sort_keys[0].column == column {
                 let current_direction = sort_keys[0].direction;
@@ -3022,8 +3022,8 @@ impl App {
                     }
                 } else {
                     match current_direction {
-                        SlotSortDirection::Asc => sort_keys[0].direction = SlotSortDirection::Desc,
-                        SlotSortDirection::Desc => {
+                        SortDirection::Asc => sort_keys[0].direction = SortDirection::Desc,
+                        SortDirection::Desc => {
                             sort_keys.remove(0);
                         }
                     }
@@ -3032,14 +3032,14 @@ impl App {
                 sort_keys.iter().position(|key| key.column == column)
             {
                 let mut key = sort_keys.remove(existing_index);
-                key.direction = preferred_direction.unwrap_or(SlotSortDirection::Asc);
+                key.direction = preferred_direction.unwrap_or(SortDirection::Asc);
                 sort_keys.insert(0, key);
             } else {
                 sort_keys.insert(
                     0,
                     SlotSortKey {
                         column,
-                        direction: preferred_direction.unwrap_or(SlotSortDirection::Asc),
+                        direction: preferred_direction.unwrap_or(SortDirection::Asc),
                     },
                 );
             }
@@ -3321,8 +3321,8 @@ impl App {
 
     fn sort_key_label(&self, key: &SlotSortKey) -> String {
         let direction_label = match key.direction {
-            SlotSortDirection::Asc => "asc",
-            SlotSortDirection::Desc => "desc",
+            SortDirection::Asc => "asc",
+            SortDirection::Desc => "desc",
         };
         let column_label = match key.column {
             SlotSortColumn::ItemText => "Item".to_string(),

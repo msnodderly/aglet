@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 
 use super::Aglet;
 use crate::classification::{
-    ClassificationConfig, LiteralClassificationMode, OllamaProviderSettings, OllamaTransport,
+    ChatCompletion, ChatEndpoint, ChatTransport, ClassificationConfig, LiteralClassificationMode,
     SemanticClassificationMode, SuggestionStatus, PROVIDER_ID_IMPLICIT_STRING,
     PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
 };
@@ -102,18 +102,22 @@ fn make_item(store: &Store, text: &str) -> ItemId {
 }
 
 #[derive(Default)]
-struct FakeOllamaTransport {
+struct FakeChatTransport {
     response: Option<String>,
 }
 
-impl OllamaTransport for FakeOllamaTransport {
+impl ChatTransport for FakeChatTransport {
     fn complete(
         &self,
-        _settings: &OllamaProviderSettings,
+        _endpoint: &ChatEndpoint,
+        _api_key: Option<&str>,
         _system_prompt: &str,
         _user_prompt: &str,
-    ) -> crate::error::Result<Option<String>> {
-        Ok(self.response.clone())
+    ) -> crate::error::Result<Option<ChatCompletion>> {
+        Ok(self.response.clone().map(|content| ChatCompletion {
+            content,
+            usage: None,
+        }))
     }
 }
 
@@ -294,13 +298,13 @@ fn literal_auto_apply_and_semantic_off_keeps_current_deterministic_behavior() {
 fn literal_auto_apply_and_semantic_review_can_run_together() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Travel","confidence":0.9,"rationale":"trip planning"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::AutoApply,
@@ -339,13 +343,13 @@ fn literal_auto_apply_and_semantic_review_can_run_together() {
 fn semantic_review_does_not_queue_duplicate_for_already_assigned_category() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Travel","confidence":0.95,"rationale":"travel intent"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::AutoApply,
@@ -381,13 +385,13 @@ fn semantic_review_does_not_queue_duplicate_for_already_assigned_category() {
 fn semantic_review_skips_exclusive_sibling_when_other_child_already_assigned() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Normal","confidence":0.95,"rationale":"default priority"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::Off,
@@ -436,13 +440,13 @@ fn semantic_review_skips_exclusive_sibling_when_other_child_already_assigned() {
 fn semantic_review_keeps_highest_confidence_suggestion_per_exclusive_family() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"High","confidence":0.78,"rationale":"important but not urgent"},{"category":"Normal","confidence":0.88,"rationale":"routine feature work"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::Off,
@@ -491,13 +495,13 @@ fn semantic_review_keeps_highest_confidence_suggestion_per_exclusive_family() {
 fn semantic_mode_can_run_without_literal_matching() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Travel","confidence":0.7,"rationale":"travel intent"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::Off,
@@ -526,13 +530,13 @@ fn semantic_mode_can_run_without_literal_matching() {
 fn literal_and_semantic_suggest_review_queue_both_category_suggestions() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Travel","confidence":0.88,"rationale":"trip planning"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::SuggestReview,
@@ -581,13 +585,13 @@ fn literal_and_semantic_suggest_review_queue_both_category_suggestions() {
 fn semantic_matching_is_independent_from_implicit_matching() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
             response: Some(
                 r#"{"suggestions":[{"category":"Travel","confidence":0.85,"rationale":"trip intent"}]}"#
                     .to_string(),
             ),
         });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::Off,
@@ -4320,13 +4324,13 @@ fn transaction_nests_inner_failure_keeps_outer_and_outer_failure_drops_all() {
 fn semantic_classification_after_cheap_save_queues_the_llm_suggestion() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;
-    let transport = Arc::new(FakeOllamaTransport {
+    let transport = Arc::new(FakeChatTransport {
         response: Some(
             r#"{"suggestions":[{"category":"Travel","confidence":0.9,"rationale":"trip planning"}]}"#
                 .to_string(),
         ),
     });
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
 
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::AutoApply,

@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -16,7 +15,10 @@ use aglet_core::model::{
     DatebookAnchor, DatebookConfig, DatebookInterval, DatebookPeriod, Item, ItemId, Query, Section,
     SummaryFn, View,
 };
-use aglet_core::query::{evaluate_query, resolve_view};
+use aglet_core::query::{
+    category_name_map, compare_items_by_sort_keys, evaluate_query, resolve_view, SortDirection,
+    SortField, SortKey,
+};
 use aglet_core::store::{Store, DEFAULT_VIEW_NAME};
 use aglet_core::workflow::{
     blocked_item_ids, build_ready_queue_view, claimable_item_ids, resolve_workflow_config,
@@ -4098,13 +4100,6 @@ fn resolve_item_id(input: &str, store: &Store) -> Result<ItemId, String> {
     store.resolve_item_prefix(input).map_err(|e| e.to_string())
 }
 
-fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
-    categories
-        .iter()
-        .map(|category| (category.id, category.name.clone()))
-        .collect()
-}
-
 fn print_process_warnings(result: &aglet_core::engine::ProcessItemResult) {
     for warning in &result.warnings {
         eprintln!("warning: {warning}");
@@ -4480,45 +4475,26 @@ fn csv_record_value(
     Ok(record.get(index).unwrap_or_default().trim().to_string())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CliSortDirection {
-    Asc,
-    Desc,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CliSortField {
-    ItemText,
-    WhenDate,
-    Category(CategoryId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CliSortKey {
-    field: CliSortField,
-    direction: CliSortDirection,
-}
-
-fn parse_sort_specs(args: &[String], categories: &[Category]) -> Result<Vec<CliSortKey>, String> {
+fn parse_sort_specs(args: &[String], categories: &[Category]) -> Result<Vec<SortKey>, String> {
     args.iter()
         .map(|arg| parse_sort_spec(arg, categories))
         .collect()
 }
 
-fn parse_sort_spec(arg: &str, categories: &[Category]) -> Result<CliSortKey, String> {
+fn parse_sort_spec(arg: &str, categories: &[Category]) -> Result<SortKey, String> {
     let (raw_field, direction) = parse_sort_field_and_direction(arg)?;
     let field = if raw_field.eq_ignore_ascii_case("item") {
-        CliSortField::ItemText
+        SortField::ItemText
     } else if raw_field.eq_ignore_ascii_case("when") {
-        CliSortField::WhenDate
+        SortField::WhenDate
     } else {
-        CliSortField::Category(category_id_by_name(categories, raw_field)?)
+        SortField::Category(category_id_by_name(categories, raw_field)?)
     };
 
-    Ok(CliSortKey { field, direction })
+    Ok(SortKey { field, direction })
 }
 
-fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, CliSortDirection), String> {
+fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, SortDirection), String> {
     let trimmed = arg.trim();
     if trimmed.is_empty() {
         return Err("sort key cannot be empty".to_string());
@@ -4526,11 +4502,11 @@ fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, CliSortDirection),
 
     if let Some((field, direction_suffix)) = trimmed.rsplit_once(':') {
         let direction = if direction_suffix.eq_ignore_ascii_case("asc") {
-            CliSortDirection::Asc
+            SortDirection::Asc
         } else if direction_suffix.eq_ignore_ascii_case("desc") {
-            CliSortDirection::Desc
+            SortDirection::Desc
         } else {
-            return Ok((trimmed, CliSortDirection::Asc));
+            return Ok((trimmed, SortDirection::Asc));
         };
         let field = field.trim();
         if field.is_empty() {
@@ -4538,7 +4514,7 @@ fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, CliSortDirection),
         }
         Ok((field, direction))
     } else {
-        Ok((trimmed, CliSortDirection::Asc))
+        Ok((trimmed, SortDirection::Asc))
     }
 }
 
@@ -4608,7 +4584,7 @@ struct ViewCategoryAliasRow {
 
 fn sorted_rows<'a>(
     items: &'a [Item],
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
 ) -> Vec<&'a Item> {
     let mut rows: Vec<&Item> = items.iter().collect();
@@ -4649,7 +4625,7 @@ fn item_row(item: &Item, category_names: &HashMap<CategoryId, String>) -> JsonIt
 fn rows_to_json(
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
 ) -> Vec<JsonItemRow> {
     sorted_rows(items, sort_keys, categories)
@@ -4665,7 +4641,7 @@ fn rows_to_json_for_section(
     section_index: usize,
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
 ) -> Vec<JsonItemRow> {
     let columns = view
@@ -4871,7 +4847,7 @@ fn build_markdown_export(
 fn print_items_json(
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
 ) -> Result<(), String> {
     let payload = JsonItemsOutput {
@@ -4925,7 +4901,7 @@ fn print_items_for_view(
     items: &[Item],
     categories: &[Category],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     output_format: OutputFormatArg,
     blocked_item_ids: &HashSet<ItemId>,
     table_style: TableStyle,
@@ -5273,7 +5249,7 @@ fn summary_fn_label(summary_fn: SummaryFn) -> &'static str {
 fn render_compact_item_table(
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
 ) -> String {
     if items.is_empty() {
@@ -5355,7 +5331,7 @@ fn render_section_column_table(
     section_index: usize,
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
 ) -> Option<String> {
     let section = view.sections.get(section_index)?;
@@ -5504,7 +5480,7 @@ fn render_section_column_table(
 fn print_item_table(
     items: &[Item],
     category_names: &HashMap<CategoryId, String>,
-    sort_keys: &[CliSortKey],
+    sort_keys: &[SortKey],
     categories: &[Category],
     style: TableStyle,
 ) {
@@ -5589,115 +5565,6 @@ fn print_item_table(
                 when_width = when_width
             );
         }
-    }
-}
-
-fn compare_items_by_sort_keys(
-    left: &Item,
-    right: &Item,
-    sort_keys: &[CliSortKey],
-    categories: &[Category],
-) -> Ordering {
-    for key in sort_keys {
-        let order = compare_items_by_sort_key(left, right, *key, categories);
-        if order != Ordering::Equal {
-            return order;
-        }
-    }
-    Ordering::Equal
-}
-
-fn compare_items_by_sort_key(
-    left: &Item,
-    right: &Item,
-    key: CliSortKey,
-    categories: &[Category],
-) -> Ordering {
-    match key.field {
-        CliSortField::ItemText => compare_required_values(
-            left.text.to_ascii_lowercase(),
-            right.text.to_ascii_lowercase(),
-            key.direction,
-        ),
-        CliSortField::WhenDate => {
-            compare_optional_values(left.when_date, right.when_date, key.direction)
-        }
-        CliSortField::Category(category_id) => {
-            let Some(category) = categories
-                .iter()
-                .find(|category| category.id == category_id)
-            else {
-                return Ordering::Equal;
-            };
-            if category.value_kind == CategoryValueKind::Numeric {
-                let left_value = left
-                    .assignments
-                    .get(&category_id)
-                    .and_then(|assignment| assignment.numeric_value);
-                let right_value = right
-                    .assignments
-                    .get(&category_id)
-                    .and_then(|assignment| assignment.numeric_value);
-                compare_optional_values(left_value, right_value, key.direction)
-            } else {
-                let left_value = category_sort_display_value(left, category, categories);
-                let right_value = category_sort_display_value(right, category, categories);
-                compare_optional_values(left_value, right_value, key.direction)
-            }
-        }
-    }
-}
-
-fn category_sort_display_value(
-    item: &Item,
-    category: &Category,
-    categories: &[Category],
-) -> Option<String> {
-    if category.children.is_empty() {
-        return item
-            .assignments
-            .contains_key(&category.id)
-            .then(|| category.name.to_ascii_lowercase());
-    }
-
-    let mut values: Vec<String> = category
-        .children
-        .iter()
-        .filter(|child_id| item.assignments.contains_key(child_id))
-        .map(|child_id| {
-            categories
-                .iter()
-                .find(|candidate| candidate.id == *child_id)
-                .map(|candidate| candidate.name.clone())
-                .unwrap_or_else(|| child_id.to_string())
-        })
-        .collect();
-
-    if values.is_empty() {
-        return None;
-    }
-
-    values.sort_by_key(|value| value.to_ascii_lowercase());
-    Some(values.join(", ").to_ascii_lowercase())
-}
-
-fn compare_optional_values<T: Ord>(
-    left: Option<T>,
-    right: Option<T>,
-    direction: CliSortDirection,
-) -> Ordering {
-    match (left, right) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Greater,
-        (Some(_), None) => Ordering::Less,
-        (Some(left), Some(right)) => compare_required_values(left, right, direction),
-    }
-}
-
-fn compare_required_values<T: Ord>(left: T, right: T, direction: CliSortDirection) -> Ordering {
-    match direction {
-        CliSortDirection::Asc => left.cmp(&right),
-        CliSortDirection::Desc => right.cmp(&left),
     }
 }
 

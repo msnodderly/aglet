@@ -1,5 +1,4 @@
 use crate::*;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -666,15 +665,8 @@ impl App {
     }
 
     fn debug_log_classification(&self, aglet: &Aglet<'_>, message: &str) {
-        if !aglet.debug_enabled() {
-            return;
-        }
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(aglet_core::classification::CLASSIFICATION_DEBUG_LOG_PATH)
-        {
-            let _ = writeln!(file, "[{}] {message}", jiff::Zoned::now());
+        if aglet.debug_enabled() {
+            aglet_core::classification::append_classification_debug_log(message);
         }
     }
 
@@ -2774,110 +2766,10 @@ impl App {
         if sort_keys.is_empty() || slot.items.len() < 2 {
             return;
         }
-        slot.items
-            .sort_by(|left, right| self.compare_items_for_sort_keys(left, right, sort_keys));
-    }
-
-    fn compare_items_for_sort_keys(
-        &self,
-        left: &Item,
-        right: &Item,
-        sort_keys: &[SlotSortKey],
-    ) -> Ordering {
-        for key in sort_keys {
-            let ord = self.compare_items_for_sort_key(left, right, key);
-            if ord != Ordering::Equal {
-                return ord;
-            }
-        }
-        Ordering::Equal
-    }
-
-    fn compare_items_for_sort_key(&self, left: &Item, right: &Item, key: &SlotSortKey) -> Ordering {
-        match key.column {
-            SlotSortColumn::ItemText => {
-                let left_text = left.text.to_ascii_lowercase();
-                let right_text = right.text.to_ascii_lowercase();
-                self.compare_some_values(left_text, right_text, key.direction)
-            }
-            SlotSortColumn::SectionColumn { heading, kind } => match kind {
-                ColumnKind::When => {
-                    self.compare_optional_values(left.when_date, right.when_date, key.direction)
-                }
-                ColumnKind::Standard => {
-                    let heading_category = self
-                        .categories
-                        .iter()
-                        .find(|category| category.id == heading);
-                    if heading_category
-                        .map(|category| category.value_kind == CategoryValueKind::Numeric)
-                        .unwrap_or(false)
-                    {
-                        let left_value = left
-                            .assignments
-                            .get(&heading)
-                            .and_then(|assignment| assignment.numeric_value);
-                        let right_value = right
-                            .assignments
-                            .get(&heading)
-                            .and_then(|assignment| assignment.numeric_value);
-                        self.compare_optional_values(left_value, right_value, key.direction)
-                    } else if let Some(category) = heading_category {
-                        let left_value = self.standard_sort_value_for_heading(left, category);
-                        let right_value = self.standard_sort_value_for_heading(right, category);
-                        self.compare_optional_values(left_value, right_value, key.direction)
-                    } else {
-                        Ordering::Equal
-                    }
-                }
-            },
-        }
-    }
-
-    fn standard_sort_value_for_heading(&self, item: &Item, heading: &Category) -> Option<String> {
-        let mut values: Vec<String> = heading
-            .children
-            .iter()
-            .filter(|child_id| item.assignments.contains_key(child_id))
-            .map(|child_id| {
-                self.categories
-                    .iter()
-                    .find(|category| category.id == *child_id)
-                    .map(|category| category.name.clone())
-                    .unwrap_or_else(|| child_id.to_string())
-            })
-            .collect();
-        if values.is_empty() {
-            return None;
-        }
-        values.sort_by_key(|value| value.to_ascii_lowercase());
-        Some(values.join(", ").to_ascii_lowercase())
-    }
-
-    fn compare_some_values<T: Ord>(
-        &self,
-        left: T,
-        right: T,
-        direction: SlotSortDirection,
-    ) -> Ordering {
-        match direction {
-            SlotSortDirection::Asc => left.cmp(&right),
-            SlotSortDirection::Desc => right.cmp(&left),
-        }
-    }
-
-    fn compare_optional_values<T: Ord>(
-        &self,
-        left: Option<T>,
-        right: Option<T>,
-        direction: SlotSortDirection,
-    ) -> Ordering {
-        match (left, right) {
-            (None, None) => Ordering::Equal,
-            (None, Some(_)) => Ordering::Greater,
-            (Some(_), None) => Ordering::Less,
-            (Some(left), Some(right)) => self.compare_some_values(left, right, direction),
-        }
+        let keys: Vec<SortKey> = sort_keys.iter().map(|key| key.to_sort_key()).collect();
+        slot.items.sort_by(|left, right| {
+            compare_items_by_sort_keys(left, right, &keys, &self.categories)
+        });
     }
 
     /// Suspend the TUI, open an external editor for the given InputPanel buffer,

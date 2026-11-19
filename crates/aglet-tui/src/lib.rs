@@ -10,13 +10,17 @@ use aglet_core::classification::{
     SemanticClassificationMode,
 };
 use aglet_core::matcher::{unknown_hashtag_tokens, SubstringClassifier};
+use aglet_core::model::is_reserved_category_name;
 use aglet_core::model::{
     Action, Assignment, AssignmentExplanation, BoardDisplayMode, Category, CategoryId,
     CategoryValueKind, Column, ColumnKind, Condition, CriterionMode, DateCompareOp, DateSource,
     DatebookConfig, EmptySections, Item, ItemId, ItemLinksForItem, NumericFormat, Query, Section,
     SectionFlow, SummaryFn, View, WhenBucket,
 };
-use aglet_core::query::{evaluate_query, generate_datebook_sections, resolve_view};
+use aglet_core::query::{
+    category_name_map, compare_items_by_sort_keys, evaluate_query, generate_datebook_sections,
+    resolve_view, SortDirection, SortField, SortKey,
+};
 use aglet_core::store::Store;
 use aglet_core::workflow::WorkflowConfig;
 use crossterm::cursor::SetCursorStyle;
@@ -67,8 +71,7 @@ use state::board::{
     AddColumnDirection, BoardAddColumnAnchor, BoardAddColumnState, DoneBlocksConfirmScope,
     DoneBlocksConfirmState, DoneToggleOrigin, GlobalSearchSession, LinkWizardAction,
     LinkWizardFocus, LinkWizardState, NameInputContext, NormalFocus, NormalModePrefix,
-    NumericEditTarget, PreviewMode, Slot, SlotContext, SlotSortColumn, SlotSortDirection,
-    SlotSortKey, WhenEditTarget,
+    NumericEditTarget, PreviewMode, Slot, SlotContext, SlotSortColumn, SlotSortKey, WhenEditTarget,
 };
 use state::category::{
     ActionEditKind, ActionEditState, CategoryColumnPickerFocus, CategoryColumnPickerState,

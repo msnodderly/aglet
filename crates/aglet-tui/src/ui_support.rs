@@ -107,13 +107,6 @@ pub(super) fn candidate_assignment_label(
     }
 }
 
-pub(super) fn category_name_map(categories: &[Category]) -> HashMap<CategoryId, String> {
-    categories
-        .iter()
-        .map(|category| (category.id, category.name.clone()))
-        .collect()
-}
-
 pub(super) fn format_action_targets(
     targets: &HashSet<CategoryId>,
     category_names: &HashMap<CategoryId, String>,
@@ -847,12 +840,6 @@ pub(super) fn category_depth(
     }
 
     depth
-}
-
-pub(super) fn is_reserved_category_name(name: &str) -> bool {
-    name.eq_ignore_ascii_case("When")
-        || name.eq_ignore_ascii_case("Entry")
-        || name.eq_ignore_ascii_case("Done")
 }
 
 pub(super) fn filter_category_ids_by_query(

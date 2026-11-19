@@ -213,6 +213,12 @@ One PR per item. None changes stored data.
 6. **Preview via savepoint (F10).** First find out why the in-memory copy
    exists. Replace only if nothing depends on it.
 
+Status 2026-11-17: item 1 done (commit `8fa2a00`, 343 added, 670 removed).
+The plan said "one PR per item", but the work so far is on a single branch,
+`simplify/phase-3-core-cli-consolidation`; see the handoff for how to split
+it. Item 2 is half done: core helpers exist (`808cdb2`), callers not yet
+switched. Items 3 to 6 not started.
+
 ### Phase 4. TUI
 
 Order matters here: the harness comes first so later steps do not rewrite

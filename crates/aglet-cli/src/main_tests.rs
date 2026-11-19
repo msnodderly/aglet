@@ -1,19 +1,18 @@
 use super::{
     blocked_item_ids, build_markdown_export, build_numeric_filters, category_name_map, cmd_add,
     cmd_category, cmd_claim, cmd_edit, cmd_import, cmd_link, cmd_list, cmd_release, cmd_unlink,
-    cmd_view, compare_items_by_sort_keys, describe_category_action,
-    duplicate_category_create_error, indexed_category_action_row, item_link_section_lines,
-    parse_csv_decimals, parse_decimal_value, parse_sort_spec, parse_when_datetime_input,
-    parsed_when_feedback_line, read_note_from_stdin, reject_items_with_any_categories,
-    render_compact_item_table, render_section_column_table, retain_items_by_dependency_state,
-    retain_items_matching_numeric_filters, retain_items_with_all_categories,
-    retain_items_with_any_categories, section_summary_entries, section_summary_line,
-    tui_launch_debug, unknown_hashtag_feedback_line, view_by_name, view_category_alias_rows,
-    write_output_allow_broken_pipe, write_stdout_allow_broken_pipe, CategoryCommand, Cli,
-    CliColumnKind, CliSortDirection, CliSortField, CliSortKey, CliSummaryFn, Command,
-    ConditionMatchModeArg, DateSourceArg, ImportCommand, LinkCommand, ListFilters, NumericFilter,
-    NumericPredicate, OutputFormatArg, TableStyle, UnlinkCommand, ViewAliasCommand,
-    ViewColumnCommand, ViewCommand, ViewSectionCommand,
+    cmd_view, describe_category_action, duplicate_category_create_error,
+    indexed_category_action_row, item_link_section_lines, parse_csv_decimals, parse_decimal_value,
+    parse_sort_spec, parse_when_datetime_input, parsed_when_feedback_line, read_note_from_stdin,
+    reject_items_with_any_categories, render_compact_item_table, render_section_column_table,
+    retain_items_by_dependency_state, retain_items_matching_numeric_filters,
+    retain_items_with_all_categories, retain_items_with_any_categories, section_summary_entries,
+    section_summary_line, tui_launch_debug, unknown_hashtag_feedback_line, view_by_name,
+    view_category_alias_rows, write_output_allow_broken_pipe, write_stdout_allow_broken_pipe,
+    CategoryCommand, Cli, CliColumnKind, CliSummaryFn, Command, ConditionMatchModeArg,
+    DateSourceArg, ImportCommand, LinkCommand, ListFilters, NumericFilter, NumericPredicate,
+    OutputFormatArg, SortDirection, SortField, SortKey, TableStyle, UnlinkCommand,
+    ViewAliasCommand, ViewColumnCommand, ViewCommand, ViewSectionCommand,
 };
 use aglet_core::aglet::Aglet;
 use aglet_core::matcher::SubstringClassifier;
@@ -2407,78 +2406,18 @@ fn parse_sort_spec_supports_when_and_direction_suffix() {
     let when_key = parse_sort_spec("when:desc", &categories).expect("parse when desc");
     assert_eq!(
         when_key,
-        CliSortKey {
-            field: CliSortField::WhenDate,
-            direction: CliSortDirection::Desc
+        SortKey {
+            field: SortField::WhenDate,
+            direction: SortDirection::Desc
         }
     );
     let item_key = parse_sort_spec("item", &categories).expect("parse item default");
     assert_eq!(
         item_key,
-        CliSortKey {
-            field: CliSortField::ItemText,
-            direction: CliSortDirection::Asc
+        SortKey {
+            field: SortField::ItemText,
+            direction: SortDirection::Asc
         }
-    );
-}
-
-#[test]
-fn compare_items_by_sort_keys_numeric_missing_values_are_last() {
-    let store = Store::open_memory().expect("store");
-    let classifier = SubstringClassifier;
-    let aglet = Aglet::new(&store, &classifier);
-
-    let mut cost = Category::new("Cost".to_string());
-    cost.value_kind = CategoryValueKind::Numeric;
-    store.create_category(&cost).expect("create cost");
-
-    let ten = Item::new("Ten".to_string());
-    let missing = Item::new("Missing".to_string());
-    let five = Item::new("Five".to_string());
-    store.create_item(&ten).expect("create ten");
-    store.create_item(&missing).expect("create missing");
-    store.create_item(&five).expect("create five");
-
-    aglet
-        .assign_item_numeric_manual(
-            ten.id,
-            cost.id,
-            Decimal::new(10, 0),
-            Some("test:assign".to_string()),
-        )
-        .expect("assign ten");
-    aglet
-        .assign_item_numeric_manual(
-            five.id,
-            cost.id,
-            Decimal::new(5, 0),
-            Some("test:assign".to_string()),
-        )
-        .expect("assign five");
-
-    let categories = store.get_hierarchy().expect("hierarchy");
-    let key_asc = CliSortKey {
-        field: CliSortField::Category(cost.id),
-        direction: CliSortDirection::Asc,
-    };
-    let key_desc = CliSortKey {
-        field: CliSortField::Category(cost.id),
-        direction: CliSortDirection::Desc,
-    };
-
-    let mut rows = store.list_items().expect("list items");
-    rows.sort_by(|left, right| compare_items_by_sort_keys(left, right, &[key_asc], &categories));
-    let asc_texts: Vec<String> = rows.iter().map(|item| item.text.clone()).collect();
-    assert_eq!(
-        asc_texts,
-        vec!["Five".to_string(), "Ten".to_string(), "Missing".to_string()]
-    );
-
-    rows.sort_by(|left, right| compare_items_by_sort_keys(left, right, &[key_desc], &categories));
-    let desc_texts: Vec<String> = rows.iter().map(|item| item.text.clone()).collect();
-    assert_eq!(
-        desc_texts,
-        vec!["Ten".to_string(), "Five".to_string(), "Missing".to_string()]
     );
 }
 
@@ -3678,16 +3617,20 @@ fn cmd_import_csv_bad_row_rolls_back_earlier_rows() {
 }
 
 /// Answers every LLM request with the same suggestion.
-struct FixedOllamaTransport(&'static str);
+struct FixedChatTransport(&'static str);
 
-impl aglet_core::classification::OllamaTransport for FixedOllamaTransport {
+impl aglet_core::classification::ChatTransport for FixedChatTransport {
     fn complete(
         &self,
-        _settings: &aglet_core::classification::OllamaProviderSettings,
+        _endpoint: &aglet_core::classification::ChatEndpoint,
+        _api_key: Option<&str>,
         _system_prompt: &str,
         _user_prompt: &str,
-    ) -> aglet_core::error::Result<Option<String>> {
-        Ok(Some(self.0.to_string()))
+    ) -> aglet_core::error::Result<Option<aglet_core::classification::ChatCompletion>> {
+        Ok(Some(aglet_core::classification::ChatCompletion {
+            content: self.0.to_string(),
+            usage: None,
+        }))
     }
 }
 
@@ -3701,10 +3644,10 @@ fn cmd_import_csv_skips_rows_deleted_by_an_action_when_classifying() {
 
     let store = Store::open_memory().expect("store");
     let classifier = SubstringClassifier;
-    let transport = std::sync::Arc::new(FixedOllamaTransport(
+    let transport = std::sync::Arc::new(FixedChatTransport(
         r#"{"suggestions":[{"category":"Errands","confidence":0.9,"rationale":"chore"}]}"#,
     ));
-    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let aglet = Aglet::with_chat_transport(&store, &classifier, transport);
     let mut cfg = ClassificationConfig {
         literal_mode: LiteralClassificationMode::AutoApply,
         semantic_mode: SemanticClassificationMode::SuggestReview,
