@@ -24,6 +24,8 @@ impl fmt::Display for TuiError {
     }
 }
 
+impl std::error::Error for TuiError {}
+
 impl From<AgletError> for TuiError {
     fn from(err: AgletError) -> Self {
         TuiError::Aglet(err)
