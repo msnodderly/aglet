@@ -4274,14 +4274,37 @@ fn bulk_reevaluation_rolls_back_every_item_when_one_fails() {
             .contains_key(&alpha.id),
         "the healthy item's assignment must roll back with the failed run"
     );
+    assert!(
+        store.get_category(alpha.id).is_err(),
+        "the category write must roll back with the failed run"
+    );
 
-    // Control: with the failing item gone, the same evaluation assigns Alpha.
+    // Control: with the failing item gone, retrying the same create succeeds.
     store.delete_item(failing, "test").unwrap();
-    aglet.update_category(&alpha).unwrap();
+    aglet.create_category(&alpha).unwrap();
     assert!(store
         .get_assignments_for_item(healthy)
         .unwrap()
         .contains_key(&alpha.id));
+}
+
+#[test]
+fn failed_category_update_keeps_the_old_definition() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let alpha = category("Alpha", false);
+    aglet.create_category(&alpha).unwrap();
+    create_pass_cap_trap(&store);
+    make_item(&store, "Trigger this chain");
+
+    let mut edited = store.get_category(alpha.id).unwrap();
+    edited.enable_implicit_string = true;
+    assert!(aglet.update_category(&edited).is_err());
+    assert!(
+        !store.get_category(alpha.id).unwrap().enable_implicit_string,
+        "a failed update must not keep the new definition"
+    );
 }
 
 #[test]
