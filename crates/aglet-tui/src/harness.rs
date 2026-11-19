@@ -78,6 +78,28 @@ impl Harness {
         self
     }
 
+    /// Press `keys` until `reached` holds, at most `limit` times, and panic
+    /// if it never does. Use it to walk to a row so a navigation regression
+    /// fails the test instead of looping forever.
+    pub(crate) fn press_until(
+        &mut self,
+        keys: &str,
+        limit: usize,
+        reached: impl Fn(&App) -> bool,
+    ) -> &mut Self {
+        for _ in 0..limit {
+            if reached(&self.app) {
+                return self;
+            }
+            self.keys(keys);
+        }
+        assert!(
+            reached(&self.app),
+            "target not reached after pressing {keys:?} {limit} times"
+        );
+        self
+    }
+
     /// Type text literally, spaces included.
     pub(crate) fn type_text(&mut self, text: &str) -> &mut Self {
         for ch in text.chars() {
@@ -186,6 +208,12 @@ mod tests {
             .map(|item| item.text)
             .collect();
         assert_eq!(texts, ["Call the vet"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "target not reached")]
+    fn press_until_fails_instead_of_spinning() {
+        Harness::new().press_until("j", 5, |_| false);
     }
 
     #[test]

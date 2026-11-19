@@ -17,9 +17,11 @@ fn category_manager_condition_edit_add_and_save() {
     let mut h = Harness::with_store(store);
 
     h.keys("c");
-    while h.app.selected_category_row().expect("row").name != "Escalated" {
-        h.keys("<Down>");
-    }
+    let rows = h.app.category_rows.len();
+    h.press_until("<Down>", rows, |app| {
+        app.selected_category_row()
+            .is_some_and(|row| row.name == "Escalated")
+    });
     // Details, then also-match, then conditions; Enter opens the list.
     h.keys("<Tab> <Tab> <Tab> <Enter>");
     let edit = h
@@ -30,17 +32,11 @@ fn category_manager_condition_edit_add_and_save() {
 
     h.keys("a");
     assert!(h.app.category_manager_condition_edit().unwrap().picker_open);
-    loop {
-        let index = h
-            .app
-            .category_manager_condition_edit()
-            .unwrap()
-            .picker_index;
-        if h.app.category_rows.get(index).map(|row| row.name.as_str()) == Some("Urgent") {
-            break;
-        }
-        h.keys("j");
-    }
+    h.press_until("j", rows, |app| {
+        app.category_manager_condition_edit()
+            .and_then(|edit| app.category_rows.get(edit.picker_index))
+            .is_some_and(|row| row.name == "Urgent")
+    });
     h.keys("<Space>");
     let edit = h.app.category_manager_condition_edit().unwrap();
     assert_eq!(
