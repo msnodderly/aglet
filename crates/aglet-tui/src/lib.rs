@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use aglet_core::aglet::Aglet;
+use aglet_core::aglet::{Aglet, SaveOptions};
 use aglet_core::classification::{
     CandidateAssignment, ClassificationConfig, ClassificationSuggestion, LiteralClassificationMode,
     SemanticClassificationMode,

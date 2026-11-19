@@ -14,7 +14,7 @@ use super::{
     OllamaModelPickerState, SearchMode, SectionBorderMode, SortDirection, SuggestionDecision,
     ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
 };
-use aglet_core::aglet::Aglet;
+use aglet_core::aglet::{Aglet, SaveOptions};
 use aglet_core::classification::{
     CandidateAssignment, ClassificationConfig, ClassificationSuggestion, LiteralClassificationMode,
     SemanticClassificationMode, SuggestionStatus, PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
@@ -5028,7 +5028,9 @@ fn save_input_panel_edit_status_reports_when_interpretation() {
     let aglet = Aglet::new(&store, &classifier);
     let item = Item::new("Demo".to_string());
     let reference = jiff::Zoned::now().date();
-    aglet.create_item_cheap(&item, reference).expect("create");
+    aglet
+        .create_item_with(&item, SaveOptions::on(reference).without_semantic())
+        .expect("create");
 
     let mut app = App::default();
     app.refresh(&store).expect("refresh");
@@ -5065,7 +5067,9 @@ fn save_input_panel_edit_status_reports_when_cleared() {
     let aglet = Aglet::new(&store, &classifier);
     let item = Item::new("Demo".to_string());
     let reference = jiff::Zoned::now().date();
-    aglet.create_item_cheap(&item, reference).expect("create");
+    aglet
+        .create_item_with(&item, SaveOptions::on(reference).without_semantic())
+        .expect("create");
     aglet
         .set_item_when_date(
             item.id,
@@ -8493,7 +8497,7 @@ fn g_question_opens_suggestion_review_with_pending() {
 
     let item = Item::new("Book travel next Tuesday".to_string());
     aglet
-        .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+        .create_item_with(&item, SaveOptions::on(Date::new(2026, 3, 20).unwrap()))
         .expect("create item");
 
     let mut app = App::default();
@@ -8548,7 +8552,7 @@ fn suggestion_review_confirm_accepts_and_advances() {
 
     let item = Item::new("Book travel next Tuesday".to_string());
     aglet
-        .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+        .create_item_with(&item, SaveOptions::on(Date::new(2026, 3, 20).unwrap()))
         .expect("create item");
 
     let mut app = App::default();
@@ -8592,7 +8596,7 @@ fn suggestion_review_space_toggles_and_esc_cancels() {
 
     let item = Item::new("Book travel soon".to_string());
     aglet
-        .create_item_with_reference_date(&item, Date::new(2026, 3, 20).unwrap())
+        .create_item_with(&item, SaveOptions::on(Date::new(2026, 3, 20).unwrap()))
         .expect("create item");
 
     let mut app = App::default();

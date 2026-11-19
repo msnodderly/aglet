@@ -15,8 +15,8 @@ on any item now rolls back every item in that bulk run.
 
 ### LLM classification runs after the import transaction commits
 
-CSV import saves rows with `create_item_cheap` inside the transaction, then
-calls `Aglet::classify_item_semantic_after_save` per item after commit.
+CSV import saves rows with `SaveOptions::without_semantic()` inside the
+transaction, then calls `Aglet::classify_item_semantic_after_save` per item after commit.
 Reason: the write lock must not be held across network calls. Known gap: a
 MarkDone action fired during bulk re-evaluation on a recurring item still
 classifies the successor, including the LLM, inside the transaction.

@@ -35,6 +35,39 @@ use crate::workflow::{
 };
 
 /// Synchronous integration layer that wires Store mutations to engine execution.
+/// How `Aglet::create_item_with` and `update_item_with` classify the item.
+#[derive(Clone, Copy, Debug)]
+pub struct SaveOptions {
+    /// Date that relative rules such as "today" resolve against.
+    pub reference_date: jiff::civil::Date,
+    /// Run the LLM provider during the save. Callers that classify in the
+    /// background turn this off and submit the job themselves.
+    pub include_semantic: bool,
+}
+
+impl SaveOptions {
+    pub fn on(reference_date: jiff::civil::Date) -> Self {
+        Self {
+            reference_date,
+            include_semantic: true,
+        }
+    }
+
+    pub fn without_semantic(self) -> Self {
+        Self {
+            include_semantic: false,
+            ..self
+        }
+    }
+}
+
+impl Default for SaveOptions {
+    /// Today, with the LLM provider included.
+    fn default() -> Self {
+        Self::on(jiff::Zoned::now().date())
+    }
+}
+
 pub struct Aglet<'a> {
     store: &'a Store,
     classifier: &'a dyn Classifier,
@@ -172,73 +205,25 @@ impl<'a> Aglet<'a> {
     }
 
     pub fn create_item(&self, item: &Item) -> Result<ProcessItemResult> {
-        self.create_item_with_reference_date(item, jiff::Zoned::now().date())
+        self.create_item_with(item, SaveOptions::default())
     }
 
-    pub fn create_item_with_reference_date(
-        &self,
-        item: &Item,
-        reference_date: jiff::civil::Date,
-    ) -> Result<ProcessItemResult> {
-        let item_to_create = item.clone();
-        self.store.create_item(&item_to_create)?;
-        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, None)?;
-        self.process_item_save(item_to_create.id, reference_date, true)
-    }
-
-    /// Like `create_item_with_reference_date` but skips expensive providers
-    /// (Ollama). Callers are expected to submit background classification
-    /// separately for the semantic/LLM path.
-    pub fn create_item_cheap(
-        &self,
-        item: &Item,
-        reference_date: jiff::civil::Date,
-    ) -> Result<ProcessItemResult> {
-        let item_to_create = item.clone();
-        self.store.create_item(&item_to_create)?;
-        self.sync_when_assignment(item_to_create.id, item_to_create.when_date, None)?;
-        self.process_item_save_cheap(item_to_create.id, reference_date, true)
+    pub fn create_item_with(&self, item: &Item, options: SaveOptions) -> Result<ProcessItemResult> {
+        self.store.create_item(item)?;
+        self.sync_when_assignment(item.id, item.when_date, None)?;
+        self.process_item_save(item.id, true, options)
     }
 
     pub fn update_item(&self, item: &Item) -> Result<ProcessItemResult> {
-        self.update_item_with_reference_date(item, jiff::Zoned::now().date())
+        self.update_item_with(item, SaveOptions::default())
     }
 
-    pub fn update_item_with_reference_date(
-        &self,
-        item: &Item,
-        reference_date: jiff::civil::Date,
-    ) -> Result<ProcessItemResult> {
-        self.update_item_inner(item, reference_date, true)
-    }
-
-    /// Like `update_item_with_reference_date` but skips expensive providers
-    /// (Ollama). Callers are expected to submit background classification
-    /// separately for the semantic/LLM path.
-    pub fn update_item_cheap(
-        &self,
-        item: &Item,
-        reference_date: jiff::civil::Date,
-    ) -> Result<ProcessItemResult> {
-        self.update_item_inner(item, reference_date, false)
-    }
-
-    fn update_item_inner(
-        &self,
-        item: &Item,
-        reference_date: jiff::civil::Date,
-        include_semantic: bool,
-    ) -> Result<ProcessItemResult> {
-        let item_to_update = item.clone();
+    pub fn update_item_with(&self, item: &Item, options: SaveOptions) -> Result<ProcessItemResult> {
         let existing = self.store.get_item(item.id)?;
-        let text_changed = item_to_update.text != existing.text;
-        self.store.update_item(&item_to_update)?;
-        self.sync_when_assignment(item_to_update.id, item_to_update.when_date, None)?;
-        if include_semantic {
-            self.process_item_save(item_to_update.id, reference_date, text_changed)
-        } else {
-            self.process_item_save_cheap(item_to_update.id, reference_date, text_changed)
-        }
+        let text_changed = item.text != existing.text;
+        self.store.update_item(item)?;
+        self.sync_when_assignment(item.id, item.when_date, None)?;
+        self.process_item_save(item.id, text_changed, options)
     }
 
     pub fn set_item_when_date(
@@ -888,8 +873,7 @@ impl<'a> Aglet<'a> {
         }
 
         // Trigger engine reprocessing on the successor
-        let reference_date = jiff::Zoned::now().date();
-        self.process_item_save(successor.id, reference_date, true)?;
+        self.process_item_save(successor.id, true, SaveOptions::default())?;
 
         Ok(successor.id)
     }
@@ -1100,7 +1084,7 @@ impl<'a> Aglet<'a> {
         reference_date: jiff::civil::Date,
     ) -> Result<usize> {
         let cfg = self.store.get_classification_config()?;
-        let service = self.classification_service(reference_date, &cfg, true);
+        let service = self.classification_service(reference_date, &cfg, true, true);
         if !service.has_providers() {
             return Ok(0);
         }
@@ -1110,9 +1094,9 @@ impl<'a> Aglet<'a> {
         self.apply_classification_results(item_id, &item_revision_hash, &candidates)
     }
 
-    /// The LLM half of an item save, for callers that saved with a `_cheap`
-    /// method: runs only the semantic provider, under the same config gates as
-    /// a full save. Call it outside any transaction, since it makes a network
+    /// The LLM half of an item save, for callers that saved with
+    /// `SaveOptions::without_semantic`: runs only the semantic provider, under
+    /// the same config gates as a full save. Call it outside any transaction, since it makes a network
     /// request. Returns the number of suggestions queued for review.
     pub fn classify_item_semantic_after_save(&self, item_id: ItemId) -> Result<usize> {
         let cfg = self.store.get_classification_config()?;
@@ -1226,7 +1210,7 @@ impl<'a> Aglet<'a> {
         }
 
         let (request, revision_hash) = {
-            let service = self.classification_service(reference_date, &cfg, true);
+            let service = self.classification_service(reference_date, &cfg, true, true);
             if !service.has_providers() {
                 self.debug_log(&format!(
                     "prepare_background_classification: skip item_id={item_id} reason=no_providers"
@@ -1255,29 +1239,13 @@ impl<'a> Aglet<'a> {
     fn process_item_save(
         &self,
         item_id: ItemId,
-        reference_date: jiff::civil::Date,
         text_changed: bool,
+        options: SaveOptions,
     ) -> Result<ProcessItemResult> {
-        self.process_item_save_inner(item_id, reference_date, text_changed, true)
-    }
-
-    /// Like `process_item_save` but excludes expensive (semantic/Ollama) providers.
-    fn process_item_save_cheap(
-        &self,
-        item_id: ItemId,
-        reference_date: jiff::civil::Date,
-        text_changed: bool,
-    ) -> Result<ProcessItemResult> {
-        self.process_item_save_inner(item_id, reference_date, text_changed, false)
-    }
-
-    fn process_item_save_inner(
-        &self,
-        item_id: ItemId,
-        reference_date: jiff::civil::Date,
-        text_changed: bool,
-        include_semantic: bool,
-    ) -> Result<ProcessItemResult> {
+        let SaveOptions {
+            reference_date,
+            include_semantic,
+        } = options;
         let evaluation_context = EvaluationContext::for_date(reference_date);
         let mut result = ProcessItemResult::default();
         let cfg = self.store.get_classification_config()?;
@@ -1293,11 +1261,8 @@ impl<'a> Aglet<'a> {
             return Ok(result);
         }
 
-        let service = if include_semantic {
-            self.classification_service(reference_date, &cfg, text_changed)
-        } else {
-            self.classification_service_cheap(reference_date, &cfg, text_changed)
-        };
+        let service =
+            self.classification_service(reference_date, &cfg, text_changed, include_semantic);
         if !service.has_providers() {
             let result = self.reprocess_with_options(
                 item_id,
@@ -1747,24 +1712,6 @@ impl<'a> Aglet<'a> {
     }
 
     fn classification_service<'b>(
-        &'b self,
-        reference_date: jiff::civil::Date,
-        cfg: &'b ClassificationConfig,
-        allow_when_parser: bool,
-    ) -> ClassificationService<'b> {
-        self.classification_service_inner(reference_date, cfg, allow_when_parser, true)
-    }
-
-    fn classification_service_cheap<'b>(
-        &'b self,
-        reference_date: jiff::civil::Date,
-        cfg: &'b ClassificationConfig,
-        allow_when_parser: bool,
-    ) -> ClassificationService<'b> {
-        self.classification_service_inner(reference_date, cfg, allow_when_parser, false)
-    }
-
-    fn classification_service_inner<'b>(
         &'b self,
         reference_date: jiff::civil::Date,
         cfg: &'b ClassificationConfig,
