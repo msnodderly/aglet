@@ -16,9 +16,10 @@ impl App {
 
     pub(crate) fn handle_view_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -148,9 +149,10 @@ impl App {
 
     pub(crate) fn handle_view_delete_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('y') => {
                 let Some(view) = self.views.get(self.picker_index).cloned() else {
@@ -203,9 +205,10 @@ impl App {
 
     pub(crate) fn handle_confirm_delete_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         if let Some(done_confirm) = self.done_blocks_confirm.clone() {
             match code {
                 KeyCode::Char('y') => {

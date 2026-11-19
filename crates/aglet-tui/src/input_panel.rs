@@ -385,11 +385,10 @@ impl InputPanel {
         key: KeyEvent,
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
-        let code = key.code;
         if is_ctrl_s_event(key) {
             return InputPanelAction::Save;
         }
-        if let Some(action) = self.handle_focus_navigation(code, current_row_is_assigned_numeric) {
+        if let Some(action) = self.handle_focus_navigation(key, current_row_is_assigned_numeric) {
             return action;
         }
 
@@ -404,17 +403,18 @@ impl InputPanel {
                 }
             }
             InputPanelFocus::Categories => {
-                self.handle_categories_focus(code, current_row_is_assigned_numeric)
+                self.handle_categories_focus(key, current_row_is_assigned_numeric)
             }
-            InputPanelFocus::TypePicker => self.handle_type_picker_focus(code),
+            InputPanelFocus::TypePicker => self.handle_type_picker_focus(key),
         }
     }
 
     fn handle_focus_navigation(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         current_row_is_assigned_numeric: bool,
     ) -> Option<InputPanelAction> {
+        let code = key.code;
         match code {
             KeyCode::Tab => {
                 self.cycle_focus_forward();
@@ -447,9 +447,10 @@ impl InputPanel {
 
     fn handle_categories_focus(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         current_row_is_assigned_numeric: bool,
     ) -> InputPanelAction {
+        let code = key.code;
         match code {
             KeyCode::Down | KeyCode::Char('j') => InputPanelAction::MoveCategoryCursor(1),
             KeyCode::Up | KeyCode::Char('k') => InputPanelAction::MoveCategoryCursor(-1),
@@ -486,7 +487,8 @@ impl InputPanel {
         }
     }
 
-    fn handle_type_picker_focus(&mut self, code: KeyCode) -> InputPanelAction {
+    fn handle_type_picker_focus(&mut self, key: KeyEvent) -> InputPanelAction {
+        let code = key.code;
         match code {
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
                 InputPanelAction::ToggleType

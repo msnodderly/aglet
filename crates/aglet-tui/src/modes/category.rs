@@ -624,11 +624,11 @@ impl App {
         )))
     }
 
-    fn category_manager_save_key_pressed(&self, code: KeyCode) -> bool {
-        self.is_ctrl_s_code(code)
-            || matches!(code, KeyCode::Char('S'))
-            || (matches!(code, KeyCode::Char('s'))
-                && self.transient.key_modifiers.contains(KeyModifiers::SHIFT))
+    fn category_manager_save_key_pressed(key: KeyEvent) -> bool {
+        is_ctrl_s(key)
+            || matches!(key.code, KeyCode::Char('S'))
+            || (matches!(key.code, KeyCode::Char('s'))
+                && key.modifiers.contains(KeyModifiers::SHIFT))
     }
 
     fn close_category_manager_with_status(&mut self, status: &str) {
@@ -642,9 +642,10 @@ impl App {
 
     fn handle_category_manager_discard_confirm_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('y') => {
                 self.save_category_manager_dirty_details(aglet)?;
@@ -1102,9 +1103,10 @@ impl App {
 
     fn handle_category_manager_details_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         if self.category_manager_focus() != Some(CategoryManagerFocus::Details) {
             return Ok(false);
         }
@@ -1136,7 +1138,7 @@ impl App {
 
         if self.category_manager_details_inline_input().is_some() {
             match code {
-                _ if self.is_ctrl_s_code(code) => {
+                _ if is_ctrl_s(key) => {
                     self.save_category_manager_numeric_inline_edit(aglet)?;
                     return Ok(true);
                 }
@@ -1150,7 +1152,7 @@ impl App {
                     return Ok(true);
                 }
                 _ => {
-                    let text_key = self.text_key_event(code);
+                    let text_key = key;
                     if let Some(input) = self.category_manager_details_inline_input_mut() {
                         if input.buffer.handle_key_event(text_key, false) {
                             return Ok(true);
@@ -1161,7 +1163,7 @@ impl App {
             return Ok(false);
         }
 
-        if self.category_manager_save_key_pressed(code)
+        if Self::category_manager_save_key_pressed(key)
             && (self.category_manager_details_note_dirty()
                 || self.category_manager_details_also_match_dirty())
             && !self.category_manager_details_note_editing()
@@ -1176,7 +1178,7 @@ impl App {
             && self.category_manager_details_note_editing()
         {
             match code {
-                _ if self.is_ctrl_s_code(code) => {
+                _ if is_ctrl_s(key) => {
                     self.set_category_manager_details_note_editing(false);
                     if self.category_manager_details_note_dirty() {
                         self.save_category_manager_details_note(aglet)?;
@@ -1192,7 +1194,7 @@ impl App {
                     return Ok(code == KeyCode::Esc);
                 }
                 _ => {
-                    let text_key = self.text_key_event(code);
+                    let text_key = key;
                     if let Some(buf) = self.category_manager_details_note_edit_mut() {
                         if buf.handle_key_event(text_key, true) {
                             self.recompute_category_manager_details_note_dirty();
@@ -1208,7 +1210,7 @@ impl App {
             && self.category_manager_details_also_match_editing()
         {
             match code {
-                _ if self.is_ctrl_s_code(code) => {
+                _ if is_ctrl_s(key) => {
                     self.set_category_manager_details_also_match_editing(false);
                     if self.category_manager_details_also_match_dirty() {
                         self.save_category_manager_details_also_match(aglet)?;
@@ -1223,7 +1225,7 @@ impl App {
                     return Ok(code == KeyCode::Esc);
                 }
                 _ => {
-                    let text_key = self.text_key_event(code);
+                    let text_key = key;
                     if let Some(buf) = self.category_manager_details_also_match_edit_mut() {
                         if buf.handle_key_event(text_key, true) {
                             self.recompute_category_manager_details_also_match_dirty();
@@ -1241,7 +1243,7 @@ impl App {
         {
             self.start_category_manager_details_note_edit();
             if self.category_manager_details_note_editing() {
-                let text_key = self.text_key_event(code);
+                let text_key = key;
                 if let Some(buf) = self.category_manager_details_note_edit_mut() {
                     if buf.handle_key_event(text_key, true) {
                         self.recompute_category_manager_details_note_dirty();
@@ -1257,7 +1259,7 @@ impl App {
         {
             self.start_category_manager_details_also_match_edit();
             if self.category_manager_details_also_match_editing() {
-                let text_key = self.text_key_event(code);
+                let text_key = key;
                 if let Some(buf) = self.category_manager_details_also_match_edit_mut() {
                     if buf.handle_key_event(text_key, true) {
                         self.recompute_category_manager_details_also_match_dirty();
@@ -1714,9 +1716,10 @@ impl App {
 
     pub(crate) fn handle_category_manager_inline_action_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let Some(action) = self.category_manager_inline_action().cloned() else {
             return Ok(false);
         };
@@ -1758,7 +1761,7 @@ impl App {
                         }
                     }
                     _ => {
-                        if buf.handle_key_event(self.text_key_event(code), false) {
+                        if buf.handle_key_event(key, false) {
                             self.set_category_manager_inline_action(Some(
                                 CategoryInlineAction::Rename {
                                     category_id,
@@ -1794,7 +1797,8 @@ impl App {
         }
     }
 
-    fn handle_workflow_setup_key(&mut self, code: KeyCode, aglet: &Aglet<'_>) -> TuiResult<bool> {
+    fn handle_workflow_setup_key(&mut self, key: KeyEvent, aglet: &Aglet<'_>) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc | KeyCode::Char('w') => {
                 self.workflow_setup_open = false;
@@ -1881,9 +1885,10 @@ impl App {
 
     pub(crate) fn handle_workflow_role_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let visible_row_indices = self.workflow_role_picker_row_indices();
         let Some(picker) = self.settings.workflow_role_picker.clone() else {
             return Ok(true);
@@ -1968,9 +1973,10 @@ impl App {
 
     fn handle_classification_mode_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc | KeyCode::Char('m') => {
                 self.settings.classification_mode_picker_open = false;
@@ -2002,38 +2008,39 @@ impl App {
 
     pub(crate) fn handle_category_manager_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         self.ensure_category_manager_session();
-        if self.handle_category_manager_inline_action_key(code, aglet)? {
+        if self.handle_category_manager_inline_action_key(key, aglet)? {
             return Ok(false);
         }
         if self.category_manager_discard_confirm() {
-            self.handle_category_manager_discard_confirm_key(code, aglet)?;
+            self.handle_category_manager_discard_confirm_key(key, aglet)?;
             return Ok(false);
         }
         if self.settings.classification_mode_picker_open {
-            self.handle_classification_mode_picker_key(code, aglet)?;
+            self.handle_classification_mode_picker_key(key, aglet)?;
             return Ok(false);
         }
         if self.settings.workflow_role_picker.is_some() {
-            self.handle_workflow_role_picker_key(code, aglet)?;
+            self.handle_workflow_role_picker_key(key, aglet)?;
             return Ok(false);
         }
         if self.workflow_setup_open {
-            self.handle_workflow_setup_key(code, aglet)?;
+            self.handle_workflow_setup_key(key, aglet)?;
             return Ok(false);
         }
         if self.category_manager_condition_edit().is_some() {
-            self.handle_condition_edit_key(code, aglet)?;
+            self.handle_condition_edit_key(key, aglet)?;
             return Ok(false);
         }
         if self.category_manager_action_edit().is_some() {
-            self.handle_action_edit_key(code, aglet)?;
+            self.handle_action_edit_key(key, aglet)?;
             return Ok(false);
         }
-        if self.handle_category_manager_details_key(code, aglet)? {
+        if self.handle_category_manager_details_key(key, aglet)? {
             return Ok(false);
         }
         if self.category_manager_filter_editing() {
@@ -2051,7 +2058,7 @@ impl App {
                     self.set_category_manager_filter_editing(false);
                 }
                 _ => {
-                    let text_key = self.text_key_event(code);
+                    let text_key = key;
                     if let Some(filter) = self.category_manager_filter_mut() {
                         if filter.handle_key_event(text_key, false) {
                             self.rebuild_category_manager_visible_rows();
@@ -2073,7 +2080,7 @@ impl App {
         if !matches!(code, KeyCode::Char('<') | KeyCode::Char('>')) {
             self.set_category_manager_structure_move_prefix(None);
         }
-        if self.category_manager_save_key_pressed(code)
+        if Self::category_manager_save_key_pressed(key)
             && (self.category_manager_details_note_dirty()
                 || self.category_manager_details_also_match_dirty())
             && !self.category_manager_details_note_editing()
@@ -2927,7 +2934,7 @@ impl App {
         }
     }
 
-    fn handle_condition_edit_key(&mut self, code: KeyCode, aglet: &Aglet<'_>) -> TuiResult<bool> {
+    fn handle_condition_edit_key(&mut self, key: KeyEvent, aglet: &Aglet<'_>) -> TuiResult<bool> {
         let edit = match self.category_manager_condition_edit() {
             Some(e) => e.clone(),
             None => return Ok(false),
@@ -2936,23 +2943,24 @@ impl App {
         if edit.picker_open {
             match edit.editor_kind {
                 ConditionEditorKind::ProfilePicker => {
-                    self.handle_condition_picker_key(code, aglet, &edit)
+                    self.handle_condition_picker_key(key, aglet, &edit)
                 }
                 ConditionEditorKind::DateEditor => {
-                    self.handle_condition_date_key(code, aglet, &edit)
+                    self.handle_condition_date_key(key, aglet, &edit)
                 }
             }
         } else {
-            self.handle_condition_list_key(code, aglet, &edit)
+            self.handle_condition_list_key(key, aglet, &edit)
         }
     }
 
     fn handle_condition_list_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
         edit: &ConditionEditState,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let condition_count = self
             .selected_category_row()
             .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
@@ -3029,10 +3037,11 @@ impl App {
 
     fn handle_condition_date_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
         _edit: &ConditionEditState,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let editable_focus = self
             .category_manager_condition_edit()
             .map(|edit| match edit.draft_date.field_focus {
@@ -3160,7 +3169,7 @@ impl App {
                 }
             }
             _ => {
-                let text_key = editable_focus.then(|| self.text_key_event(code));
+                let text_key = editable_focus.then_some(key);
                 if let Some(edit) = self.category_manager_condition_edit_mut() {
                     if editable_focus {
                         match edit.draft_date.field_focus {
@@ -3197,10 +3206,11 @@ impl App {
 
     fn handle_condition_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
         edit: &ConditionEditState,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let filtered_indices = self.condition_edit_filtered_category_indices();
         let current_visible_pos = filtered_indices
             .iter()
@@ -3517,25 +3527,26 @@ impl App {
             .collect()
     }
 
-    fn handle_action_edit_key(&mut self, code: KeyCode, aglet: &Aglet<'_>) -> TuiResult<bool> {
+    fn handle_action_edit_key(&mut self, key: KeyEvent, aglet: &Aglet<'_>) -> TuiResult<bool> {
         let edit = match self.category_manager_action_edit() {
             Some(e) => e.clone(),
             None => return Ok(false),
         };
 
         if edit.picker_open {
-            self.handle_action_picker_key(code, aglet, &edit)
+            self.handle_action_picker_key(key, aglet, &edit)
         } else {
-            self.handle_action_list_key(code, aglet, &edit)
+            self.handle_action_list_key(key, aglet, &edit)
         }
     }
 
     fn handle_action_list_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
         edit: &ActionEditState,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let action_count = self
             .selected_category_row()
             .and_then(|row| self.categories.iter().find(|c| c.id == row.id))
@@ -3574,10 +3585,11 @@ impl App {
 
     fn handle_action_picker_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
         edit: &ActionEditState,
     ) -> TuiResult<bool> {
+        let code = key.code;
         let filtered_indices = self.action_edit_filtered_category_indices();
         let current_visible_pos = filtered_indices
             .iter()

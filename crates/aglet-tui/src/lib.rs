@@ -47,6 +47,7 @@ mod async_classify;
 mod error;
 mod fuzzy;
 mod input;
+use input::is_ctrl_s;
 mod input_panel;
 mod keymap;
 mod modes;
@@ -409,20 +410,10 @@ enum BackgroundClassificationSubmitResult {
     NoProvidersEnabled,
 }
 
+#[derive(Default)]
 struct TransientUiState {
     status: Option<TransientStatus>,
-    key_modifiers: KeyModifiers,
     pending_external_edit: Option<ExternalEditorTarget>,
-}
-
-impl Default for TransientUiState {
-    fn default() -> Self {
-        Self {
-            status: None,
-            key_modifiers: KeyModifiers::NONE,
-            pending_external_edit: None,
-        }
-    }
 }
 
 struct App {

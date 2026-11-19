@@ -223,7 +223,8 @@ impl App {
         }
     }
 
-    fn move_view_settings_focus(&mut self, code: KeyCode) -> bool {
+    fn move_view_settings_focus(&mut self, key: KeyEvent) -> bool {
+        let code = key.code;
         let Some(state) = self.view_edit_state.as_ref() else {
             return false;
         };
@@ -253,8 +254,9 @@ impl App {
         }
     }
 
-    pub(crate) fn handle_view_edit_settings_key(&mut self, code: KeyCode) -> TuiResult<bool> {
-        if self.move_view_settings_focus(code) {
+    pub(crate) fn handle_view_edit_settings_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
+        if self.move_view_settings_focus(key) {
             return Ok(true);
         }
 
@@ -491,7 +493,8 @@ impl App {
         self.status = "Unmatched label: type text  Enter:confirm  Esc:cancel".to_string();
     }
 
-    pub(crate) fn handle_view_edit_datebook_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    pub(crate) fn handle_view_edit_datebook_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(state) = &mut self.view_edit_state {
@@ -558,7 +561,8 @@ impl App {
         self.status = Self::view_edit_alias_picker_status();
     }
 
-    pub(crate) fn handle_view_edit_preview_key(&mut self, code: KeyCode) -> TuiResult<bool> {
+    pub(crate) fn handle_view_edit_preview_key(&mut self, key: KeyEvent) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(state) = &mut self.view_edit_state {

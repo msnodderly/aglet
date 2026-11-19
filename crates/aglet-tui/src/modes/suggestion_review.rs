@@ -50,9 +50,10 @@ impl App {
 
     pub(crate) fn handle_suggestion_review_key(
         &mut self,
-        code: KeyCode,
+        key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
+        let code = key.code;
         match code {
             KeyCode::Esc => {
                 self.classification.suggestion_review = None;
