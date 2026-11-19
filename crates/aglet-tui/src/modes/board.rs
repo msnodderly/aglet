@@ -443,12 +443,7 @@ impl App {
             .category_rows
             .iter()
             .enumerate()
-            .filter(|(_, row)| {
-                if hide_reserved && row.is_reserved {
-                    return false;
-                }
-                true
-            })
+            .filter(|(_, row)| !(hide_reserved && row.is_reserved))
             .map(|(idx, _)| idx)
             .collect();
         self.filter_category_row_indices_by_query(rows, query)

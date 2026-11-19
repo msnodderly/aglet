@@ -443,11 +443,7 @@ impl<'a> Aglet<'a> {
         AssignmentIntent {
             category_id,
             source: AssignmentSource::Manual,
-            origin: Some(
-                origin
-                    .clone()
-                    .unwrap_or_else(|| default_origin.to_string()),
-            ),
+            origin: Some(origin.clone().unwrap_or_else(|| default_origin.to_string())),
             explanation: Some(AssignmentExplanation::Manual { origin }),
             numeric_value,
             upgrade_existing,
@@ -462,8 +458,7 @@ impl<'a> Aglet<'a> {
         category_id: CategoryId,
         origin: Option<String>,
     ) -> Result<ProcessItemResult> {
-        let intent =
-            Self::manual_intent(category_id, origin, origin_const::MANUAL, None, true);
+        let intent = Self::manual_intent(category_id, origin, origin_const::MANUAL, None, true);
         let result = self.reprocess_existing_item_with_intents(item_id, vec![intent])?;
         self.debug_log_process_result("assign.manual", item_id, &result);
         Ok(result)
@@ -1377,13 +1372,7 @@ impl<'a> Aglet<'a> {
         let triggers = result.new_assignments.clone();
         merge_process_results(
             &mut result,
-            self.reprocess_with_options(
-                item_id,
-                false,
-                evaluation_context,
-                triggers,
-                intents,
-            )?,
+            self.reprocess_with_options(item_id, false, evaluation_context, triggers, intents)?,
         );
 
         let review_result =
@@ -1921,7 +1910,8 @@ impl<'a> Aglet<'a> {
             return Ok(());
         }
         self.specials_depth.set(depth + 1);
-        let applied = self.apply_deferred_specials_inner(item_id, specials, evaluation_context, result);
+        let applied =
+            self.apply_deferred_specials_inner(item_id, specials, evaluation_context, result);
         self.specials_depth.set(depth);
         applied
     }
@@ -2302,7 +2292,6 @@ impl<'a> Aglet<'a> {
         }
     }
 
-
     /// Convert an accepted suggestion into work: Category suggestions become
     /// assignment intents (explicit user intent: clears the veto and may kick
     /// exclusive siblings); When suggestions are applied immediately because
@@ -2399,13 +2388,7 @@ impl<'a> Aglet<'a> {
         targets
             .iter()
             .map(|category_id| {
-                Self::manual_intent(
-                    *category_id,
-                    Some(origin.to_string()),
-                    origin,
-                    None,
-                    false,
-                )
+                Self::manual_intent(*category_id, Some(origin.to_string()), origin, None, false)
             })
             .collect()
     }

@@ -2175,17 +2175,16 @@ fn build_numeric_filters(
 }
 
 fn parse_arg_pairs(args: &[String], flag_name: &str) -> Result<Vec<(String, String)>, String> {
-    let mut out = Vec::new();
-    let chunks = args.chunks_exact(2);
-    if !chunks.remainder().is_empty() {
+    let (pairs, remainder) = args.as_chunks::<2>();
+    if !remainder.is_empty() {
         return Err(format!(
             "invalid {flag_name} arguments: expected repeated <CATEGORY> <VALUE> pairs"
         ));
     }
-    for pair in chunks {
-        out.push((pair[0].clone(), pair[1].clone()));
-    }
-    Ok(out)
+    Ok(pairs
+        .iter()
+        .map(|[category, value]| (category.clone(), value.clone()))
+        .collect())
 }
 
 fn resolve_numeric_filter_category(
@@ -2943,7 +2942,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
         }
         CategoryCommand::ListVetoes { item_id } => {
             let item_id = resolve_item_id(&item_id, store)?;
-            let vetoes = store.get_vetoes_for_item(item_id).map_err(|e| e.to_string())?;
+            let vetoes = store
+                .get_vetoes_for_item(item_id)
+                .map_err(|e| e.to_string())?;
             if vetoes.is_empty() {
                 println!("no vetoes for item {item_id}");
                 return Ok(());
@@ -3092,15 +3093,16 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 return Err(format!("category '{}' is not Numeric", target.name));
             }
 
-            let parse_bound = |label: &str, raw: &Option<String>| -> Result<Option<Decimal>, String> {
-                raw.as_deref()
-                    .map(|value| {
-                        value
-                            .parse::<Decimal>()
-                            .map_err(|_| format!("invalid {label} value: {value}"))
-                    })
-                    .transpose()
-            };
+            let parse_bound =
+                |label: &str, raw: &Option<String>| -> Result<Option<Decimal>, String> {
+                    raw.as_deref()
+                        .map(|value| {
+                            value
+                                .parse::<Decimal>()
+                                .map_err(|_| format!("invalid {label} value: {value}"))
+                        })
+                        .transpose()
+                };
             let min = parse_bound("--min", &min)?;
             let max = parse_bound("--max", &max)?;
             if let (Some(low), Some(high)) = (min, max) {
@@ -3214,46 +3216,45 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
             let category_id = category_id_by_name(&categories, &name)?;
 
-            let (action, action_kind) = if !assign_categories.is_empty()
-                || !remove_categories.is_empty()
-            {
-                let assign_requested = !assign_categories.is_empty();
-                let target_names = if assign_requested {
-                    &assign_categories
+            let (action, action_kind) =
+                if !assign_categories.is_empty() || !remove_categories.is_empty() {
+                    let assign_requested = !assign_categories.is_empty();
+                    let target_names = if assign_requested {
+                        &assign_categories
+                    } else {
+                        &remove_categories
+                    };
+                    let mut targets = HashSet::new();
+                    for target_name in target_names {
+                        let target_id = category_id_by_name(&categories, target_name)?;
+                        targets.insert(target_id);
+                    }
+                    if assign_requested {
+                        (Action::Assign { targets }, "assign")
+                    } else {
+                        (Action::Remove { targets }, "remove")
+                    }
+                } else if let Some(numeric_name) = &assign_numeric {
+                    let target_id = category_id_by_name(&categories, numeric_name)?;
+                    let raw = value.as_deref().expect("clap enforces --value");
+                    let parsed = raw
+                        .parse::<Decimal>()
+                        .map_err(|_| format!("invalid --value: {raw}"))?;
+                    (
+                        Action::AssignNumeric {
+                            target: target_id,
+                            value: parsed,
+                        },
+                        "assign-numeric",
+                    )
+                } else if let Some(expr) = &set_when {
+                    let parsed = parse_date_value_expr(expr)?;
+                    (Action::SetWhen { value: parsed }, "set-when")
+                } else if mark_done {
+                    (Action::MarkDone, "mark-done")
                 } else {
-                    &remove_categories
+                    (Action::Delete, "delete")
                 };
-                let mut targets = HashSet::new();
-                for target_name in target_names {
-                    let target_id = category_id_by_name(&categories, target_name)?;
-                    targets.insert(target_id);
-                }
-                if assign_requested {
-                    (Action::Assign { targets }, "assign")
-                } else {
-                    (Action::Remove { targets }, "remove")
-                }
-            } else if let Some(numeric_name) = &assign_numeric {
-                let target_id = category_id_by_name(&categories, numeric_name)?;
-                let raw = value.as_deref().expect("clap enforces --value");
-                let parsed = raw
-                    .parse::<Decimal>()
-                    .map_err(|_| format!("invalid --value: {raw}"))?;
-                (
-                    Action::AssignNumeric {
-                        target: target_id,
-                        value: parsed,
-                    },
-                    "assign-numeric",
-                )
-            } else if let Some(expr) = &set_when {
-                let parsed = parse_date_value_expr(expr)?;
-                (Action::SetWhen { value: parsed }, "set-when")
-            } else if mark_done {
-                (Action::MarkDone, "mark-done")
-            } else {
-                (Action::Delete, "delete")
-            };
 
             let (action_index, result) = aglet
                 .add_category_action(category_id, action)
@@ -3279,7 +3280,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             let category_id = category_id_by_name(&categories, &name)?;
             let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
             category.allow_delete_action = enabled;
-            aglet.update_category(&category).map_err(|e| e.to_string())?;
+            aglet
+                .update_category(&category)
+                .map_err(|e| e.to_string())?;
             println!(
                 "allow_delete_action on {} is now {}",
                 name,

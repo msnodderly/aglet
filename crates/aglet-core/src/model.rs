@@ -161,8 +161,8 @@ impl RecurrenceRule {
                     .checked_add(jiff::Span::new().months(i64::from(self.interval)))
                     .expect("monthly advance overflow");
                 let day = target_day.min(base.days_in_month() as u8);
-                let date = Date::new(base.year(), base.month(), day as i8)
-                    .expect("valid monthly date");
+                let date =
+                    Date::new(base.year(), base.month(), day as i8).expect("valid monthly date");
                 date.at(anchor.hour(), anchor.minute(), anchor.second(), 0)
             }
             RecurrenceFrequency::Yearly => {
@@ -175,8 +175,8 @@ impl RecurrenceRule {
                 )
                 .expect("valid yearly month");
                 let day = target_day.min(base.days_in_month() as u8);
-                let date = Date::new(base.year(), base.month(), day as i8)
-                    .expect("valid yearly date");
+                let date =
+                    Date::new(base.year(), base.month(), day as i8).expect("valid yearly date");
                 date.at(anchor.hour(), anchor.minute(), anchor.second(), 0)
             }
         }
@@ -438,10 +438,7 @@ impl AssignmentExplanation {
             Self::Subsumption {
                 via_child_category_name,
                 ..
-            } => Some(format!(
-                "{}:{via_child_category_name}",
-                origin::SUBSUMPTION
-            )),
+            } => Some(format!("{}:{via_child_category_name}", origin::SUBSUMPTION)),
             Self::SuggestionAccepted { provider_id, .. } => {
                 Some(format!("suggestion:accepted:{provider_id}"))
             }

@@ -11080,9 +11080,7 @@ fn item_assign_picker_unassigns_rule_derived_row_with_veto() {
     app.handle_item_assign_category_key(KeyCode::Char(' '), &aglet)
         .expect("space should unassign the rule-derived assignment");
 
-    let after = store
-        .get_item(item.id)
-        .expect("reload after toggle");
+    let after = store.get_item(item.id).expect("reload after toggle");
     assert!(
         !after.assignments.contains_key(&tui.id),
         "picker unassign of a rule-derived assignment records a veto and sticks"
