@@ -1852,9 +1852,7 @@ impl App {
                 let mut hypotheticals = match hypotheticals {
                     Ok(hypotheticals) => hypotheticals,
                     Err(aglet_core::error::AgletError::Busy) => {
-                        self.status =
-                            "Preview unavailable: the database is busy with another write"
-                                .to_string();
+                        self.item_assign_preview.unavailable = true;
                         return;
                     }
                     Err(_) => return,
