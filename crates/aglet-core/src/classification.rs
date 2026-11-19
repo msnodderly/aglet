@@ -1217,7 +1217,7 @@ impl<'a> ClassificationService<'a> {
             .assignments
             .iter()
             .filter_map(|(category_id, assignment)| {
-                (assignment.source == AssignmentSource::Manual).then_some(*category_id)
+                (assignment.source() == AssignmentSource::Manual).then_some(*category_id)
             })
             .collect();
         let current_category_ids = item.assignments.keys().copied().collect();
@@ -1287,7 +1287,7 @@ pub fn item_revision_hash(item: &Item) -> String {
         .assignments
         .iter()
         .filter_map(|(category_id, assignment)| {
-            (assignment.source == AssignmentSource::Manual).then_some(category_id.to_string())
+            (assignment.source() == AssignmentSource::Manual).then_some(category_id.to_string())
         })
         .collect();
     manual_category_ids.sort();
@@ -1905,11 +1905,10 @@ mod tests {
                 item.id,
                 assigned_cat.id,
                 &crate::model::Assignment {
-                    source: crate::model::AssignmentSource::Manual,
                     assigned_at: Timestamp::now(),
                     sticky: true,
                     origin: Some("manual:test".to_string()),
-                    explanation: None,
+                    explanation: crate::model::AssignmentExplanation::Manual { origin: None },
                     numeric_value: None,
                 },
             )

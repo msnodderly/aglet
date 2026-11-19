@@ -320,17 +320,82 @@ pub struct Item {
     pub recurrence_parent_item_id: Option<ItemId>,
 }
 
+/// One category on one item, and why it is there. `explanation` is the
+/// provenance; `source()` is derived from it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "AssignmentRecord", into = "AssignmentRecord")]
 pub struct Assignment {
-    pub source: AssignmentSource,
+    pub explanation: AssignmentExplanation,
     pub assigned_at: Timestamp,
+    /// Survives re-evaluation. Not derivable from `explanation`: older
+    /// rule-derived rows were written sticky.
     pub sticky: bool,
-    /// How this assignment was created. See [`origin`] for canonical values.
+    /// Free-text audit string shown by `aglet show`. See [`origin`] for
+    /// canonical values. Carries detail `explanation` lacks, such as
+    /// `manual:done`, `recurrence:carry`, and the category name an LLM chose.
     pub origin: Option<String>,
-    #[serde(default)]
-    pub explanation: Option<AssignmentExplanation>,
-    #[serde(default)]
     pub numeric_value: Option<Decimal>,
+}
+
+impl Assignment {
+    pub fn source(&self) -> AssignmentSource {
+        self.explanation.source()
+    }
+
+    /// The explanation, or `None` for a [`AssignmentExplanation::Legacy`] row.
+    pub fn recorded_explanation(&self) -> Option<&AssignmentExplanation> {
+        match &self.explanation {
+            AssignmentExplanation::Legacy { .. } => None,
+            explanation => Some(explanation),
+        }
+    }
+}
+
+/// The stored shape of an [`Assignment`], used for the `assignments` table
+/// and deletion-log JSON. It keeps `source` and a nullable `explanation` so
+/// files stay readable by older builds; rows with a null explanation load as
+/// [`AssignmentExplanation::Legacy`].
+#[derive(Serialize, Deserialize)]
+pub(crate) struct AssignmentRecord {
+    pub(crate) source: AssignmentSource,
+    pub(crate) assigned_at: Timestamp,
+    pub(crate) sticky: bool,
+    pub(crate) origin: Option<String>,
+    #[serde(default)]
+    pub(crate) explanation: Option<AssignmentExplanation>,
+    #[serde(default)]
+    pub(crate) numeric_value: Option<Decimal>,
+}
+
+impl From<AssignmentRecord> for Assignment {
+    fn from(record: AssignmentRecord) -> Self {
+        Self {
+            explanation: record.explanation.unwrap_or(AssignmentExplanation::Legacy {
+                source: record.source,
+            }),
+            assigned_at: record.assigned_at,
+            sticky: record.sticky,
+            origin: record.origin,
+            numeric_value: record.numeric_value,
+        }
+    }
+}
+
+impl From<Assignment> for AssignmentRecord {
+    fn from(assignment: Assignment) -> Self {
+        let source = assignment.source();
+        Self {
+            source,
+            explanation: match assignment.explanation {
+                AssignmentExplanation::Legacy { .. } => None,
+                explanation => Some(explanation),
+            },
+            assigned_at: assignment.assigned_at,
+            sticky: assignment.sticky,
+            origin: assignment.origin,
+            numeric_value: assignment.numeric_value,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -406,13 +471,36 @@ pub enum AssignmentExplanation {
         model: Option<String>,
         rationale: Option<String>,
     },
+    /// Loaded from a row stored before explanations were recorded; only the
+    /// kind is known. Never written: it is stored as a null explanation.
+    Legacy {
+        source: AssignmentSource,
+    },
 }
 
 impl AssignmentExplanation {
+    /// The kind of assignment this explanation describes.
+    pub fn source(&self) -> AssignmentSource {
+        match self {
+            Self::Manual { .. } => AssignmentSource::Manual,
+            Self::ImplicitMatch { .. }
+            | Self::ProfileCondition { .. }
+            | Self::DateCondition { .. }
+            | Self::NumericCondition { .. }
+            | Self::ConditionGroup { .. } => AssignmentSource::AutoMatch,
+            Self::Action { .. } => AssignmentSource::Action,
+            Self::Subsumption { .. } => AssignmentSource::Subsumption,
+            Self::SuggestionAccepted { .. } => AssignmentSource::SuggestionAccepted,
+            Self::AutoClassified { .. } => AssignmentSource::AutoClassified,
+            Self::Legacy { source } => *source,
+        }
+    }
+
     /// Canonical `origin` string for this explanation — the single source the
     /// writers derive [`Assignment::origin`] from, so the two provenance
     /// fields cannot drift. Returns `None` for [`Self::AutoClassified`],
-    /// whose origin encodes the candidate kind and stays caller-supplied.
+    /// whose origin encodes the candidate kind and stays caller-supplied, and
+    /// for [`Self::Legacy`].
     pub fn origin(&self) -> Option<String> {
         match self {
             Self::Manual { origin } => {
@@ -449,7 +537,7 @@ impl AssignmentExplanation {
             Self::SuggestionAccepted { provider_id, .. } => {
                 Some(format!("suggestion:accepted:{provider_id}"))
             }
-            Self::AutoClassified { .. } => None,
+            Self::AutoClassified { .. } | Self::Legacy { .. } => None,
         }
     }
 
@@ -546,6 +634,7 @@ impl AssignmentExplanation {
                 .as_ref()
                 .map(|rationale| format!("Auto-classified by {provider_id}: {rationale}"))
                 .unwrap_or_else(|| format!("Auto-classified by {provider_id}")),
+            Self::Legacy { source } => format!("{source:?} (no recorded explanation)"),
         }
     }
 
@@ -629,6 +718,7 @@ impl AssignmentExplanation {
             Self::AutoClassified { provider_id, .. } => {
                 format!("Auto-classified assignment from {provider_id} was removed")
             }
+            Self::Legacy { source } => format!("{source:?} assignment was removed"),
         }
     }
 }

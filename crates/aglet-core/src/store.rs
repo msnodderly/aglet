@@ -14,11 +14,11 @@ use crate::classification::{
 };
 use crate::error::{AgletError, Result};
 use crate::model::{
-    is_reserved_category_name, Action, Assignment, AssignmentExplanation, AssignmentSource,
-    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Condition, ConditionMatchMode,
-    DatebookConfig, DeletionLogEntry, EmptySections, Item, ItemId, ItemLink, ItemLinkKind,
-    ItemLinksForItem, NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View,
-    RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
+    is_reserved_category_name, Action, Assignment, AssignmentExplanation, AssignmentRecord,
+    AssignmentSource, BoardDisplayMode, Category, CategoryId, CategoryValueKind, Condition,
+    ConditionMatchMode, DatebookConfig, DeletionLogEntry, EmptySections, Item, ItemId, ItemLink,
+    ItemLinkKind, ItemLinksForItem, NumericFormat, Query, RecurrenceRule, Section, SectionFlow,
+    View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
@@ -1303,7 +1303,7 @@ impl Store {
         Ok((
             Uuid::parse_str(&item_str).unwrap_or_default(),
             Uuid::parse_str(&cat_str).unwrap_or_default(),
-            Assignment {
+            Assignment::from(AssignmentRecord {
                 source,
                 assigned_at: assigned_str.parse::<Timestamp>().unwrap_or_default(),
                 sticky: sticky_int != 0,
@@ -1313,7 +1313,7 @@ impl Store {
                 )
                 .unwrap_or_default(),
                 numeric_value: numeric_value_str.and_then(|s| s.parse::<Decimal>().ok()),
-            },
+            }),
         ))
     }
 
@@ -1728,21 +1728,23 @@ impl Store {
         category_id: CategoryId,
         assignment: &Assignment,
     ) -> Result<()> {
+        let explanation_json =
+            serde_json::to_string(&assignment.recorded_explanation()).map_err(|err| {
+                AgletError::StorageError {
+                    source: Box::new(err),
+                }
+            })?;
         self.conn.execute(
             "INSERT OR REPLACE INTO assignments (item_id, category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 item_id.to_string(),
                 category_id.to_string(),
-                assignment_source_label(assignment.source),
+                assignment_source_label(assignment.source()),
                 assignment.assigned_at.to_string(),
                 assignment.sticky as i32,
                 assignment.origin,
-                serde_json::to_string(&assignment.explanation).map_err(|err| {
-                    AgletError::StorageError {
-                        source: Box::new(err),
-                    }
-                })?,
+                explanation_json,
                 assignment.numeric_value.map(|v| v.to_string()),
             ],
         )?;
