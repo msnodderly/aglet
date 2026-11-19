@@ -1921,22 +1921,36 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) fn with_immediate_transaction<T>(
+    /// Run `f` atomically: every write inside commits together or not at all.
+    ///
+    /// At top level this is `BEGIN IMMEDIATE` ... `COMMIT`. When a transaction
+    /// is already open (an outer call to this method, or an engine savepoint)
+    /// it nests as a savepoint, so transactional callers compose.
+    pub fn with_immediate_transaction<T, E>(
         &self,
-        f: impl FnOnce(&Store) -> Result<T>,
-    ) -> Result<T> {
-        self.conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
-        let result = f(self);
-        match result {
-            Ok(value) => {
-                self.conn.execute_batch("COMMIT")?;
-                Ok(value)
-            }
-            Err(err) => {
-                let _ = self.conn.execute_batch("ROLLBACK");
-                Err(err)
-            }
+        f: impl FnOnce(&Store) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<AgletError>,
+    {
+        let (begin, commit, rollback) = if self.conn.is_autocommit() {
+            ("BEGIN IMMEDIATE TRANSACTION", "COMMIT", "ROLLBACK")
+        } else {
+            (
+                "SAVEPOINT aglet_nested_txn",
+                "RELEASE SAVEPOINT aglet_nested_txn",
+                "ROLLBACK TO SAVEPOINT aglet_nested_txn; RELEASE SAVEPOINT aglet_nested_txn",
+            )
+        };
+        self.conn.execute_batch(begin).map_err(AgletError::from)?;
+        let result = f(self).and_then(|value| {
+            self.conn.execute_batch(commit).map_err(AgletError::from)?;
+            Ok(value)
+        });
+        if result.is_err() {
+            let _ = self.conn.execute_batch(rollback);
         }
+        result
     }
 
     fn with_category_order_transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {

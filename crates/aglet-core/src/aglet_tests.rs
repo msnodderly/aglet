@@ -4198,3 +4198,169 @@ fn successor_note_is_copied() {
     let successor = store.get_item(result.successor_item_id.unwrap()).unwrap();
     assert_eq!(successor.note, Some("Discuss blockers".to_string()));
 }
+
+/// Builds a rule chain that makes any item matching "Trigger" exceed the
+/// engine pass cap, so processing that item returns an error.
+fn create_pass_cap_trap(store: &Store) {
+    let mut stages = Vec::new();
+    for index in 1..=11 {
+        let stage = category(&format!("Stage{index}"), false);
+        store.create_category(&stage).unwrap();
+        stages.push(stage);
+    }
+    for index in 0..10 {
+        let mut stage = store.get_category(stages[index].id).unwrap();
+        let mut criteria = Query::default();
+        criteria.set_criterion(CriterionMode::And, stages[index + 1].id);
+        stage.conditions = vec![Condition::Profile {
+            criteria: Box::new(criteria),
+        }];
+        store.update_category(&stage).unwrap();
+    }
+    let mut trigger = category("Trigger", true);
+    trigger.actions.push(Action::Assign {
+        targets: HashSet::from([stages[10].id]),
+    });
+    store.create_category(&trigger).unwrap();
+}
+
+#[test]
+fn bulk_reevaluation_rolls_back_every_item_when_one_fails() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    create_pass_cap_trap(&store);
+
+    // Bulk evaluation walks items newest first, so the healthy item is
+    // processed before the one that fails.
+    let failing = make_item(&store, "Trigger this chain");
+    let healthy = make_item(&store, "Alpha task");
+
+    let alpha = category("Alpha", true);
+    let err = aglet.create_category(&alpha).unwrap_err();
+    assert!(err.to_string().contains("exceeded 10 passes"), "{err}");
+    assert!(
+        !store
+            .get_assignments_for_item(healthy)
+            .unwrap()
+            .contains_key(&alpha.id),
+        "the healthy item's assignment must roll back with the failed run"
+    );
+    assert!(
+        store.get_category(alpha.id).is_err(),
+        "the category write must roll back with the failed run"
+    );
+
+    // Control: with the failing item gone, retrying the same create succeeds.
+    store.delete_item(failing, "test").unwrap();
+    aglet.create_category(&alpha).unwrap();
+    assert!(store
+        .get_assignments_for_item(healthy)
+        .unwrap()
+        .contains_key(&alpha.id));
+}
+
+#[test]
+fn failed_category_update_keeps_the_old_definition() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let alpha = category("Alpha", false);
+    aglet.create_category(&alpha).unwrap();
+    create_pass_cap_trap(&store);
+    make_item(&store, "Trigger this chain");
+
+    let mut edited = store.get_category(alpha.id).unwrap();
+    edited.enable_implicit_string = true;
+    assert!(aglet.update_category(&edited).is_err());
+    assert!(
+        !store.get_category(alpha.id).unwrap().enable_implicit_string,
+        "a failed update must not keep the new definition"
+    );
+}
+
+#[test]
+fn transaction_nests_inner_failure_keeps_outer_and_outer_failure_drops_all() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let boom = || AgletError::InvalidOperation {
+        message: "boom".to_string(),
+    };
+
+    let mut kept = None;
+    let mut dropped = None;
+    aglet
+        .transaction(|| -> crate::error::Result<()> {
+            kept = Some(make_item(&store, "outer"));
+            let inner = aglet.transaction(|| -> crate::error::Result<()> {
+                dropped = Some(make_item(&store, "inner"));
+                Err(boom())
+            });
+            assert!(inner.is_err());
+            Ok(())
+        })
+        .unwrap();
+    assert!(store.get_item(kept.unwrap()).is_ok());
+    assert!(store.get_item(dropped.unwrap()).is_err());
+
+    let mut inner_ok = None;
+    let outer = aglet.transaction(|| -> crate::error::Result<()> {
+        aglet.transaction(|| -> crate::error::Result<()> {
+            inner_ok = Some(make_item(&store, "inner committed, outer failed"));
+            Ok(())
+        })?;
+        Err(boom())
+    });
+    assert!(outer.is_err());
+    assert!(store.get_item(inner_ok.unwrap()).is_err());
+}
+
+#[test]
+fn semantic_classification_after_cheap_save_queues_the_llm_suggestion() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let transport = Arc::new(FakeOllamaTransport {
+        response: Some(
+            r#"{"suggestions":[{"category":"Travel","confidence":0.9,"rationale":"trip planning"}]}"#
+                .to_string(),
+        ),
+    });
+    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+
+    let mut cfg = ClassificationConfig {
+        literal_mode: LiteralClassificationMode::AutoApply,
+        semantic_mode: SemanticClassificationMode::SuggestReview,
+        ..ClassificationConfig::default()
+    };
+    cfg.ollama.enabled = true;
+    cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+    store.set_classification_config(&cfg).unwrap();
+
+    let work = category("Work", true);
+    let travel = category("Travel", false);
+    store.create_category(&work).unwrap();
+    store.create_category(&travel).unwrap();
+
+    let item = Item::new("Work trip planning".to_string());
+    aglet.create_item_cheap(&item, date(2026, 1, 5)).unwrap();
+    assert!(
+        aglet
+            .list_pending_classification_suggestions_for_item(item.id)
+            .unwrap()
+            .is_empty(),
+        "the cheap save must not call the LLM"
+    );
+
+    let queued = aglet.classify_item_semantic_after_save(item.id).unwrap();
+    assert_eq!(queued, 1);
+    let pending = aglet
+        .list_pending_classification_suggestions_for_item(item.id)
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].provider_id, PROVIDER_ID_OLLAMA_OPENAI_COMPAT);
+    assert!(store
+        .get_assignments_for_item(item.id)
+        .unwrap()
+        .contains_key(&work.id));
+}

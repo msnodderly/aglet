@@ -3615,3 +3615,133 @@ fn cmd_claim_fails_when_no_workflow_configured() {
         "expected a non-empty error message, got: {err}"
     );
 }
+
+fn import_csv_command(path: PathBuf, dry_run: bool) -> ImportCommand {
+    ImportCommand::Csv {
+        path,
+        title_col: "Title".to_string(),
+        date_col: Some("Date".to_string()),
+        note_col: None,
+        category_cols: vec!["Tag".to_string()],
+        category_parent: None,
+        category_separator: ",".to_string(),
+        vendor_cols: Vec::new(),
+        value_cols: Vec::new(),
+        assign: Vec::new(),
+        dry_run,
+    }
+}
+
+#[test]
+fn cmd_import_csv_dry_run_writes_nothing() {
+    let store = Store::open_memory().expect("store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let categories_before = store.get_hierarchy().expect("hierarchy").len();
+
+    let csv_path = temp_test_path("aglet-cli-import-dry", "csv");
+    fs::write(&csv_path, "Title,Date,Tag\nFirst,2026-02-20,Fresh\n").expect("write csv");
+    let result = cmd_import(&aglet, &store, import_csv_command(csv_path.clone(), true));
+    let _ = fs::remove_file(&csv_path);
+    result.expect("dry run");
+
+    assert!(store.list_items().expect("items").is_empty());
+    assert_eq!(
+        store.get_hierarchy().expect("hierarchy").len(),
+        categories_before,
+        "a dry run must not create categories"
+    );
+}
+
+#[test]
+fn cmd_import_csv_bad_row_rolls_back_earlier_rows() {
+    let store = Store::open_memory().expect("store");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let categories_before = store.get_hierarchy().expect("hierarchy").len();
+
+    let csv_path = temp_test_path("aglet-cli-import-bad", "csv");
+    fs::write(
+        &csv_path,
+        "Title,Date,Tag\nFirst,2026-02-20,Fresh\nSecond,not-a-date,Fresh\n",
+    )
+    .expect("write csv");
+    let result = cmd_import(&aglet, &store, import_csv_command(csv_path.clone(), false));
+    let _ = fs::remove_file(&csv_path);
+
+    assert!(result.is_err(), "the malformed date should fail the import");
+    assert!(store.list_items().expect("items").is_empty());
+    assert_eq!(
+        store.get_hierarchy().expect("hierarchy").len(),
+        categories_before
+    );
+}
+
+/// Answers every LLM request with the same suggestion.
+struct FixedOllamaTransport(&'static str);
+
+impl aglet_core::classification::OllamaTransport for FixedOllamaTransport {
+    fn complete(
+        &self,
+        _settings: &aglet_core::classification::OllamaProviderSettings,
+        _system_prompt: &str,
+        _user_prompt: &str,
+    ) -> aglet_core::error::Result<Option<String>> {
+        Ok(Some(self.0.to_string()))
+    }
+}
+
+#[test]
+fn cmd_import_csv_skips_rows_deleted_by_an_action_when_classifying() {
+    use aglet_core::classification::{
+        ClassificationConfig, LiteralClassificationMode, SemanticClassificationMode,
+        PROVIDER_ID_OLLAMA_OPENAI_COMPAT,
+    };
+    use aglet_core::model::Action;
+
+    let store = Store::open_memory().expect("store");
+    let classifier = SubstringClassifier;
+    let transport = std::sync::Arc::new(FixedOllamaTransport(
+        r#"{"suggestions":[{"category":"Errands","confidence":0.9,"rationale":"chore"}]}"#,
+    ));
+    let aglet = Aglet::with_ollama_transport(&store, &classifier, transport);
+    let mut cfg = ClassificationConfig {
+        literal_mode: LiteralClassificationMode::AutoApply,
+        semantic_mode: SemanticClassificationMode::SuggestReview,
+        ..ClassificationConfig::default()
+    };
+    cfg.ollama.enabled = true;
+    cfg.set_provider_enabled(PROVIDER_ID_OLLAMA_OPENAI_COMPAT, true);
+    store.set_classification_config(&cfg).expect("config");
+
+    let mut trash = Category::new("Trash".to_string());
+    trash.allow_delete_action = true;
+    trash.actions.push(Action::Delete);
+    store.create_category(&trash).expect("create trash");
+    store
+        .create_category(&Category::new("Errands".to_string()))
+        .expect("create errands");
+
+    let csv_path = temp_test_path("aglet-cli-import-deleted", "csv");
+    fs::write(
+        &csv_path,
+        "Title,Date,Tag\nThrow away,2026-02-20,Trash\nBuy stamps,2026-02-21,\n",
+    )
+    .expect("write csv");
+    let result = cmd_import(&aglet, &store, import_csv_command(csv_path.clone(), false));
+    let _ = fs::remove_file(&csv_path);
+
+    result.expect("import succeeds even though one row was deleted by its category");
+    let items = store.list_items().expect("items");
+    let texts: Vec<&str> = items.iter().map(|item| item.text.as_str()).collect();
+    assert_eq!(texts, ["Buy stamps"]);
+    let survivor = &items[0];
+    assert_eq!(
+        aglet
+            .list_pending_classification_suggestions_for_item(survivor.id)
+            .expect("suggestions")
+            .len(),
+        1,
+        "rows after the deleted one are still classified"
+    );
+}

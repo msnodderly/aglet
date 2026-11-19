@@ -2,7 +2,7 @@
 title: Codebase Review and Simplification Plan
 status: active
 created: 2026-11-16
-updated: 2026-11-16
+updated: 2026-11-17
 ---
 
 # Codebase Review and Simplification Plan
@@ -147,6 +147,8 @@ with `git revert` unless marked otherwise. Order is by payoff per unit of risk.
 
 Done when: a PR with a failing test or unformatted file shows a red check.
 
+Status: done 2026-11-16 (PR #157).
+
 ### Phase 1. Bulk writes in one transaction (F2)
 
 1. Make `Store::with_immediate_transaction` (`store.rs:1926`) reentrant: if
@@ -166,6 +168,13 @@ Done when:
 
 Risk: with a semantic provider enabled, import would hold the write lock across
 HTTP calls. See decision D2.
+
+Status: done 2026-11-17. D2 taken as recommended: import saves with the cheap
+path inside the transaction and calls `classify_item_semantic_after_save` per
+item after the commit. Measured on btrfs, 2,000 items, debug build: `import
+csv` 26.2 s to 2.5 s, matching `category create` 23.5 s to 1.1 s. Side effect:
+`import csv --dry-run` no longer creates categories, because the dry run is
+now rolled back.
 
 ### Phase 2. Constant-count refresh queries (F3)
 
