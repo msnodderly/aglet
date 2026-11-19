@@ -2336,47 +2336,89 @@ impl Store {
     }
 
     fn init(&self) -> Result<()> {
-        // WAL mode for crash safety and concurrent reads.
-        self.conn.pragma_update(None, "journal_mode", "wal")?;
-        // Enable foreign key enforcement.
-        self.conn.pragma_update(None, "foreign_keys", "ON")?;
         // Allow short waits on write contention so transactional claim paths can
         // resolve to precondition failures instead of immediate lock errors.
         self.conn.busy_timeout(LOCK_WAIT)?;
 
-        let version: i32 = self
-            .conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))?;
-        match version {
-            SCHEMA_VERSION => {}
-            0 if !self.has_items_table()? => {
-                self.conn.execute_batch(SCHEMA_SQL)?;
-                self.conn
-                    .pragma_update(None, "user_version", SCHEMA_VERSION)?;
-            }
-            20 => self.upgrade_v20_to_v21()?,
-            newer if newer > SCHEMA_VERSION => {
-                return Err(AgletError::InvalidOperation {
-                    message: format!(
-                        "this database uses schema v{newer}, newer than this aglet \
-                         supports (v{SCHEMA_VERSION}); upgrade aglet"
-                    ),
-                });
-            }
-            older => {
-                return Err(AgletError::InvalidOperation {
-                    message: format!(
-                        "this database uses schema v{older}, which this aglet no longer \
-                         upgrades; open it once with aglet v0.1.0, then try again"
-                    ),
-                });
-            }
+        // Decide before any persistent change, so a refused file is left
+        // byte-for-byte as it was.
+        let version = self.user_version()?;
+        let fresh = version == 0 && !self.has_items_table()?;
+        if !fresh && version != SCHEMA_VERSION && version != 20 {
+            return Err(unsupported_schema_version(version));
+        }
+
+        // WAL mode for crash safety and concurrent reads.
+        self.conn.pragma_update(None, "journal_mode", "wal")?;
+        // Enable foreign key enforcement.
+        self.conn.pragma_update(None, "foreign_keys", "ON")?;
+
+        if fresh {
+            self.create_schema()?;
+        } else if version == 20 {
+            let snapshot = self.backup_v20()?;
+            self.upgrade_v20_to_v21(snapshot)?;
         }
 
         let when_category_id = self.ensure_reserved_categories()?;
         self.ensure_default_view(when_category_id)?;
 
         Ok(())
+    }
+
+    fn user_version(&self) -> Result<i32> {
+        Ok(self
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))?)
+    }
+
+    /// Create the v21 schema and stamp its version in one transaction,
+    /// rechecking under the write lock in case another process got there
+    /// first.
+    fn create_schema(&self) -> Result<()> {
+        self.with_immediate_transaction(|store| -> Result<()> {
+            let version = store.user_version()?;
+            if version == SCHEMA_VERSION {
+                return Ok(());
+            }
+            if version != 0 || store.has_items_table()? {
+                return Err(unsupported_schema_version(version));
+            }
+            store.conn.execute_batch(SCHEMA_SQL)?;
+            store
+                .conn
+                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            Ok(())
+        })
+    }
+
+    /// Write `<file>.v20-backup.ag` (never overwriting one) and return the
+    /// backup path with the `data_version` it was taken at, so the upgrade
+    /// can tell whether another connection committed since. In-memory
+    /// databases get no backup.
+    fn backup_v20(&self) -> Result<Option<(String, i64)>> {
+        let Some(path) = self.conn.path().filter(|path| !path.is_empty()) else {
+            return Ok(None);
+        };
+        let backup = format!("{path}.v20-backup.ag");
+        if Path::new(&backup).exists() {
+            return Err(AgletError::InvalidOperation {
+                message: format!(
+                    "upgrading this database to schema v21 needs a backup at {backup}, \
+                     but that file already exists; move it aside and try again"
+                ),
+            });
+        }
+        let data_version = self.data_version()?;
+        self.conn.execute("VACUUM INTO ?1", params![backup])?;
+        Ok(Some((backup, data_version)))
+    }
+
+    /// Changes whenever another connection commits to this database.
+    fn data_version(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .pragma_query_value(None, "data_version", |row| row.get(0))?)
     }
 
     fn has_items_table(&self) -> Result<bool> {
@@ -2387,15 +2429,17 @@ impl Store {
         )?)
     }
 
-    /// Upgrade a v20 file (written by aglet v0.1.0) to v21. Writes
-    /// `<file>.v20-backup.ag` first and refuses to overwrite one. The upgrade
-    /// itself is one transaction. See `docs/plans/schema-squash-v21.md`.
+    /// Upgrade a v20 file (written by aglet v0.1.0) to v21 in one transaction,
+    /// after `backup_v20`. If another connection committed between the backup
+    /// and this transaction's write lock, the backup would miss that write,
+    /// so the upgrade aborts, deletes the backup, and leaves the file at v20.
+    /// See `docs/plans/schema-squash-v21.md`.
     ///
     /// v21 drops `assignments.source`: the explanation is the provenance.
     /// Rows whose explanation is null or unreadable become
     /// `AssignmentExplanation::Legacy { source }`, which is how they already
     /// behaved. Deletion-log JSON is rewritten to the new assignment shape.
-    fn upgrade_v20_to_v21(&self) -> Result<()> {
+    fn upgrade_v20_to_v21(&self, snapshot: Option<(String, i64)>) -> Result<()> {
         /// An assignment as v20 stored it in deletion-log JSON.
         #[derive(serde::Deserialize)]
         struct V20Assignment {
@@ -2414,20 +2458,16 @@ impl Store {
             })
         }
 
-        if let Some(path) = self.conn.path().filter(|path| !path.is_empty()) {
-            let backup = format!("{path}.v20-backup.ag");
-            if Path::new(&backup).exists() {
-                return Err(AgletError::InvalidOperation {
-                    message: format!(
-                        "upgrading this database to schema v21 needs a backup at {backup}, \
-                         but that file already exists; move it aside and try again"
-                    ),
-                });
+        let upgraded = self.with_immediate_transaction(|store| -> Result<()> {
+            if let Some((_, data_version)) = &snapshot {
+                if store.data_version()? != *data_version {
+                    return Err(AgletError::InvalidOperation {
+                        message: "another process wrote to this database during its \
+                                  v21 upgrade; open it again to retry"
+                            .to_string(),
+                    });
+                }
             }
-            self.conn.execute("VACUUM INTO ?1", params![backup])?;
-        }
-
-        self.with_immediate_transaction(|store| -> Result<()> {
             let rows: Vec<(String, String, String, String)> = store
                 .conn
                 .prepare("SELECT item_id, category_id, source, explanation_json FROM assignments")?
@@ -2506,8 +2546,31 @@ impl Store {
                 .conn
                 .pragma_update(None, "user_version", SCHEMA_VERSION)?;
             Ok(())
-        })
+        });
+        if upgraded.is_err() {
+            // The file is still v20; drop the backup so a retry can take a
+            // fresh one.
+            if let Some((backup, _)) = &snapshot {
+                let _ = std::fs::remove_file(backup);
+            }
+        }
+        upgraded
     }
+}
+
+fn unsupported_schema_version(version: i32) -> AgletError {
+    let message = if version > SCHEMA_VERSION {
+        format!(
+            "this database uses schema v{version}, newer than this aglet supports \
+             (v{SCHEMA_VERSION}); upgrade aglet"
+        )
+    } else {
+        format!(
+            "this database uses schema v{version}, which this aglet no longer upgrades; \
+             open it once with aglet v0.1.0, then try again"
+        )
+    };
+    AgletError::InvalidOperation { message }
 }
 
 fn suggestion_status_from_db(status: &str) -> SuggestionStatus {
