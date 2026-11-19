@@ -11032,6 +11032,48 @@ fn item_assign_preview_matches_subsumption_driven_section_membership() {
 }
 
 #[test]
+fn item_assign_preview_says_when_the_database_is_busy() {
+    let db_path = std::env::temp_dir().join(format!("aglet-tui-busy-{}.ag", Uuid::new_v4()));
+    let store = Store::open(&db_path).expect("open temp db");
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let errands = Category::new("Errands".to_string());
+    store.create_category(&errands).expect("create errands");
+    let item = Item::new("Buy stamps".to_string());
+    store.create_item(&item).expect("create item");
+
+    let mut app = App::default();
+    app.refresh(&store).expect("refresh");
+    app.set_item_selection_by_id(item.id);
+    app.mode = Mode::ItemAssignPicker;
+    app.item_assign_pane = ItemAssignPane::Categories;
+    app.set_item_assign_category_selection_by_id(errands.id);
+
+    // A second connection holds the write lock while the picker previews.
+    let writer = Store::open(&db_path).expect("second connection");
+    let rendered = writer
+        .with_immediate_transaction(|_| -> Result<String, aglet_core::error::AgletError> {
+            app.compute_assignment_preview(&aglet);
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
+            terminal.draw(|frame| app.draw(frame)).expect("render");
+            Ok(terminal_buffer_lines(&terminal).join("\n"))
+        })
+        .expect("hold write lock");
+    assert!(
+        rendered.contains("Preview unavailable: the database is busy"),
+        "the picker should say why there is no preview: {rendered}"
+    );
+
+    app.compute_assignment_preview(&aglet);
+    assert!(!app.item_assign_preview.unavailable);
+    assert!(app.item_assign_preview.cat_to_add.contains(&errands.id));
+
+    drop(writer);
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}
+
+#[test]
 fn item_assign_preview_shows_derived_category_adds_and_removals() {
     let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
