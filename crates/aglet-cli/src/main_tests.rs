@@ -433,7 +433,9 @@ fn cmd_claim_fails_when_item_is_already_claimed() {
         )
         .expect("seed in-progress");
 
-    let err = cmd_claim(&aglet, &store, item.id.to_string()).expect_err("claim should fail");
+    let err = cmd_claim(&aglet, &store, item.id.to_string())
+        .expect_err("claim should fail")
+        .to_string();
     assert!(err.contains("already claimed"));
 }
 
@@ -1010,7 +1012,8 @@ impl Write for AlwaysPermissionDeniedWriter {
 fn write_stdout_allow_broken_pipe_preserves_non_broken_pipe_errors() {
     let mut writer = AlwaysPermissionDeniedWriter;
     let err = write_output_allow_broken_pipe(&mut writer, "test")
-        .expect_err("non-broken-pipe errors must be returned");
+        .expect_err("non-broken-pipe errors must be returned")
+        .to_string();
     assert!(
         err.contains("failed writing to stdout"),
         "error should include output context"
@@ -1182,7 +1185,8 @@ fn cmd_view_rename_rejects_all_items() {
             new_name: "Renamed".to_string(),
         },
     )
-    .expect_err("rename should fail");
+    .expect_err("rename should fail")
+    .to_string();
     assert!(err.contains("cannot modify system view"));
 }
 
@@ -1199,7 +1203,8 @@ fn cmd_view_delete_rejects_all_items() {
             name: "All Items".to_string(),
         },
     )
-    .expect_err("delete should fail");
+    .expect_err("delete should fail")
+    .to_string();
     assert!(err.contains("cannot modify system view"));
 }
 
@@ -1629,7 +1634,7 @@ fn cmd_view_set_summary_errors_on_missing_column() {
         },
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("not found"));
+    assert!(result.unwrap_err().to_string().contains("not found"));
 }
 
 #[test]
@@ -1762,7 +1767,10 @@ fn cmd_category_add_condition_rejects_empty_criteria() {
         },
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("at least one criterion"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("at least one criterion"));
 }
 
 #[test]
@@ -1912,7 +1920,7 @@ fn cmd_category_remove_condition_rejects_out_of_range_index() {
         },
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("out of range"));
+    assert!(result.unwrap_err().to_string().contains("out of range"));
 }
 
 #[test]
@@ -2012,6 +2020,7 @@ fn cmd_category_add_action_rejects_mixed_kinds() {
     assert!(result.is_err());
     assert!(result
         .unwrap_err()
+        .to_string()
         .contains("specify exactly one action kind"));
 }
 
@@ -2042,6 +2051,7 @@ fn cmd_category_add_action_rejects_self_target() {
     assert!(result.is_err());
     assert!(result
         .unwrap_err()
+        .to_string()
         .contains("cannot target itself in an action"));
 }
 
@@ -2539,7 +2549,9 @@ fn dependency_state_filter_transitions_when_links_are_added_or_removed() {
 
 #[test]
 fn parse_csv_decimals_rejects_empty_value_token() {
-    let err = parse_csv_decimals("1,,2", "Complexity").expect_err("should fail");
+    let err = parse_csv_decimals("1,,2", "Complexity")
+        .expect_err("should fail")
+        .to_string();
     assert_eq!(
         err,
         "invalid --value-in for category 'Complexity': empty value in CSV list"
@@ -2560,7 +2572,9 @@ fn build_numeric_filters_rejects_unknown_category() {
         include_done: false,
     };
 
-    let err = build_numeric_filters(&categories, &filters).expect_err("should fail");
+    let err = build_numeric_filters(&categories, &filters)
+        .expect_err("should fail")
+        .to_string();
     assert_eq!(err, "category not found: Nope");
 }
 
@@ -2578,7 +2592,9 @@ fn build_numeric_filters_rejects_tag_category() {
         include_done: false,
     };
 
-    let err = build_numeric_filters(&categories, &filters).expect_err("should fail");
+    let err = build_numeric_filters(&categories, &filters)
+        .expect_err("should fail")
+        .to_string();
     assert_eq!(
         err,
         "category 'Status' is not Numeric; numeric value filters require a Numeric category"
@@ -2600,7 +2616,9 @@ fn build_numeric_filters_rejects_malformed_decimal() {
         include_done: false,
     };
 
-    let err = build_numeric_filters(&[complexity], &filters).expect_err("should fail");
+    let err = build_numeric_filters(&[complexity], &filters)
+        .expect_err("should fail")
+        .to_string();
     assert!(err.contains("invalid decimal value 'abc'"));
 }
 
@@ -3031,7 +3049,10 @@ fn cmd_edit_append_note_rejects_with_note_flag() {
         false,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("mutually exclusive"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("mutually exclusive"));
 }
 
 #[test]
@@ -3055,7 +3076,10 @@ fn cmd_edit_append_note_rejects_with_clear_note_flag() {
         false,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("mutually exclusive"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("mutually exclusive"));
 }
 
 #[test]
@@ -3116,7 +3140,10 @@ fn cmd_edit_note_stdin_rejects_with_note_flag() {
         false,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("mutually exclusive"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("mutually exclusive"));
 }
 
 #[test]
@@ -3311,7 +3338,7 @@ fn cmd_link_depends_on_cycle_returns_error() {
         },
     );
     assert!(result.is_err(), "cyclic dependency should be rejected");
-    let msg = result.unwrap_err();
+    let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("cycle"),
         "error should mention cycle, got: {msg}"
@@ -3346,7 +3373,7 @@ fn cmd_link_blocks_cycle_returns_error() {
         },
     );
     assert!(result.is_err(), "cyclic blocks link should be rejected");
-    let msg = result.unwrap_err();
+    let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("cycle"),
         "error should mention cycle, got: {msg}"
@@ -3474,7 +3501,8 @@ fn cmd_add_rejects_empty_text() {
     let aglet = Aglet::new(&store, &classifier);
 
     let err = cmd_add(&aglet, "".to_string(), None, None, vec![], vec![])
-        .expect_err("empty text should be rejected");
+        .expect_err("empty text should be rejected")
+        .to_string();
     assert!(err.contains("text cannot be empty"), "error was: {err}");
 }
 
@@ -3485,7 +3513,8 @@ fn cmd_add_rejects_whitespace_only_text() {
     let aglet = Aglet::new(&store, &classifier);
 
     let err = cmd_add(&aglet, "   ".to_string(), None, None, vec![], vec![])
-        .expect_err("whitespace-only text should be rejected");
+        .expect_err("whitespace-only text should be rejected")
+        .to_string();
     assert!(err.contains("text cannot be empty"), "error was: {err}");
 }
 
@@ -3548,7 +3577,8 @@ fn cmd_claim_fails_when_no_workflow_configured() {
     store.create_item(&item).expect("create item");
 
     let err = cmd_claim(&aglet, &store, item.id.to_string())
-        .expect_err("claim should fail when no workflow is configured");
+        .expect_err("claim should fail when no workflow is configured")
+        .to_string();
     assert!(
         !err.is_empty(),
         "expected a non-empty error message, got: {err}"

@@ -1230,6 +1230,9 @@ enum UnlinkCommand {
     },
 }
 
+/// Command result. Any error type converts with `?`; `main` prints its message.
+type CliResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("error: {err}");
@@ -1237,15 +1240,15 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> CliResult {
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.db)?;
     if let Some(debug) = tui_launch_debug(&cli.command) {
-        return aglet_tui::run_with_options(&db_path, debug).map_err(|e| e.to_string());
+        return Ok(aglet_tui::run_with_options(&db_path, debug)?);
     }
     let command = cli.command.expect("non-TUI command should be present");
 
-    let store = Store::open(&db_path).map_err(|e| e.to_string())?;
+    let store = Store::open(&db_path)?;
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
     temporal_reevaluate_before_command(&aglet)?;
@@ -1452,19 +1455,18 @@ fn cmd_add(
     when: Option<String>,
     categories: Vec<String>,
     values: Vec<String>,
-) -> Result<(), String> {
+) -> CliResult {
     if text.trim().is_empty() {
-        return Err("text cannot be empty".to_string());
+        return Err("text cannot be empty".into());
     }
     let category_names: Vec<String> = aglet
         .store()
-        .get_hierarchy()
-        .map_err(|e| e.to_string())?
+        .get_hierarchy()?
         .into_iter()
         .map(|category| category.name)
         .collect();
     let unknown_hashtags = unknown_hashtag_tokens(&text, &category_names);
-    let categories_hierarchy = aglet.store().get_hierarchy().map_err(|e| e.to_string())?;
+    let categories_hierarchy = aglet.store().get_hierarchy()?;
     let tag_assignments = resolve_tag_category_assignments(&categories_hierarchy, &categories)?;
     let value_assignments = resolve_value_assignments(&categories_hierarchy, &values)?;
     let parsed_when = when.as_deref().map(parse_when_datetime_input).transpose()?;
@@ -1473,17 +1475,13 @@ fn cmd_add(
     item.note = note;
 
     let reference_date = jiff::Zoned::now().date();
-    let result = aglet
-        .create_item_with_reference_date(&item, reference_date)
-        .map_err(|e| e.to_string())?;
+    let result = aglet.create_item_with_reference_date(&item, reference_date)?;
     if let Some(explicit_when) = parsed_when {
-        aglet
-            .set_item_when_date(
-                item.id,
-                Some(explicit_when),
-                Some("manual:cli.when".to_string()),
-            )
-            .map_err(|e| e.to_string())?;
+        aglet.set_item_when_date(
+            item.id,
+            Some(explicit_when),
+            Some("manual:cli.when".to_string()),
+        )?;
     }
     for (category_id, category_name) in tag_assignments {
         apply_tag_category_assignment(aglet, item.id, category_id, &category_name)?;
@@ -1491,7 +1489,7 @@ fn cmd_add(
     for assignment in value_assignments {
         apply_numeric_value_assignment(aglet, item.id, assignment)?;
     }
-    let created = aglet.store().get_item(item.id).map_err(|e| e.to_string())?;
+    let created = aglet.store().get_item(item.id)?;
 
     println!("created {}", item.id);
     if let Some(line) = parsed_when_feedback_line(created.when_date) {
@@ -1507,11 +1505,9 @@ fn cmd_add(
     Ok(())
 }
 
-fn temporal_reevaluate_before_command(aglet: &Aglet<'_>) -> Result<(), String> {
-    if aglet.has_date_conditions().map_err(|e| e.to_string())? {
-        let _ = aglet
-            .reevaluate_temporal_conditions()
-            .map_err(|e| e.to_string())?;
+fn temporal_reevaluate_before_command(aglet: &Aglet<'_>) -> CliResult {
+    if aglet.has_date_conditions()? {
+        let _ = aglet.reevaluate_temporal_conditions()?;
     }
     Ok(())
 }
@@ -1524,7 +1520,7 @@ fn build_date_matcher_from_args(
     at_or_after: Option<String>,
     from: Option<String>,
     through: Option<String>,
-) -> Result<DateMatcher, String> {
+) -> CliResult<DateMatcher> {
     let compare_inputs = [
         ("on", on.as_ref(), DateCompareOp::On),
         ("before", before.as_ref(), DateCompareOp::Before),
@@ -1551,7 +1547,7 @@ fn build_date_matcher_from_args(
         if compare_count > 0 {
             return Err(
                 "use either a compare flag (--on/--before/--after/--at-or-before/--at-or-after) or a range (--from/--through), not both"
-                    .to_string(),
+                    .into(),
             );
         }
         let from = from.ok_or_else(|| "--from requires a value".to_string())?;
@@ -1565,7 +1561,7 @@ fn build_date_matcher_from_args(
     if compare_count != 1 {
         return Err(
             "specify exactly one of --on, --before, --after, --at-or-before, --at-or-after, or --from/--through"
-                .to_string(),
+                .into(),
         );
     }
 
@@ -1581,7 +1577,7 @@ fn build_date_matcher_from_args(
     unreachable!("validated compare inputs should always return a matcher")
 }
 
-fn read_note_from_stdin(reader: &mut impl Read) -> Result<String, String> {
+fn read_note_from_stdin(reader: &mut impl Read) -> CliResult<String> {
     let mut input = String::new();
     reader
         .read_to_string(&mut input)
@@ -1603,7 +1599,7 @@ fn cmd_edit(
     clear_when: bool,
     recurrence: Option<String>,
     clear_recurrence: bool,
-) -> Result<(), String> {
+) -> CliResult {
     let item_id = resolve_item_id(&item_id_str, aglet.store())?;
 
     if text.is_none()
@@ -1618,12 +1614,12 @@ fn cmd_edit(
         && !clear_recurrence
     {
         return Err(
-            "nothing to update\n\nUsage: aglet edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when] [--recurrence <RULE>] [--clear-recurrence]\n\nExamples:\n  aglet edit <id> \"new text here\"\n  aglet edit <id> --note \"updated note\"\n  aglet edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | aglet edit <id> --note-stdin\n  aglet edit <id> \"new text\" --note \"and note\"\n  aglet edit <id> --clear-note\n  aglet edit <id> --done true\n  aglet edit <id> --done false\n  aglet edit <id> --when 2026-02-20\n  aglet edit <id> --clear-when\n  aglet edit <id> --recurrence \"every friday\"\n  aglet edit <id> --clear-recurrence".to_string()
+            "nothing to update\n\nUsage: aglet edit <ITEM_ID> [TEXT] [--note <NOTE>] [--append-note <TEXT>] [--note-stdin] [--clear-note] [--done <true|false>] [--when <DATE>] [--clear-when] [--recurrence <RULE>] [--clear-recurrence]\n\nExamples:\n  aglet edit <id> \"new text here\"\n  aglet edit <id> --note \"updated note\"\n  aglet edit <id> --append-note \"extra info\"\n  printf \"line one\\nline two\\n\" | aglet edit <id> --note-stdin\n  aglet edit <id> \"new text\" --note \"and note\"\n  aglet edit <id> --clear-note\n  aglet edit <id> --done true\n  aglet edit <id> --done false\n  aglet edit <id> --when 2026-02-20\n  aglet edit <id> --clear-when\n  aglet edit <id> --recurrence \"every friday\"\n  aglet edit <id> --clear-recurrence".into()
         );
     }
 
     if when.is_some() && clear_when {
-        return Err("--when and --clear-when are mutually exclusive".to_string());
+        return Err("--when and --clear-when are mutually exclusive".into());
     }
 
     // Validate mutually exclusive note flags
@@ -1633,19 +1629,15 @@ fn cmd_edit(
         + clear_note as u8;
     if note_flag_count > 1 {
         return Err(
-            "--note, --append-note, --note-stdin, and --clear-note are mutually exclusive"
-                .to_string(),
+            "--note, --append-note, --note-stdin, and --clear-note are mutually exclusive".into(),
         );
     }
 
     if let Some(done_value) = done {
         if done_value {
-            let result = aglet.mark_item_done(item_id).map_err(|e| e.to_string())?;
+            let result = aglet.mark_item_done(item_id)?;
             if let Some(successor_id) = result.successor_item_id {
-                let successor = aglet
-                    .store()
-                    .get_item(successor_id)
-                    .map_err(|e| e.to_string())?;
+                let successor = aglet.store().get_item(successor_id)?;
                 let when_str = successor
                     .when_date
                     .map(|dt| dt.to_string())
@@ -1658,14 +1650,12 @@ fn cmd_edit(
                 println!("marked done {}", item_id);
             }
         } else {
-            aglet
-                .mark_item_not_done(item_id)
-                .map_err(|e| e.to_string())?;
+            aglet.mark_item_not_done(item_id)?;
             println!("marked not-done {}", item_id);
         }
     }
 
-    let mut item = aglet.store().get_item(item_id).map_err(|e| e.to_string())?;
+    let mut item = aglet.store().get_item(item_id)?;
 
     let note_stdin_has_content = note_stdin.as_ref().is_some_and(|value| !value.is_empty());
     if text.is_some()
@@ -1676,7 +1666,7 @@ fn cmd_edit(
     {
         if let Some(new_text) = text {
             if new_text.is_empty() {
-                return Err("text cannot be empty".to_string());
+                return Err("text cannot be empty".into());
             }
             item.text = new_text;
         }
@@ -1703,11 +1693,9 @@ fn cmd_edit(
 
         item.modified_at = jiff::Timestamp::now();
         let reference_date = jiff::Zoned::now().date();
-        aglet
-            .update_item_with_reference_date(&item, reference_date)
-            .map_err(|e| e.to_string())?;
+        aglet.update_item_with_reference_date(&item, reference_date)?;
 
-        let updated = aglet.store().get_item(item_id).map_err(|e| e.to_string())?;
+        let updated = aglet.store().get_item(item_id)?;
         println!("updated {}", item_id);
         if let Some(line) = parsed_when_feedback_line(updated.when_date) {
             println!("{line}");
@@ -1716,63 +1704,53 @@ fn cmd_edit(
 
     if let Some(explicit_when) = when {
         let parsed = parse_when_datetime_input(&explicit_when)?;
-        aglet
-            .set_item_when_date(item_id, Some(parsed), Some("manual:cli.when".to_string()))
-            .map_err(|e| e.to_string())?;
-        let updated = aglet.store().get_item(item_id).map_err(|e| e.to_string())?;
+        aglet.set_item_when_date(item_id, Some(parsed), Some("manual:cli.when".to_string()))?;
+        let updated = aglet.store().get_item(item_id)?;
         println!("updated {}", item_id);
         if let Some(line) = parsed_when_feedback_line(updated.when_date) {
             println!("{line}");
         }
     } else if clear_when {
-        aglet
-            .set_item_when_date(item_id, None, Some("manual:cli.when-clear".to_string()))
-            .map_err(|e| e.to_string())?;
+        aglet.set_item_when_date(item_id, None, Some("manual:cli.when-clear".to_string()))?;
         println!("updated {}", item_id);
     }
 
     if recurrence.is_some() && clear_recurrence {
-        return Err("--recurrence and --clear-recurrence are mutually exclusive".to_string());
+        return Err("--recurrence and --clear-recurrence are mutually exclusive".into());
     }
     if let Some(recurrence_text) = recurrence {
         let parser = aglet_core::dates::BasicDateParser::default();
         let reference = jiff::Zoned::now().date();
         match parser.parse_with_recurrence(&recurrence_text, reference) {
             Some(aglet_core::dates::DateParseResult::Recurring { rule, .. }) => {
-                let mut item = aglet.store().get_item(item_id).map_err(|e| e.to_string())?;
+                let mut item = aglet.store().get_item(item_id)?;
                 item.recurrence_rule = Some(rule.clone());
                 item.modified_at = jiff::Timestamp::now();
-                aglet
-                    .store()
-                    .update_item(&item)
-                    .map_err(|e| e.to_string())?;
+                aglet.store().update_item(&item)?;
                 println!("set recurrence: {}", rule.display());
             }
             _ => {
                 return Err(format!(
                     "unrecognized recurrence pattern: \"{}\"\n\nExamples: daily, weekly, every friday, every 2 weeks, monthly on the 15th",
                     recurrence_text
-                ));
+                ).into());
             }
         }
     } else if clear_recurrence {
-        let mut item = aglet.store().get_item(item_id).map_err(|e| e.to_string())?;
+        let mut item = aglet.store().get_item(item_id)?;
         item.recurrence_rule = None;
         item.modified_at = jiff::Timestamp::now();
-        aglet
-            .store()
-            .update_item(&item)
-            .map_err(|e| e.to_string())?;
+        aglet.store().update_item(&item)?;
         println!("cleared recurrence");
     }
 
     Ok(())
 }
 
-fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
+fn cmd_show(store: &Store, item_id_str: String) -> CliResult {
     let item_id = resolve_item_id(&item_id_str, store)?;
-    let item = store.get_item(item_id).map_err(|e| e.to_string())?;
-    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let item = store.get_item(item_id)?;
+    let categories = store.get_hierarchy()?;
     let category_names = category_name_map(&categories);
     let categories_by_id: HashMap<CategoryId, &Category> =
         categories.iter().map(|c| (c.id, c)).collect();
@@ -1854,10 +1832,8 @@ fn cmd_show(store: &Store, item_id_str: String) -> Result<(), String> {
 
 fn resolved_workflow_or_err(
     store: &Store,
-) -> Result<aglet_core::workflow::ResolvedWorkflowConfig, String> {
-    resolve_workflow_config(store)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| workflow_setup_error_message().to_string())
+) -> CliResult<aglet_core::workflow::ResolvedWorkflowConfig> {
+    resolve_workflow_config(store)?.ok_or_else(|| workflow_setup_error_message().into())
 }
 
 type ReadyQueueData = (
@@ -1868,14 +1844,13 @@ type ReadyQueueData = (
     HashSet<ItemId>,
 );
 
-fn ready_queue_data(store: &Store) -> Result<ReadyQueueData, String> {
+fn ready_queue_data(store: &Store) -> CliResult<ReadyQueueData> {
     let workflow = resolved_workflow_or_err(store)?;
-    let view = build_ready_queue_view(store, workflow).map_err(|e| e.to_string())?;
-    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let view = build_ready_queue_view(store, workflow)?;
+    let categories = store.get_hierarchy()?;
     let category_names = category_name_map(&categories);
-    let all_items = store.list_items().map_err(|e| e.to_string())?;
-    let claimable_ids =
-        claimable_item_ids(store, &all_items, workflow).map_err(|e| e.to_string())?;
+    let all_items = store.list_items()?;
+    let claimable_ids = claimable_item_ids(store, &all_items, workflow)?;
     let items = all_items
         .into_iter()
         .filter(|item| claimable_ids.contains(&item.id))
@@ -1883,15 +1858,11 @@ fn ready_queue_data(store: &Store) -> Result<ReadyQueueData, String> {
     Ok((view, items, categories, category_names, HashSet::new()))
 }
 
-fn cmd_claim(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> Result<(), String> {
+fn cmd_claim(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> CliResult {
     let item_id = resolve_item_id(&item_id_str, store)?;
     let workflow = resolved_workflow_or_err(store)?;
-    let claim_category = store
-        .get_category(workflow.claim_category_id)
-        .map_err(|e| e.to_string())?;
-    let result = aglet
-        .claim_item_workflow(item_id)
-        .map_err(|e| e.to_string())?;
+    let claim_category = store.get_category(workflow.claim_category_id)?;
+    let result = aglet.claim_item_workflow(item_id)?;
     println!(
         "claimed item {} to category {}",
         item_id, claim_category.name
@@ -1903,15 +1874,11 @@ fn cmd_claim(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> Result<()
     Ok(())
 }
 
-fn cmd_release(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> Result<(), String> {
+fn cmd_release(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> CliResult {
     let item_id = resolve_item_id(&item_id_str, store)?;
     let workflow = resolved_workflow_or_err(store)?;
-    let claim_category = store
-        .get_category(workflow.claim_category_id)
-        .map_err(|e| e.to_string())?;
-    let result = aglet
-        .release_item_claim(item_id)
-        .map_err(|e| e.to_string())?;
+    let claim_category = store.get_category(workflow.claim_category_id)?;
+    let result = aglet.release_item_claim(item_id)?;
     println!(
         "released item {} from category {}",
         item_id, claim_category.name
@@ -1923,11 +1890,7 @@ fn cmd_release(aglet: &Aglet<'_>, store: &Store, item_id_str: String) -> Result<
     Ok(())
 }
 
-fn cmd_ready(
-    store: &Store,
-    sort_args: Vec<String>,
-    output_format: OutputFormatArg,
-) -> Result<(), String> {
+fn cmd_ready(store: &Store, sort_args: Vec<String>, output_format: OutputFormatArg) -> CliResult {
     let (view, items, categories, category_names, blocked_item_ids) = ready_queue_data(store)?;
     let sort_keys = parse_sort_specs(&sort_args, &categories)?;
     print_items_for_view(
@@ -2015,15 +1978,15 @@ fn cmd_list(
     sort_args: Vec<String>,
     output_format: OutputFormatArg,
     table_style: TableStyle,
-) -> Result<(), String> {
-    let all_items = store.list_items().map_err(|e| e.to_string())?;
-    let blocked_item_ids = blocked_item_ids(store, &all_items).map_err(|e| e.to_string())?;
+) -> CliResult {
+    let all_items = store.list_items()?;
+    let blocked_item_ids = blocked_item_ids(store, &all_items)?;
     let mut items = all_items.clone();
     if !filters.include_done {
         items.retain(|item| !item.is_done);
     }
 
-    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let categories = store.get_hierarchy()?;
     let category_names = category_name_map(&categories);
     let sort_keys = parse_sort_specs(&sort_args, &categories)?;
     let numeric_filters = build_numeric_filters(&categories, &filters)?;
@@ -2060,14 +2023,13 @@ fn cmd_list(
             store,
             &mut items,
             filter == DependencyStateFilter::Blocked,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
     }
 
     let resolved_view = if let Some(view_name) = view_name {
         Some(view_by_name(store, &view_name)?)
     } else {
-        let views = store.list_views().map_err(|e| e.to_string())?;
+        let views = store.list_views()?;
         views
             .iter()
             .find(|v| v.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME))
@@ -2077,9 +2039,8 @@ fn cmd_list(
 
     if let Some(ref view) = resolved_view {
         if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-            if let Some(workflow) = resolve_workflow_config(store).map_err(|e| e.to_string())? {
-                let claimable =
-                    claimable_item_ids(store, &items, workflow).map_err(|e| e.to_string())?;
+            if let Some(workflow) = resolve_workflow_config(store)? {
+                let claimable = claimable_item_ids(store, &items, workflow)?;
                 items.retain(|item| claimable.contains(&item.id));
             }
         }
@@ -2137,7 +2098,7 @@ fn reject_items_with_any_categories(items: &mut Vec<Item>, category_ids: &[Categ
 fn build_numeric_filters(
     categories: &[Category],
     filters: &ListFilters,
-) -> Result<Vec<NumericFilter>, String> {
+) -> CliResult<Vec<NumericFilter>> {
     let mut out = Vec::new();
 
     for (category_name, value) in parse_arg_pairs(&filters.value_eq, "--value-eq")? {
@@ -2176,12 +2137,13 @@ fn build_numeric_filters(
     Ok(out)
 }
 
-fn parse_arg_pairs(args: &[String], flag_name: &str) -> Result<Vec<(String, String)>, String> {
+fn parse_arg_pairs(args: &[String], flag_name: &str) -> CliResult<Vec<(String, String)>> {
     let (pairs, remainder) = args.as_chunks::<2>();
     if !remainder.is_empty() {
         return Err(format!(
             "invalid {flag_name} arguments: expected repeated <CATEGORY> <VALUE> pairs"
-        ));
+        )
+        .into());
     }
     Ok(pairs
         .iter()
@@ -2192,7 +2154,7 @@ fn parse_arg_pairs(args: &[String], flag_name: &str) -> Result<Vec<(String, Stri
 fn resolve_numeric_filter_category(
     categories: &[Category],
     category_name: &str,
-) -> Result<(CategoryId, String), String> {
+) -> CliResult<(CategoryId, String)> {
     let category_id = category_id_by_name(categories, category_name)?;
     let category = categories
         .iter()
@@ -2202,12 +2164,13 @@ fn resolve_numeric_filter_category(
         return Err(format!(
             "category '{}' is not Numeric; numeric value filters require a Numeric category",
             category.name
-        ));
+        )
+        .into());
     }
     Ok((category.id, category.name.clone()))
 }
 
-fn parse_csv_decimals(input: &str, category_name: &str) -> Result<Vec<Decimal>, String> {
+fn parse_csv_decimals(input: &str, category_name: &str) -> CliResult<Vec<Decimal>> {
     let mut values = Vec::new();
     for token in input.split(',') {
         let trimmed = token.trim();
@@ -2215,7 +2178,8 @@ fn parse_csv_decimals(input: &str, category_name: &str) -> Result<Vec<Decimal>, 
             return Err(format!(
                 "invalid --value-in for category '{}': empty value in CSV list",
                 category_name
-            ));
+            )
+            .into());
         }
         values.push(parse_decimal_value(trimmed)?);
     }
@@ -2247,13 +2211,13 @@ fn cmd_search(
     dependency_state_filter: Option<DependencyStateFilter>,
     include_done: bool,
     table_style: TableStyle,
-) -> Result<(), String> {
-    let mut items = store.list_items().map_err(|e| e.to_string())?;
+) -> CliResult {
+    let mut items = store.list_items()?;
     if !include_done {
         items.retain(|item| !item.is_done);
     }
 
-    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let categories = store.get_hierarchy()?;
     let category_names = category_name_map(&categories);
 
     let q = Query {
@@ -2269,8 +2233,7 @@ fn cmd_search(
             store,
             &mut matched_items,
             filter == DependencyStateFilter::Blocked,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
     }
     if output_format == OutputFormatArg::Json {
         print_items_json(&matched_items, &category_names, &[], &categories)?;
@@ -2286,39 +2249,37 @@ fn cmd_search(
     Ok(())
 }
 
-fn cmd_export(store: &Store, view_name: Option<String>, include_links: bool) -> Result<(), String> {
+fn cmd_export(store: &Store, view_name: Option<String>, include_links: bool) -> CliResult {
     let body = build_markdown_export(store, view_name.as_deref(), include_links)?;
     write_stdout_allow_broken_pipe(&body)?;
     Ok(())
 }
 
-fn write_stdout_allow_broken_pipe(body: &str) -> Result<(), String> {
+fn write_stdout_allow_broken_pipe(body: &str) -> CliResult {
     let mut stdout = io::stdout().lock();
     write_output_allow_broken_pipe(&mut stdout, body)
 }
 
-fn write_output_allow_broken_pipe<W: Write>(writer: &mut W, body: &str) -> Result<(), String> {
+fn write_output_allow_broken_pipe<W: Write>(writer: &mut W, body: &str) -> CliResult {
     match writer
         .write_all(body.as_bytes())
         .and_then(|_| writer.flush())
     {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        Err(err) => Err(format!("failed writing to stdout: {err}")),
+        Err(err) => Err(format!("failed writing to stdout: {err}").into()),
     }
 }
 
-fn cmd_delete(aglet: &Aglet<'_>, item_id_str: String) -> Result<(), String> {
+fn cmd_delete(aglet: &Aglet<'_>, item_id_str: String) -> CliResult {
     let item_id = resolve_item_id(&item_id_str, aglet.store())?;
-    aglet
-        .delete_item(item_id, "user:cli")
-        .map_err(|e| e.to_string())?;
+    aglet.delete_item(item_id, "user:cli")?;
     println!("deleted {}", item_id);
     Ok(())
 }
 
-fn cmd_deleted(store: &Store) -> Result<(), String> {
-    let deleted = store.list_deleted_items().map_err(|e| e.to_string())?;
+fn cmd_deleted(store: &Store) -> CliResult {
+    let deleted = store.list_deleted_items()?;
     if deleted.is_empty() {
         println!("no deleted items");
         return Ok(());
@@ -2333,16 +2294,14 @@ fn cmd_deleted(store: &Store) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_restore(store: &Store, log_id_str: String) -> Result<(), String> {
+fn cmd_restore(store: &Store, log_id_str: String) -> CliResult {
     let log_id = Uuid::parse_str(&log_id_str).map_err(|e| format!("invalid log id: {e}"))?;
-    let item_id = store
-        .restore_deleted_item(log_id)
-        .map_err(|e| e.to_string())?;
+    let item_id = store.restore_deleted_item(log_id)?;
     println!("restored item {}", item_id);
     Ok(())
 }
 
-fn cmd_link(aglet: &Aglet<'_>, command: LinkCommand) -> Result<(), String> {
+fn cmd_link(aglet: &Aglet<'_>, command: LinkCommand) -> CliResult {
     match command {
         LinkCommand::DependsOn {
             item_id,
@@ -2350,9 +2309,7 @@ fn cmd_link(aglet: &Aglet<'_>, command: LinkCommand) -> Result<(), String> {
         } => {
             let item_id = resolve_item_id(&item_id, aglet.store())?;
             let depends_on_item_id = resolve_item_id(&depends_on_item_id, aglet.store())?;
-            let result = aglet
-                .link_items_depends_on(item_id, depends_on_item_id)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.link_items_depends_on(item_id, depends_on_item_id)?;
             if result.created {
                 println!("linked {} depends-on {}", item_id, depends_on_item_id);
             } else {
@@ -2369,9 +2326,7 @@ fn cmd_link(aglet: &Aglet<'_>, command: LinkCommand) -> Result<(), String> {
         } => {
             let blocker_item_id = resolve_item_id(&blocker_item_id, aglet.store())?;
             let blocked_item_id = resolve_item_id(&blocked_item_id, aglet.store())?;
-            let result = aglet
-                .link_items_blocks(blocker_item_id, blocked_item_id)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.link_items_blocks(blocker_item_id, blocked_item_id)?;
             if result.created {
                 println!("linked {} blocks {}", blocker_item_id, blocked_item_id);
             } else {
@@ -2388,9 +2343,7 @@ fn cmd_link(aglet: &Aglet<'_>, command: LinkCommand) -> Result<(), String> {
         } => {
             let item_a_id = resolve_item_id(&item_a_id, aglet.store())?;
             let item_b_id = resolve_item_id(&item_b_id, aglet.store())?;
-            let result = aglet
-                .link_items_related(item_a_id, item_b_id)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.link_items_related(item_a_id, item_b_id)?;
             if result.created {
                 println!("linked {} related {}", item_a_id, item_b_id);
             } else {
@@ -2401,7 +2354,7 @@ fn cmd_link(aglet: &Aglet<'_>, command: LinkCommand) -> Result<(), String> {
     }
 }
 
-fn cmd_unlink(aglet: &Aglet<'_>, command: UnlinkCommand) -> Result<(), String> {
+fn cmd_unlink(aglet: &Aglet<'_>, command: UnlinkCommand) -> CliResult {
     match command {
         UnlinkCommand::Blocks {
             blocker_item_id,
@@ -2418,63 +2371,34 @@ fn cmd_unlink(aglet: &Aglet<'_>, command: UnlinkCommand) -> Result<(), String> {
     }
 }
 
-fn unlink_depends_on(
-    aglet: &Aglet<'_>,
-    item_id: String,
-    depends_on_item_id: String,
-) -> Result<(), String> {
+fn unlink_depends_on(aglet: &Aglet<'_>, item_id: String, depends_on_item_id: String) -> CliResult {
     let item_id = resolve_item_id(&item_id, aglet.store())?;
     let depends_on_item_id = resolve_item_id(&depends_on_item_id, aglet.store())?;
-    aglet
-        .unlink_items_depends_on(item_id, depends_on_item_id)
-        .map_err(|e| e.to_string())?;
+    aglet.unlink_items_depends_on(item_id, depends_on_item_id)?;
     println!("unlinked {} depends-on {}", item_id, depends_on_item_id);
     Ok(())
 }
 
-fn unlink_blocks(
-    aglet: &Aglet<'_>,
-    blocker_item_id: String,
-    blocked_item_id: String,
-) -> Result<(), String> {
+fn unlink_blocks(aglet: &Aglet<'_>, blocker_item_id: String, blocked_item_id: String) -> CliResult {
     let blocker_item_id = resolve_item_id(&blocker_item_id, aglet.store())?;
     let blocked_item_id = resolve_item_id(&blocked_item_id, aglet.store())?;
-    aglet
-        .unlink_items_blocks(blocker_item_id, blocked_item_id)
-        .map_err(|e| e.to_string())?;
+    aglet.unlink_items_blocks(blocker_item_id, blocked_item_id)?;
     println!("unlinked {} blocks {}", blocker_item_id, blocked_item_id);
     Ok(())
 }
 
-fn unlink_related(aglet: &Aglet<'_>, item_a_id: String, item_b_id: String) -> Result<(), String> {
+fn unlink_related(aglet: &Aglet<'_>, item_a_id: String, item_b_id: String) -> CliResult {
     let item_a_id = resolve_item_id(&item_a_id, aglet.store())?;
     let item_b_id = resolve_item_id(&item_b_id, aglet.store())?;
-    aglet
-        .unlink_items_related(item_a_id, item_b_id)
-        .map_err(|e| e.to_string())?;
+    aglet.unlink_items_related(item_a_id, item_b_id)?;
     println!("unlinked {} related {}", item_a_id, item_b_id);
     Ok(())
 }
 
-fn item_link_section_lines(store: &Store, item_id: ItemId) -> Result<Vec<String>, String> {
-    let prereqs = resolve_link_neighbors(
-        store,
-        store
-            .list_dependency_ids_for_item(item_id)
-            .map_err(|e| e.to_string())?,
-    )?;
-    let dependents = resolve_link_neighbors(
-        store,
-        store
-            .list_dependent_ids_for_item(item_id)
-            .map_err(|e| e.to_string())?,
-    )?;
-    let related = resolve_link_neighbors(
-        store,
-        store
-            .list_related_ids_for_item(item_id)
-            .map_err(|e| e.to_string())?,
-    )?;
+fn item_link_section_lines(store: &Store, item_id: ItemId) -> CliResult<Vec<String>> {
+    let prereqs = resolve_link_neighbors(store, store.list_dependency_ids_for_item(item_id)?)?;
+    let dependents = resolve_link_neighbors(store, store.list_dependent_ids_for_item(item_id)?)?;
+    let related = resolve_link_neighbors(store, store.list_related_ids_for_item(item_id)?)?;
 
     let mut lines = Vec::new();
     append_link_section_lines(&mut lines, "prereqs", &prereqs);
@@ -2483,10 +2407,7 @@ fn item_link_section_lines(store: &Store, item_id: ItemId) -> Result<Vec<String>
     Ok(lines)
 }
 
-fn resolve_link_neighbors(
-    store: &Store,
-    ids: Vec<ItemId>,
-) -> Result<Vec<(String, String)>, String> {
+fn resolve_link_neighbors(store: &Store, ids: Vec<ItemId>) -> CliResult<Vec<(String, String)>> {
     let mut rows = Vec::new();
     for id in ids {
         match store.get_item(id) {
@@ -2520,17 +2441,17 @@ fn append_link_section_lines(lines: &mut Vec<String>, label: &str, rows: &[(Stri
     }
 }
 
-fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> Result<(), String> {
+fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> CliResult {
     match command {
         CategoryCommand::List => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             print_category_tree(&categories);
             Ok(())
         }
         CategoryCommand::Show { name } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let category = store.get_category(category_id)?;
             let category_names = category_name_map(&categories);
 
             println!("id:              {}", category.id);
@@ -2623,7 +2544,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             disable_implicit_string,
             category_type,
         } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let requested_name = name.clone();
             let mut category = Category::new(name);
             category.parent = parent
@@ -2649,9 +2570,10 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                         &requested_name,
                         parent.as_deref(),
                         existing_id,
-                    ));
+                    )
+                    .into());
                 }
-                Err(other) => return Err(other.to_string()),
+                Err(other) => return Err(other.into()),
             };
             println!(
                 "created category {} (type={}, processed_items={}, affected_items={})",
@@ -2664,22 +2586,18 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             Ok(())
         }
         CategoryCommand::Delete { name } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            store
-                .delete_category(category_id)
-                .map_err(|e| e.to_string())?;
+            store.delete_category(category_id)?;
             println!("deleted category {}", name);
             Ok(())
         }
         CategoryCommand::Rename { name, new_name } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             category.name = new_name.clone();
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
             println!(
                 "renamed {} -> {} (processed_items={}, affected_items={})",
                 name, new_name, result.processed_items, result.affected_items
@@ -2688,19 +2606,17 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             Ok(())
         }
         CategoryCommand::Reparent { name, parent, root } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             if root {
                 category.parent = None;
             } else if let Some(parent_name) = parent {
                 category.parent = Some(category_id_by_name(&categories, &parent_name)?);
             } else {
-                return Err("specify --parent <name> or --root to make top-level".to_string());
+                return Err("specify --parent <name> or --root to make top-level".into());
             }
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
             let new_parent = category
                 .parent
                 .and_then(|id| categories.iter().find(|c| c.id == id))
@@ -2722,9 +2638,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             clear_note,
             category_type,
         } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             if exclusive.is_none()
                 && actionable.is_none()
                 && implicit_string.is_none()
@@ -2732,7 +2648,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 && !clear_note
                 && category_type.is_none()
             {
-                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --type, --note, or --clear-note".to_string());
+                return Err("nothing to update: specify --exclusive, --actionable, --implicit-string, --type, --note, or --clear-note".into());
             }
             if let Some(val) = exclusive {
                 category.is_exclusive = val;
@@ -2755,9 +2671,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             if let Some(category_type) = category_type {
                 category.value_kind = category_type.into_model();
             }
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
             println!(
                 "updated {} (type={}, exclusive={}, actionable={}, implicit_string={}, processed_items={}, affected_items={})",
                 category.name,
@@ -2776,7 +2690,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             category_name,
         } => {
             let item_id = resolve_item_id(&item_id, store)?;
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &category_name)?;
             let category = categories
                 .iter()
@@ -2784,7 +2698,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 .ok_or_else(|| format!("category not found: {category_name}"))?;
 
             if category_name.eq_ignore_ascii_case("Done") {
-                aglet.mark_item_done(item_id).map_err(|e| e.to_string())?;
+                aglet.mark_item_done(item_id)?;
                 println!(
                     "assigned item {} to category Done (is_done and done_date updated)",
                     item_id
@@ -2795,12 +2709,14 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 return Err(format!(
                     "category '{}' is Numeric; use `aglet category set-value <item-id> \"{}\" <number>`",
                     category.name, category.name
-                ));
+                ).into());
             }
 
-            let result = aglet
-                .assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))
-                .map_err(|e| e.to_string())?;
+            let result = aglet.assign_item_manual(
+                item_id,
+                category_id,
+                Some("manual:cli.assign".to_string()),
+            )?;
             println!("assigned item {} to category {}", item_id, category_name);
             if !result.new_assignments.is_empty() {
                 println!("new_assignments={}", result.new_assignments.len());
@@ -2814,17 +2730,15 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             value,
         } => {
             let item_id = resolve_item_id(&item_id, store)?;
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &category_name)?;
             let numeric_value = parse_decimal_value(&value)?;
-            let result = aglet
-                .assign_item_numeric_manual(
-                    item_id,
-                    category_id,
-                    numeric_value,
-                    Some("manual:cli.set-value".to_string()),
-                )
-                .map_err(|e| e.to_string())?;
+            let result = aglet.assign_item_numeric_manual(
+                item_id,
+                category_id,
+                numeric_value,
+                Some("manual:cli.set-value".to_string()),
+            )?;
             println!(
                 "set value for item {} category {} = {}",
                 item_id, category_name, numeric_value
@@ -2851,21 +2765,21 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             {
                 return Err(
                     "nothing to update: specify --decimals, --currency, --clear-currency, --thousands, or --no-thousands"
-                        .to_string(),
+                        .into(),
                 );
             }
             if currency.is_some() && clear_currency {
-                return Err("--currency and --clear-currency are mutually exclusive".to_string());
+                return Err("--currency and --clear-currency are mutually exclusive".into());
             }
 
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             if category.value_kind != CategoryValueKind::Numeric {
                 return Err(format!(
                     "category '{}' is not Numeric; numeric formatting only applies to Numeric categories",
                     category.name
-                ));
+                ).into());
             }
 
             let mut format = category.numeric_format.clone().unwrap_or_default();
@@ -2887,9 +2801,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 format.use_thousands_separator = false;
             }
             category.numeric_format = Some(format.clone());
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
             println!(
                 "updated numeric format for {} (decimals={}, currency={}, thousands={}, processed_items={}, affected_items={})",
                 category.name,
@@ -2907,13 +2819,13 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             category_name,
         } => {
             let item_id = resolve_item_id(&item_id, store)?;
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &category_name)?;
 
             if category_name.eq_ignore_ascii_case("Done") {
-                let item = store.get_item(item_id).map_err(|e| e.to_string())?;
+                let item = store.get_item(item_id)?;
                 if item.is_done {
-                    aglet.toggle_item_done(item_id).map_err(|e| e.to_string())?;
+                    aglet.toggle_item_done(item_id)?;
                     println!(
                         "unassigned item {} from category Done (marked not-done)",
                         item_id
@@ -2922,13 +2834,8 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 }
             }
 
-            aglet
-                .unassign_item_manual(item_id, category_id)
-                .map_err(|e| e.to_string())?;
-            let vetoed = store
-                .get_vetoes_for_item(item_id)
-                .map_err(|e| e.to_string())?
-                .contains(&category_id);
+            aglet.unassign_item_manual(item_id, category_id)?;
+            let vetoed = store.get_vetoes_for_item(item_id)?.contains(&category_id);
             if vetoed {
                 println!(
                     "unassigned item {} from category {} (vetoed: will not be auto-assigned again; clear with `category clear-veto`)",
@@ -2944,14 +2851,12 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
         }
         CategoryCommand::ListVetoes { item_id } => {
             let item_id = resolve_item_id(&item_id, store)?;
-            let vetoes = store
-                .get_vetoes_for_item(item_id)
-                .map_err(|e| e.to_string())?;
+            let vetoes = store.get_vetoes_for_item(item_id)?;
             if vetoes.is_empty() {
                 println!("no vetoes for item {item_id}");
                 return Ok(());
             }
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let names = category_name_map(&categories);
             let mut labels: Vec<String> = vetoes
                 .iter()
@@ -2968,11 +2873,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             category_name,
         } => {
             let item_id = resolve_item_id(&item_id, store)?;
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &category_name)?;
-            store
-                .remove_assignment_veto(item_id, category_id)
-                .map_err(|e| e.to_string())?;
+            store.remove_assignment_veto(item_id, category_id)?;
             println!("cleared veto on {category_name} for item {item_id}");
             Ok(())
         }
@@ -2983,13 +2886,11 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             or_categories,
         } => {
             if and_categories.is_empty() && not_categories.is_empty() && or_categories.is_empty() {
-                return Err(
-                    "at least one criterion required: use --and, --not, or --or".to_string()
-                );
+                return Err("at least one criterion required: use --and, --not, or --or".into());
             }
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
 
             let mut criteria = Vec::new();
             for cat_name in &and_categories {
@@ -3021,9 +2922,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             category.conditions.push(Condition::Profile {
                 criteria: Box::new(query),
             });
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
 
             let condition_index = category.conditions.len();
             println!(
@@ -3044,9 +2943,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             from,
             through,
         } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
 
             let matcher = build_date_matcher_from_args(
                 on,
@@ -3062,9 +2961,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 matcher: matcher.clone(),
             };
             category.conditions.push(condition);
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
 
             let condition_index = category.conditions.len();
             println!(
@@ -3085,38 +2982,35 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             max,
             outside,
         } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
             let numeric_category_id = category_id_by_name(&categories, &numeric_category)?;
-            let target = store
-                .get_category(numeric_category_id)
-                .map_err(|e| e.to_string())?;
+            let target = store.get_category(numeric_category_id)?;
             if target.value_kind != aglet_core::model::CategoryValueKind::Numeric {
-                return Err(format!("category '{}' is not Numeric", target.name));
+                return Err(format!("category '{}' is not Numeric", target.name).into());
             }
 
-            let parse_bound =
-                |label: &str, raw: &Option<String>| -> Result<Option<Decimal>, String> {
-                    raw.as_deref()
-                        .map(|value| {
-                            value
-                                .parse::<Decimal>()
-                                .map_err(|_| format!("invalid {label} value: {value}"))
-                        })
-                        .transpose()
-                };
+            let parse_bound = |label: &str, raw: &Option<String>| -> CliResult<Option<Decimal>> {
+                raw.as_deref()
+                    .map(|value| {
+                        value
+                            .parse::<Decimal>()
+                            .map_err(|_| format!("invalid {label} value: {value}").into())
+                    })
+                    .transpose()
+            };
             let min = parse_bound("--min", &min)?;
             let max = parse_bound("--max", &max)?;
             if let (Some(low), Some(high)) = (min, max) {
                 if low > high {
-                    return Err(format!("--min {low} is greater than --max {high}"));
+                    return Err(format!("--min {low} is greater than --max {high}").into());
                 }
             }
             if outside && min.is_none() && max.is_none() {
-                return Err("--outside requires --min and/or --max".to_string());
+                return Err("--outside requires --min and/or --max".into());
             }
 
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             let condition = Condition::Numeric {
                 category_id: numeric_category_id,
                 min,
@@ -3124,9 +3018,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                 outside,
             };
             category.conditions.push(condition);
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
 
             println!(
                 "added numeric condition #{} to {}: {} (processed_items={}, affected_items={})",
@@ -3140,13 +3032,11 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             Ok(())
         }
         CategoryCommand::SetConditionMode { name, mode } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             category.condition_match_mode = mode.into_model();
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
             println!(
                 "set condition mode on {} to {} (processed_items={}, affected_items={})",
                 name,
@@ -3161,9 +3051,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             Ok(())
         }
         CategoryCommand::RemoveCondition { name, index } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
 
             if index == 0 || index > category.conditions.len() {
                 return Err(format!(
@@ -3171,12 +3061,11 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                     index,
                     name,
                     category.conditions.len()
-                ));
+                )
+                .into());
             }
             let removed = category.conditions.remove(index - 1);
-            let result = aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            let result = aglet.update_category(&category)?;
 
             let category_names = category_name_map(&categories);
             let desc = removed.render(&|id: CategoryId| {
@@ -3211,11 +3100,11 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             if kinds_requested != 1 {
                 return Err(
                     "specify exactly one action kind: --assign, --remove, --assign-numeric, --set-when, --mark-done, or --delete"
-                        .to_string(),
+                        .into(),
                 );
             }
 
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
 
             let (action, action_kind) =
@@ -3258,9 +3147,7 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                     (Action::Delete, "delete")
                 };
 
-            let (action_index, result) = aglet
-                .add_category_action(category_id, action)
-                .map_err(|e| e.to_string())?;
+            let (action_index, result) = aglet.add_category_action(category_id, action)?;
             println!(
                 "added {} action #{} to {} (processed_items={}, affected_items={})",
                 action_kind,
@@ -3276,15 +3163,13 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             let enabled = match enabled.to_ascii_lowercase().as_str() {
                 "true" | "on" | "yes" | "1" => true,
                 "false" | "off" | "no" | "0" => false,
-                other => return Err(format!("expected true/false, got '{other}'")),
+                other => return Err(format!("expected true/false, got '{other}'").into()),
             };
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let mut category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let mut category = store.get_category(category_id)?;
             category.allow_delete_action = enabled;
-            aglet
-                .update_category(&category)
-                .map_err(|e| e.to_string())?;
+            aglet.update_category(&category)?;
             println!(
                 "allow_delete_action on {} is now {}",
                 name,
@@ -3293,9 +3178,9 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
             Ok(())
         }
         CategoryCommand::RemoveAction { name, index } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let category_id = category_id_by_name(&categories, &name)?;
-            let category = store.get_category(category_id).map_err(|e| e.to_string())?;
+            let category = store.get_category(category_id)?;
 
             if index == 0 || index > category.actions.len() {
                 return Err(format!(
@@ -3303,11 +3188,10 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
                     index,
                     name,
                     category.actions.len()
-                ));
+                )
+                .into());
             }
-            let (removed, result) = aglet
-                .remove_category_action(category_id, index - 1)
-                .map_err(|e| e.to_string())?;
+            let (removed, result) = aglet.remove_category_action(category_id, index - 1)?;
             let category_names = category_name_map(&categories);
             let desc = describe_category_action(&removed, &category_names);
             println!(
@@ -3320,11 +3204,11 @@ fn cmd_category(aglet: &Aglet<'_>, store: &Store, command: CategoryCommand) -> R
     }
 }
 
-fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<(), String> {
+fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> CliResult {
     let _ = aglet;
     match command {
         ViewCommand::List => {
-            let mut views = store.list_views().map_err(|e| e.to_string())?;
+            let mut views = store.list_views()?;
             if let Ok(Some(workflow)) = resolve_workflow_config(store) {
                 if let Ok(rq_view) = build_ready_queue_view(store, workflow) {
                     views.insert(0, rq_view);
@@ -3358,14 +3242,13 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
                 if blocked {
                     return Err(
-                        "Ready Queue only shows claimable items; --blocked is not supported"
-                            .to_string(),
+                        "Ready Queue only shows claimable items; --blocked is not supported".into(),
                     );
                 }
                 if not_blocked {
                     return Err(
                         "Ready Queue already excludes blocked items; --not-blocked is redundant"
-                            .to_string(),
+                            .into(),
                     );
                 }
                 let (view, items, categories, category_names, blocked_item_ids) =
@@ -3382,19 +3265,17 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                     TableStyle::Verbose,
                 )?;
             } else {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let category_names = category_name_map(&categories);
-                let all_items = store.list_items().map_err(|e| e.to_string())?;
-                let blocked_item_ids =
-                    blocked_item_ids(store, &all_items).map_err(|e| e.to_string())?;
+                let all_items = store.list_items()?;
+                let blocked_item_ids = blocked_item_ids(store, &all_items)?;
                 let mut items = all_items;
                 if let Some(filter) = dependency_state_filter_from_flags(blocked, not_blocked) {
                     retain_items_by_dependency_state(
                         store,
                         &mut items,
                         filter == DependencyStateFilter::Blocked,
-                    )
-                    .map_err(|e| e.to_string())?;
+                    )?;
                 }
                 let view = view_by_name(store, &name)?;
                 let sort_keys = parse_sort_specs(&sort, &categories)?;
@@ -3419,14 +3300,14 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             hide_unmatched,
             hide_dependent_items,
         } => {
-            let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let categories = store.get_hierarchy()?;
             let mut view = View::new(name);
             view.show_unmatched = !hide_unmatched;
             view.hide_dependent_items = hide_dependent_items;
             view.criteria =
                 query_from_category_names(&categories, &include, &or_include, &exclude)?;
 
-            store.create_view(&view).map_err(|e| e.to_string())?;
+            store.create_view(&view)?;
             println!("created view {}", view.name);
             Ok(())
         }
@@ -3436,9 +3317,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             hide_dependent_items,
         } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!(
-                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
-                ));
+                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}").into());
             }
             let mut view = view_by_name(store, &name)?;
             let mut changed = false;
@@ -3454,10 +3333,10 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             if !changed {
                 return Err(
                     "no editable view changes requested (pass --hide-unmatched and/or --hide-dependent-items)"
-                        .to_string(),
+                        .into(),
                 );
             }
-            store.update_view(&view).map_err(|e| e.to_string())?;
+            store.update_view(&view)?;
             println!("updated view {}", view.name);
             Ok(())
         }
@@ -3466,37 +3345,29 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             new_name,
         } => {
             if source_name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!(
-                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
-                ));
+                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}").into());
             }
             let source = view_by_name(store, &source_name)?;
-            let cloned = store
-                .clone_view(source.id, new_name)
-                .map_err(|e| e.to_string())?;
+            let cloned = store.clone_view(source.id, new_name)?;
             println!("cloned view {} -> {}", source_name, cloned.name);
             Ok(())
         }
         ViewCommand::Rename { name, new_name } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!(
-                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
-                ));
+                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}").into());
             }
             let mut view = view_by_name(store, &name)?;
             view.name = new_name.clone();
-            store.update_view(&view).map_err(|e| e.to_string())?;
+            store.update_view(&view)?;
             println!("renamed view {} -> {}", name, new_name);
             Ok(())
         }
         ViewCommand::Delete { name } => {
             if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
-                return Err(format!(
-                    "cannot modify system view: {READY_QUEUE_VIEW_NAME}"
-                ));
+                return Err(format!("cannot modify system view: {READY_QUEUE_VIEW_NAME}").into());
             }
             let view = view_by_name(store, &name)?;
-            store.delete_view(view.id).map_err(|e| e.to_string())?;
+            store.delete_view(view.id)?;
             println!("deleted view {}", name);
             Ok(())
         }
@@ -3513,12 +3384,12 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 return Err(format!(
                     "section index {} out of range (view has {} sections)",
                     section, num_sections
-                ));
+                )
+                .into());
             }
             let col_lower = column.to_lowercase();
             let category_names: HashMap<CategoryId, String> = store
-                .get_hierarchy()
-                .map_err(|e| e.to_string())?
+                .get_hierarchy()?
                 .into_iter()
                 .map(|c| (c.id, c.name))
                 .collect();
@@ -3534,7 +3405,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 .ok_or_else(|| format!("column '{}' not found in section {}", column, section))?;
             let heading_id = view.sections[section].columns[col_idx].heading;
             view.sections[section].columns[col_idx].summary_fn = Some(func.to_model());
-            store.update_view(&view).map_err(|e| e.to_string())?;
+            store.update_view(&view)?;
             let col_name = category_names
                 .get(&heading_id)
                 .cloned()
@@ -3557,7 +3428,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 exclude,
                 show_children,
             } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let mut view = view_by_name(store, &name)?;
                 ensure_mutable_view(&view)?;
                 let section = Section {
@@ -3576,7 +3447,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                     board_display_mode_override: None,
                 };
                 view.sections.push(section);
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!(
                     "added section {} to view {}",
                     view.sections
@@ -3595,10 +3466,11 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                         "section index {} out of range (view has {} sections)",
                         section,
                         view.sections.len()
-                    ));
+                    )
+                    .into());
                 }
                 let removed = view.sections.remove(section);
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!("removed section {} from view {}", removed.title, view.name);
                 Ok(())
             }
@@ -3612,7 +3484,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 clear_criteria,
                 show_children,
             } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let mut view = view_by_name(store, &name)?;
                 ensure_mutable_view(&view)?;
                 let has_criteria_flags = clear_criteria
@@ -3630,7 +3502,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 if let Some(show_children) = show_children {
                     section_ref.show_children = show_children;
                 }
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!("updated section {} in view {}", section, view.name);
                 Ok(())
             }
@@ -3644,7 +3516,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 width,
                 summary,
             } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let category_names = category_name_map(&categories);
                 let heading = category_id_by_name(&categories, &column)?;
                 let mut view = view_by_name(store, &name)?;
@@ -3662,7 +3534,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                     width: width.unwrap_or(12),
                     summary_fn: summary.map(CliSummaryFn::to_model),
                 });
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!(
                     "added column {} to view {} section {}",
                     column, view.name, section
@@ -3674,14 +3546,14 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 section,
                 column,
             } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let category_names = category_name_map(&categories);
                 let mut view = view_by_name(store, &name)?;
                 ensure_mutable_view(&view)?;
                 let section_ref = section_mut(&mut view, section)?;
                 let column_index = find_column_index(section_ref, &category_names, &column)?;
                 section_ref.columns.remove(column_index);
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!(
                     "removed column {} from view {} section {}",
                     column, view.name, section
@@ -3696,11 +3568,11 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 width,
                 summary,
             } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let category_names = category_name_map(&categories);
                 if kind.is_none() && width.is_none() && summary.is_none() {
                     return Err(
-                        "nothing to update: specify --kind, --width, and/or --summary".to_string(),
+                        "nothing to update: specify --kind, --width, and/or --summary".into(),
                     );
                 }
                 let mut view = view_by_name(store, &name)?;
@@ -3717,7 +3589,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 if let Some(summary) = summary {
                     column_ref.summary_fn = Some(summary.to_model());
                 }
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!(
                     "updated column {} in view {} section {}",
                     column, view.name, section
@@ -3731,12 +3603,12 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 category,
                 alias,
             } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let category_id = category_id_by_name(&categories, &category)?;
                 let mut view = view_by_name(store, &name)?;
                 ensure_mutable_view(&view)?;
                 view.category_aliases.insert(category_id, alias.clone());
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!(
                     "set alias for {} in view {} to {}",
                     category, view.name, alias
@@ -3744,27 +3616,27 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                 Ok(())
             }
             ViewAliasCommand::Clear { name, category } => {
-                let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+                let categories = store.get_hierarchy()?;
                 let category_id = category_id_by_name(&categories, &category)?;
                 let mut view = view_by_name(store, &name)?;
                 ensure_mutable_view(&view)?;
                 view.category_aliases.remove(&category_id);
-                store.update_view(&view).map_err(|e| e.to_string())?;
+                store.update_view(&view)?;
                 println!("cleared alias for {} in view {}", category, view.name);
                 Ok(())
             }
         },
         ViewCommand::SetItemLabel { name, label, clear } => {
             if clear && label.is_some() {
-                return Err("--clear and <label> are mutually exclusive".to_string());
+                return Err("--clear and <label> are mutually exclusive".into());
             }
             if !clear && label.is_none() {
-                return Err("provide a label or pass --clear".to_string());
+                return Err("provide a label or pass --clear".into());
             }
             let mut view = view_by_name(store, &name)?;
             ensure_mutable_view(&view)?;
             view.item_column_label = if clear { None } else { label };
-            store.update_view(&view).map_err(|e| e.to_string())?;
+            store.update_view(&view)?;
             println!("updated item column label for view {}", view.name);
             Ok(())
         }
@@ -3774,12 +3646,12 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             clear,
         } => {
             if clear && !categories.is_empty() {
-                return Err("--clear cannot be combined with category names".to_string());
+                return Err("--clear cannot be combined with category names".into());
             }
             if !clear && categories.is_empty() {
-                return Err("provide one or more categories or pass --clear".to_string());
+                return Err("provide one or more categories or pass --clear".into());
             }
-            let hierarchy = store.get_hierarchy().map_err(|e| e.to_string())?;
+            let hierarchy = store.get_hierarchy()?;
             let mut view = view_by_name(store, &name)?;
             ensure_mutable_view(&view)?;
             view.remove_from_view_unassign = if clear {
@@ -3787,7 +3659,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             } else {
                 names_to_category_ids(&hierarchy, &categories)?
             };
-            store.update_view(&view).map_err(|e| e.to_string())?;
+            store.update_view(&view)?;
             println!("updated remove-from-view categories for view {}", view.name);
             Ok(())
         }
@@ -3813,11 +3685,12 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
                     "invalid datebook config: {} interval is too coarse for {} period",
                     config.interval.label(),
                     config.period.label(),
-                ));
+                )
+                .into());
             }
             let mut view = View::new(name);
             view.datebook_config = Some(config);
-            store.create_view(&view).map_err(|e| e.to_string())?;
+            store.create_view(&view)?;
             println!("created datebook view \"{}\"", view.name);
             Ok(())
         }
@@ -3826,7 +3699,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             let mut view = view_by_name(store, &name)?;
             ensure_mutable_view(&view)?;
             if view.datebook_config.is_none() {
-                return Err(format!("\"{}\" is not a datebook view", view.name));
+                return Err(format!("\"{}\" is not a datebook view", view.name).into());
             }
             let config = view.datebook_config.as_mut().unwrap();
             if offset == 0 {
@@ -3840,7 +3713,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
             }
             let new_offset = config.browse_offset;
             let new_interval_offset = config.browse_interval_offset;
-            store.update_view(&view).map_err(|e| e.to_string())?;
+            store.update_view(&view)?;
             if new_interval_offset == 0 {
                 println!("browse offset for \"{}\" set to {}", view.name, new_offset);
             } else {
@@ -3854,7 +3727,7 @@ fn cmd_view(aglet: &Aglet<'_>, store: &Store, command: ViewCommand) -> Result<()
     }
 }
 
-fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Result<(), String> {
+fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> CliResult {
     match command {
         ImportCommand::Csv {
             path,
@@ -3869,10 +3742,8 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
             assign,
             dry_run,
         } => {
-            let global_assignments = resolve_tag_category_assignments(
-                &store.get_hierarchy().map_err(|e| e.to_string())?,
-                &assign,
-            )?;
+            let global_assignments =
+                resolve_tag_category_assignments(&store.get_hierarchy()?, &assign)?;
             let vendor_mappings: Vec<(String, String)> = vendor_cols
                 .iter()
                 .map(|spec| parse_source_parent_mapping(spec, "--vendor-col"))
@@ -3886,22 +3757,32 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
                 .trim(csv::Trim::All)
                 .from_path(&path)
                 .map_err(|e| format!("failed to read CSV '{}': {e}", path.display()))?;
-            let headers = reader.headers().map_err(|e| e.to_string())?.clone();
+            let headers = reader.headers()?.clone();
             // The whole import is one transaction: a bad row leaves the
             // database untouched, and rows are not fsynced one at a time. A
             // dry run goes through the same path and is always rolled back.
             enum ImportStop {
                 DryRun(usize),
-                Failed(String),
+                Failed(Box<dyn std::error::Error>),
+            }
+            impl From<Box<dyn std::error::Error>> for ImportStop {
+                fn from(err: Box<dyn std::error::Error>) -> Self {
+                    ImportStop::Failed(err)
+                }
             }
             impl From<String> for ImportStop {
                 fn from(message: String) -> Self {
-                    ImportStop::Failed(message)
+                    ImportStop::Failed(message.into())
                 }
             }
-            impl From<aglet_core::error::AgletError> for ImportStop {
-                fn from(err: aglet_core::error::AgletError) -> Self {
-                    ImportStop::Failed(err.to_string())
+            impl From<AgletError> for ImportStop {
+                fn from(err: AgletError) -> Self {
+                    ImportStop::Failed(err.into())
+                }
+            }
+            impl From<csv::Error> for ImportStop {
+                fn from(err: csv::Error) -> Self {
+                    ImportStop::Failed(err.into())
                 }
             }
 
@@ -3911,7 +3792,7 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
                 let mut dry_run_rows = 0usize;
 
                 for record in reader.records() {
-                    let record = record.map_err(|e| e.to_string())?;
+                    let record = record?;
                     let title = csv_record_value(&record, &headers, &title_col)?;
                     if title.is_empty() {
                         continue;
@@ -3990,17 +3871,13 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
 
                     let mut item = Item::new(title);
                     item.note = note;
-                    aglet
-                        .create_item_cheap(&item, today)
-                        .map_err(|e| e.to_string())?;
+                    aglet.create_item_cheap(&item, today)?;
                     if let Some(when_date) = parsed_when {
-                        aglet
-                            .set_item_when_date(
-                                item.id,
-                                Some(when_date),
-                                Some("manual:cli.when".to_string()),
-                            )
-                            .map_err(|e| e.to_string())?;
+                        aglet.set_item_when_date(
+                            item.id,
+                            Some(when_date),
+                            Some("manual:cli.when".to_string()),
+                        )?;
                     }
                     for (category_id, category_name) in row_tag_assignments {
                         apply_tag_category_assignment(aglet, item.id, category_id, &category_name)?;
@@ -4029,9 +3906,7 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
             // LLM suggestions run after the commit so the write lock is never
             // held across network calls.
             for item_id in &created {
-                aglet
-                    .classify_item_semantic_after_save(*item_id)
-                    .map_err(|e| e.to_string())?;
+                aglet.classify_item_semantic_after_save(*item_id)?;
             }
             println!("imported_rows={}", created.len());
             Ok(())
@@ -4039,7 +3914,7 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
     }
 }
 
-fn resolve_db_path(db_opt: Option<PathBuf>) -> Result<PathBuf, String> {
+fn resolve_db_path(db_opt: Option<PathBuf>) -> CliResult<PathBuf> {
     if let Some(path) = db_opt {
         ensure_db_parent(&path)?;
         return Ok(path);
@@ -4070,20 +3945,20 @@ fn resolve_db_path(db_opt: Option<PathBuf>) -> Result<PathBuf, String> {
     Ok(new_path)
 }
 
-fn ensure_db_parent(path: &Path) -> Result<(), String> {
+fn ensure_db_parent(path: &Path) -> CliResult {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        fs::create_dir_all(parent)?;
     }
     Ok(())
 }
 
-fn resolve_item_id(input: &str, store: &Store) -> Result<ItemId, String> {
+fn resolve_item_id(input: &str, store: &Store) -> CliResult<ItemId> {
     // Try full UUID parse first
     if let Ok(id) = ItemId::parse_str(input) {
         return Ok(id);
     }
     // Fall back to prefix resolution
-    store.resolve_item_prefix(input).map_err(|e| e.to_string())
+    Ok(store.resolve_item_prefix(input)?)
 }
 
 fn print_process_warnings(result: &aglet_core::engine::ProcessItemResult) {
@@ -4141,35 +4016,34 @@ fn indexed_category_action_row(
     )
 }
 
-fn category_id_by_name(categories: &[Category], name: &str) -> Result<CategoryId, String> {
+fn category_id_by_name(categories: &[Category], name: &str) -> CliResult<CategoryId> {
     categories
         .iter()
         .find(|category| category.name.eq_ignore_ascii_case(name))
         .map(|category| category.id)
-        .ok_or_else(|| format!("category not found: {name}"))
+        .ok_or_else(|| format!("category not found: {name}").into())
 }
 
 fn names_to_category_ids(
     categories: &[Category],
     names: &[String],
-) -> Result<HashSet<CategoryId>, String> {
+) -> CliResult<HashSet<CategoryId>> {
     names
         .iter()
         .map(|name| category_id_by_name(categories, name))
         .collect()
 }
 
-fn view_by_name(store: &Store, name: &str) -> Result<View, String> {
+fn view_by_name(store: &Store, name: &str) -> CliResult<View> {
     if name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME) {
         let workflow = resolved_workflow_or_err(store)?;
-        return build_ready_queue_view(store, workflow).map_err(|e| e.to_string());
+        return Ok(build_ready_queue_view(store, workflow)?);
     }
     store
-        .list_views()
-        .map_err(|e| e.to_string())?
+        .list_views()?
         .into_iter()
         .find(|view| view.name.eq_ignore_ascii_case(name))
-        .ok_or_else(|| format!("view not found: {name}"))
+        .ok_or_else(|| format!("view not found: {name}").into())
 }
 
 fn duplicate_category_create_error(
@@ -4196,21 +4070,21 @@ fn category_value_kind_label(kind: CategoryValueKind) -> &'static str {
     }
 }
 
-fn parse_decimal_value(input: &str) -> Result<Decimal, String> {
+fn parse_decimal_value(input: &str) -> CliResult<Decimal> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err("value cannot be empty".to_string());
+        return Err("value cannot be empty".into());
     }
     let normalized = trimmed.replace(',', "");
     normalized
         .parse::<Decimal>()
-        .map_err(|e| format!("invalid decimal value '{input}': {e}"))
+        .map_err(|e| format!("invalid decimal value '{input}': {e}").into())
 }
 
-fn parse_when_datetime_input(input: &str) -> Result<DateTime, String> {
+fn parse_when_datetime_input(input: &str) -> CliResult<DateTime> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err("date/time cannot be empty".to_string());
+        return Err("date/time cannot be empty".into());
     }
 
     if let Ok(value) = trimmed.replace(' ', "T").parse::<DateTime>() {
@@ -4227,13 +4101,13 @@ fn parse_when_datetime_input(input: &str) -> Result<DateTime, String> {
 
     Err(format!(
         "could not parse date/time from '{trimmed}'. Supported: today/tomorrow/yesterday, this|next <weekday>, month day[, year], YYYY-MM-DD, YYYYMMDD, M/D/YY (+ optional time like 'at 3pm')."
-    ))
+    ).into())
 }
 
 fn resolve_tag_category_assignments(
     categories: &[Category],
     names: &[String],
-) -> Result<Vec<(CategoryId, String)>, String> {
+) -> CliResult<Vec<(CategoryId, String)>> {
     let mut assignments = Vec::new();
     let mut seen = HashSet::new();
     for name in names {
@@ -4249,7 +4123,8 @@ fn resolve_tag_category_assignments(
             return Err(format!(
                 "category '{}' is Numeric; use --value \"{}=<number>\" instead",
                 category.name, category.name
-            ));
+            )
+            .into());
         }
         assignments.push((category.id, category.name.clone()));
     }
@@ -4259,7 +4134,7 @@ fn resolve_tag_category_assignments(
 fn resolve_value_assignments(
     categories: &[Category],
     specs: &[String],
-) -> Result<Vec<NumericValueAssignment>, String> {
+) -> CliResult<Vec<NumericValueAssignment>> {
     let mut assignments = Vec::new();
     let mut seen = HashSet::new();
     for spec in specs {
@@ -4268,9 +4143,9 @@ fn resolve_value_assignments(
             .ok_or_else(|| format!("invalid --value '{spec}': expected CATEGORY=NUMBER"))?;
         let category_name = category_name.trim();
         if category_name.is_empty() {
-            return Err(format!(
-                "invalid --value '{spec}': missing category name before '='"
-            ));
+            return Err(
+                format!("invalid --value '{spec}': missing category name before '='").into(),
+            );
         }
         let value = parse_decimal_value(raw_value)?;
         let category_id = category_id_by_name(categories, category_name)?;
@@ -4282,7 +4157,8 @@ fn resolve_value_assignments(
             return Err(format!(
                 "category '{}' is not Numeric; use --category \"{}\" instead",
                 category.name, category.name
-            ));
+            )
+            .into());
         }
         if !seen.insert(category_id) {
             assignments.retain(|assignment: &NumericValueAssignment| {
@@ -4303,15 +4179,13 @@ fn apply_tag_category_assignment(
     item_id: ItemId,
     category_id: CategoryId,
     category_name: &str,
-) -> Result<(), String> {
+) -> CliResult {
     if category_name.eq_ignore_ascii_case("Done") {
-        aglet.mark_item_done(item_id).map_err(|e| e.to_string())?;
+        aglet.mark_item_done(item_id)?;
         return Ok(());
     }
 
-    aglet
-        .assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))
-        .map_err(|e| e.to_string())?;
+    aglet.assign_item_manual(item_id, category_id, Some("manual:cli.assign".to_string()))?;
     Ok(())
 }
 
@@ -4319,15 +4193,13 @@ fn apply_numeric_value_assignment(
     aglet: &Aglet<'_>,
     item_id: ItemId,
     assignment: NumericValueAssignment,
-) -> Result<(), String> {
-    aglet
-        .assign_item_numeric_manual(
-            item_id,
-            assignment.category_id,
-            assignment.value,
-            Some("manual:cli.set-value".to_string()),
-        )
-        .map_err(|e| e.to_string())?;
+) -> CliResult {
+    aglet.assign_item_numeric_manual(
+        item_id,
+        assignment.category_id,
+        assignment.value,
+        Some("manual:cli.set-value".to_string()),
+    )?;
     Ok(())
 }
 
@@ -4336,7 +4208,7 @@ fn query_from_category_names(
     include: &[String],
     or_include: &[String],
     exclude: &[String],
-) -> Result<Query, String> {
+) -> CliResult<Query> {
     let mut query = Query::default();
     for category_id in names_to_category_ids(categories, include)? {
         query.set_criterion(CriterionMode::And, category_id);
@@ -4350,22 +4222,23 @@ fn query_from_category_names(
     Ok(query)
 }
 
-fn ensure_mutable_view(view: &View) -> Result<(), String> {
+fn ensure_mutable_view(view: &View) -> CliResult {
     if view.name.eq_ignore_ascii_case(READY_QUEUE_VIEW_NAME)
         || view.name.eq_ignore_ascii_case(DEFAULT_VIEW_NAME)
     {
-        return Err(format!("cannot modify system view: {}", view.name));
+        return Err(format!("cannot modify system view: {}", view.name).into());
     }
     Ok(())
 }
 
-fn section_mut(view: &mut View, section_index: usize) -> Result<&mut Section, String> {
+fn section_mut(view: &mut View, section_index: usize) -> CliResult<&mut Section> {
     let section_count = view.sections.len();
     view.sections.get_mut(section_index).ok_or_else(|| {
         format!(
             "section index {} out of range (view has {} sections)",
             section_index, section_count
         )
+        .into()
     })
 }
 
@@ -4373,7 +4246,7 @@ fn find_column_index(
     section: &Section,
     category_names: &HashMap<CategoryId, String>,
     column_name: &str,
-) -> Result<usize, String> {
+) -> CliResult<usize> {
     let wanted = column_name.to_ascii_lowercase();
     section
         .columns
@@ -4383,10 +4256,10 @@ fn find_column_index(
                 .get(&column.heading)
                 .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
         })
-        .ok_or_else(|| format!("column '{}' not found", column_name))
+        .ok_or_else(|| format!("column '{}' not found", column_name).into())
 }
 
-fn parse_source_parent_mapping(spec: &str, flag_name: &str) -> Result<(String, String), String> {
+fn parse_source_parent_mapping(spec: &str, flag_name: &str) -> CliResult<(String, String)> {
     let (source, parent) = spec
         .split_once('=')
         .ok_or_else(|| format!("invalid {flag_name} '{spec}': expected SOURCE=PARENT"))?;
@@ -4395,7 +4268,8 @@ fn parse_source_parent_mapping(spec: &str, flag_name: &str) -> Result<(String, S
     if source.is_empty() || parent.is_empty() {
         return Err(format!(
             "invalid {flag_name} '{spec}': SOURCE and PARENT must both be non-empty"
-        ));
+        )
+        .into());
     }
     Ok((source.to_string(), parent.to_string()))
 }
@@ -4406,12 +4280,12 @@ fn ensure_category_exists(
     name: &str,
     parent_name: Option<&str>,
     value_kind: CategoryValueKind,
-) -> Result<CategoryId, String> {
+) -> CliResult<CategoryId> {
     if parent_name.is_some_and(|parent| parent.eq_ignore_ascii_case(name)) {
-        return Err(format!("category '{}' cannot use itself as a parent", name));
+        return Err(format!("category '{}' cannot use itself as a parent", name).into());
     }
 
-    let existing_categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+    let existing_categories = store.get_hierarchy()?;
     if let Some(existing) = existing_categories
         .iter()
         .find(|category| category.name.eq_ignore_ascii_case(name))
@@ -4422,7 +4296,8 @@ fn ensure_category_exists(
                 existing.name,
                 category_value_kind_label(existing.value_kind),
                 category_value_kind_label(value_kind)
-            ));
+            )
+            .into());
         }
         return Ok(existing.id);
     }
@@ -4442,9 +4317,7 @@ fn ensure_category_exists(
     let mut category = Category::new(name.to_string());
     category.parent = parent_id;
     category.value_kind = value_kind;
-    aglet
-        .create_category(&category)
-        .map_err(|e| e.to_string())?;
+    aglet.create_category(&category)?;
     Ok(category.id)
 }
 
@@ -4452,7 +4325,7 @@ fn csv_record_value(
     record: &csv::StringRecord,
     headers: &csv::StringRecord,
     column_name: &str,
-) -> Result<String, String> {
+) -> CliResult<String> {
     let wanted = column_name.trim();
     let index = headers
         .iter()
@@ -4461,13 +4334,13 @@ fn csv_record_value(
     Ok(record.get(index).unwrap_or_default().trim().to_string())
 }
 
-fn parse_sort_specs(args: &[String], categories: &[Category]) -> Result<Vec<SortKey>, String> {
+fn parse_sort_specs(args: &[String], categories: &[Category]) -> CliResult<Vec<SortKey>> {
     args.iter()
         .map(|arg| parse_sort_spec(arg, categories))
         .collect()
 }
 
-fn parse_sort_spec(arg: &str, categories: &[Category]) -> Result<SortKey, String> {
+fn parse_sort_spec(arg: &str, categories: &[Category]) -> CliResult<SortKey> {
     let (raw_field, direction) = parse_sort_field_and_direction(arg)?;
     let field = if raw_field.eq_ignore_ascii_case("item") {
         SortField::ItemText
@@ -4480,10 +4353,10 @@ fn parse_sort_spec(arg: &str, categories: &[Category]) -> Result<SortKey, String
     Ok(SortKey { field, direction })
 }
 
-fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, SortDirection), String> {
+fn parse_sort_field_and_direction(arg: &str) -> CliResult<(&str, SortDirection)> {
     let trimmed = arg.trim();
     if trimmed.is_empty() {
-        return Err("sort key cannot be empty".to_string());
+        return Err("sort key cannot be empty".into());
     }
 
     if let Some((field, direction_suffix)) = trimmed.rsplit_once(':') {
@@ -4496,7 +4369,7 @@ fn parse_sort_field_and_direction(arg: &str) -> Result<(&str, SortDirection), St
         };
         let field = field.trim();
         if field.is_empty() {
-            return Err(format!("invalid sort key '{arg}': missing column name"));
+            return Err(format!("invalid sort key '{arg}': missing column name").into());
         }
         Ok((field, direction))
     } else {
@@ -4682,7 +4555,7 @@ fn append_markdown_items(
     store: &Store,
     include_links: bool,
     heading_prefix: &str,
-) -> Result<(), String> {
+) -> CliResult {
     let rows = markdown_sorted_rows(items);
     if rows.is_empty() {
         out.push_str("(no items)\n");
@@ -4744,9 +4617,9 @@ fn build_markdown_export(
     store: &Store,
     view_name: Option<&str>,
     include_links: bool,
-) -> Result<String, String> {
-    let items = store.list_items().map_err(|e| e.to_string())?;
-    let categories = store.get_hierarchy().map_err(|e| e.to_string())?;
+) -> CliResult<String> {
+    let items = store.list_items()?;
+    let categories = store.get_hierarchy()?;
     let category_names = category_name_map(&categories);
     let mut out = String::new();
 
@@ -4835,11 +4708,11 @@ fn print_items_json(
     category_names: &HashMap<CategoryId, String>,
     sort_keys: &[SortKey],
     categories: &[Category],
-) -> Result<(), String> {
+) -> CliResult {
     let payload = JsonItemsOutput {
         items: rows_to_json(items, category_names, sort_keys, categories),
     };
-    let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    let body = serde_json::to_string_pretty(&payload)?;
     println!("{body}");
     Ok(())
 }
@@ -4891,7 +4764,7 @@ fn print_items_for_view(
     output_format: OutputFormatArg,
     blocked_item_ids: &HashSet<ItemId>,
     table_style: TableStyle,
-) -> Result<(), String> {
+) -> CliResult {
     let reference_date = jiff::Zoned::now().date();
     let mut result = resolve_view(view, items, categories, reference_date);
     if view.hide_dependent_items {
@@ -5002,7 +4875,7 @@ fn print_items_for_view(
             unmatched_label,
             unmatched,
         };
-        let body = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+        let body = serde_json::to_string_pretty(&payload)?;
         println!("{body}");
         return Ok(());
     }
