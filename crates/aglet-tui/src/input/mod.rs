@@ -22,7 +22,12 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_key(key, aglet),
             Mode::GlobalSettings => self.handle_global_settings_key(key, aglet),
-            Mode::HelpPanel => self.handle_help_panel_key(key),
+            Mode::HelpPanel { ref mut scroll } => {
+                if modes::help_panel::handle_key(scroll, key) {
+                    self.mode = Mode::Normal;
+                }
+                Ok(false)
+            }
             Mode::SuggestionReview => self.handle_suggestion_review_key(key, aglet),
             Mode::InputPanel => self.handle_input_panel_key(key, aglet),
             Mode::LinkWizard => self.handle_link_wizard_key(key, aglet),
