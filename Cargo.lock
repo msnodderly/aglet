@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aglet-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aglet-core",
  "aglet-tui",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "aglet-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jiff",
  "reqwest",
@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "aglet-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aglet-core",
  "crossterm",
