@@ -22,6 +22,7 @@ use super::{
     OllamaModelPickerState, SearchMode, SectionBorderMode, SortDirection, SuggestionDecision,
     ViewAssignRow, ViewEditPaneFocus, ViewEditRegion, WorkflowRolePickerOrigin,
 };
+use crate::modes::confirm_delete::DeleteTarget;
 use aglet_core::aglet::{Aglet, SaveOptions};
 use aglet_core::classification::{
     CandidateAssignment, ClassificationConfig, ClassificationSuggestion, LiteralClassificationMode,
@@ -528,7 +529,7 @@ fn category_direct_edit_enter_prefers_exact_match_over_highlighted_suggestion() 
     assert!(!saved_after.assignments.contains_key(&alpha_beta.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -562,14 +563,7 @@ fn category_direct_edit_enter_on_empty_row_removes_row_or_keeps_single_blank() {
         category_direct_edit: Some(state.clone()),
         ..App::default()
     };
-    let store = Store::open(std::env::temp_dir().join(format!(
-            "aglet-tui-direct-edit-empty-enter-{}.ag",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        )))
-    .expect("open temp db");
+    let store = Store::open_memory().expect("memory store");
     let classifier = SubstringClassifier;
     let aglet = Aglet::new(&store, &classifier);
 
@@ -1052,7 +1046,7 @@ fn category_direct_edit_inline_create_confirm_resolves_row_and_stays_open() {
     assert!(!saved_item.assignments.contains_key(&resolved_id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -1143,7 +1137,7 @@ fn category_direct_edit_save_applies_mixed_diff_and_preserves_non_column_assignm
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -1405,7 +1399,7 @@ fn category_column_picker_multi_toggle_save_applies_diff_and_preserves_other_ass
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -1549,7 +1543,7 @@ fn category_column_picker_exclusive_selection_replaces_previous_and_never_stages
     assert!(saved.assignments.contains_key(&deferred.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -1618,7 +1612,7 @@ fn category_column_picker_enter_creates_child_and_saves() {
     assert_eq!(app.mode, Mode::Normal);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2035,7 +2029,7 @@ fn when_column_edit_saves_datetime_and_reserved_when_assignment() {
         Some("manual:tui.when-edit")
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2066,7 +2060,7 @@ fn when_column_edit_accepts_seconds_precision() {
         Some(Date::new(2026, 3, 7).expect("date").at(14, 25, 59, 0))
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2105,7 +2099,7 @@ fn when_column_edit_accepts_natural_language_tomorrow() {
         "reserved When assignment should be present after save"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2132,7 +2126,7 @@ fn when_column_edit_enter_from_text_focus_saves() {
     let loaded = store.get_item(item_id).expect("load item");
     assert!(loaded.when_date.is_some());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2165,7 +2159,7 @@ fn when_column_edit_invalid_input_keeps_panel_open() {
         app.status
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2219,7 +2213,7 @@ fn when_column_edit_empty_input_clears_when_and_reserved_assignment() {
         "reserved When assignment should be removed when clearing datetime"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2363,7 +2357,7 @@ fn board_add_column_picker_insert_right_of_rightmost_item_column_preserves_item_
     assert_eq!(saved.sections[0].item_column_index, 2);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2432,7 +2426,7 @@ fn board_add_column_picker_enter_inserts_exact_match_and_persists() {
     assert_eq!(headings, vec![priority.id, status.id]);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -2578,7 +2572,7 @@ fn board_add_column_picker_rejects_creating_new_leaf_heading() {
         .all(|c| !c.name.eq_ignore_ascii_case("BrandNew")));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -3422,7 +3416,7 @@ fn board_column_reorder_and_remove_visidata_keys_update_columns() {
 
     app.handle_key(KeyCode::Char('-').into(), &aglet)
         .expect("- opens delete confirmation");
-    assert_eq!(app.mode, Mode::BoardColumnDeleteConfirm);
+    assert!(matches!(app.mode, Mode::BoardColumnDeleteConfirm { .. }));
     app.handle_key(KeyCode::Char('y').into(), &aglet)
         .expect("y confirms delete");
     assert_eq!(app.mode, Mode::Normal);
@@ -3892,7 +3886,7 @@ fn filtered_assign_picker_disambiguates_duplicate_leaf_names() {
 
 fn confirm_delete_app(items: Vec<Item>) -> App {
     let mut app = App {
-        mode: Mode::ConfirmDelete,
+        mode: Mode::Normal,
         slots: vec![super::Slot {
             title: "Main".to_string(),
             items,
@@ -3914,7 +3908,7 @@ fn confirm_delete_popup_lists_batch_titles_with_count() {
         .collect();
     let ids: Vec<ItemId> = items.iter().map(|i| i.id).collect();
     let mut app = confirm_delete_app(items);
-    app.batch_delete_item_ids = Some(ids);
+    app.mode = Mode::ConfirmDelete(DeleteTarget::Items(ids));
 
     let backend = TestBackend::new(110, 28);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -3941,7 +3935,7 @@ fn confirm_delete_popup_renders_done_blocker_variant() {
     let blocked = ItemId::new_v4();
     let item_id = item.id;
     let mut app = confirm_delete_app(vec![item]);
-    app.done_blocks_confirm = Some(super::DoneBlocksConfirmState {
+    app.mode = Mode::DoneBlocksConfirm(super::DoneBlocksConfirmState {
         scope: super::DoneBlocksConfirmScope::Single {
             item_id,
             blocked_item_ids: vec![blocked],
@@ -4238,7 +4232,7 @@ fn input_cursor_position_is_hidden_for_non_input_modes() {
         Mode::Normal,
         Mode::InputPanel,       // popup mode — footer cursor hidden
         Mode::SearchBarFocused, // cursor rendered by search bar, not footer
-        Mode::ConfirmDelete,
+        Mode::ConfirmDelete(DeleteTarget::Item(ItemId::nil())),
         Mode::ViewPicker { index: 0 },
         Mode::ViewDeleteConfirm { index: 0 },
         Mode::CategoryManager,
@@ -4614,7 +4608,7 @@ fn input_panel_edit_tab_switches_to_note_and_saves() {
     assert_eq!(saved.note.as_deref(), Some("old updated"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -4690,7 +4684,7 @@ fn edit_panel_prechecks_derived_assignments() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -4778,7 +4772,7 @@ fn input_panel_edit_enter_in_note_inserts_newline() {
     assert_eq!(saved.note.as_deref(), Some("line1\nline2"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -4810,7 +4804,7 @@ fn enter_on_empty_slot_opens_add_item_panel() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5526,7 +5520,7 @@ fn view_picker_v_opens_view_edit() {
     assert!(app.view_edit_state.is_some());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5591,7 +5585,7 @@ fn view_picker_enter_switches_to_ready_queue_and_filters_blocked_items() {
     assert_eq!(app.slots[0].items[0].text, "Claimable");
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5635,7 +5629,7 @@ fn view_picker_blocks_edit_delete_and_rename_for_all_items() {
     assert!(app.status.contains("immutable"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5663,7 +5657,7 @@ fn view_picker_lowercase_n_opens_view_create() {
         "should be editing view name inline"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5693,7 +5687,7 @@ fn view_picker_c_opens_clone_name_input() {
     ));
     assert!(app.status.contains("Clone"));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5737,7 +5731,7 @@ fn view_picker_clone_creates_new_view() {
         .iter()
         .any(|view| view.name == "TestView"));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5770,7 +5764,7 @@ fn view_picker_clone_rejects_duplicate_name() {
     assert_eq!(app.mode, Mode::InputPanel);
     assert!(app.status.contains("already exists"));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5801,7 +5795,7 @@ fn view_picker_clone_empty_name_cancels() {
     assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.input_panel.is_none());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5827,7 +5821,7 @@ fn view_picker_c_with_no_views_shows_status() {
     assert!(app.status.contains("No selected view to clone"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5878,7 +5872,7 @@ fn view_create_name_save_opens_unsaved_view_wizard_with_first_section_editing() 
         "view should not be stored until ViewEdit save"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5932,7 +5926,7 @@ fn view_create_wizard_esc_discards_unsaved_view() {
         "Esc cancel should not persist a partially-created view"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -5983,7 +5977,7 @@ fn view_create_wizard_s_save_persists_view() {
     assert_eq!(created.criteria.criteria.len(), 0);
     assert_eq!(created.sections.len(), 1);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6020,7 +6014,7 @@ fn view_edit_navigation_keys_do_not_request_app_quit() {
     assert_eq!(app.mode, Mode::ViewEdit);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6065,7 +6059,7 @@ fn normal_mode_comma_and_dot_cycle_views() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6140,7 +6134,7 @@ fn normal_mode_u_toggles_hide_dependent_items_session_only() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6204,7 +6198,7 @@ fn hide_dependent_session_toggle_resets_on_view_switch() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6252,7 +6246,7 @@ fn item_assign_input_enter_autoselects_single_visible_match() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6295,7 +6289,7 @@ fn item_assign_input_enter_prefers_exact_match_over_partial_matches() {
     assert_eq!(app.mode, Mode::ItemAssignPicker);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6364,7 +6358,7 @@ fn item_assign_input_enter_creates_category_when_match_is_ambiguous() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6420,7 +6414,7 @@ fn item_assign_picker_filter_limits_rows_and_enter_uses_exact_match() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6489,7 +6483,7 @@ fn item_assign_input_tab_returns_to_filtered_list_keeping_filter() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6536,7 +6530,7 @@ fn item_assign_input_arrow_moves_into_filtered_list() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6601,7 +6595,7 @@ fn item_assign_picker_slash_keeps_filter_for_refinement() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6666,7 +6660,7 @@ fn item_assign_picker_enter_creates_category_from_filter_text() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6740,7 +6734,7 @@ fn item_assign_picker_fuzzy_filter_preserves_exact_match_and_create_semantics() 
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6774,7 +6768,7 @@ fn normal_mode_u_in_preview_provenance_is_ignored() {
     assert_eq!(app.mode, Mode::Normal);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6821,7 +6815,7 @@ fn inspect_unassign_picker_jk_tracks_assignment_rows() {
     assert_eq!(app.inspect_assignment_index, 1);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -6932,7 +6926,7 @@ fn normal_mode_f_cycles_numeric_column_format() {
     assert_eq!(fmt.currency_symbol.as_deref(), Some("$"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7040,7 +7034,7 @@ fn normal_mode_f_format_cycle_does_not_reclassify_items() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7153,7 +7147,7 @@ fn normal_mode_tab_and_backtab_switch_sections_without_wrapping() {
     assert_eq!(app.slot_index, 0);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7190,7 +7184,7 @@ fn normal_mode_p_and_i_manage_preview_modes() {
     assert!(!app.show_preview);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7252,7 +7246,7 @@ fn normal_mode_z_toggles_view_card_display_mode() {
     assert_eq!(saved.board_display_mode, BoardDisplayMode::SingleLine);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7314,7 +7308,7 @@ fn normal_mode_m_toggles_view_section_flow() {
     assert_eq!(saved.section_flow, SectionFlow::Vertical);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7357,7 +7351,7 @@ fn normal_mode_ctrl_l_reloads_data_from_store() {
     assert_eq!(app.status, "Reloaded view from store");
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7479,7 +7473,7 @@ fn auto_refresh_interval_persists_across_app_instances_for_same_db() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7517,7 +7511,7 @@ fn section_border_mode_persists_across_app_instances_for_same_db() {
     assert_eq!(reopened_app.section_border_mode, SectionBorderMode::Compact);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7587,7 +7581,7 @@ fn global_settings_search_mode_row_cycles_and_persists() {
     assert_eq!(reopened_app.search_mode, SearchMode::Fuzzy);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7734,7 +7728,7 @@ fn auto_refresh_timer_reloads_in_normal_mode_when_due() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7768,7 +7762,7 @@ fn auto_refresh_timer_skips_text_entry_modes() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7822,7 +7816,7 @@ fn compact_section_borders_remove_vertical_box_edges_in_main_view() {
         "compact mode should remove vertical section borders from item rows: {personal_line}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -7888,7 +7882,7 @@ fn compact_section_borders_keep_column_headers_in_top_border() {
         lines.join("\n")
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -8155,7 +8149,7 @@ fn normal_mode_footer_hints_show_numeric_shortcuts_only_for_numeric_column_focus
         "item-column focus should hide summary shortcut: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -8307,7 +8301,7 @@ fn question_mark_opens_help_panel_from_normal_mode() {
         .expect("close help panel");
     assert_eq!(app.mode, Mode::Normal);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -10482,7 +10476,7 @@ fn assign_picker_render_updated_footer_copy_and_hides_reserved_done() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -10964,7 +10958,7 @@ fn item_assign_preview_says_when_the_database_is_busy() {
 
     drop(writer);
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -11088,7 +11082,7 @@ fn assign_picker_shows_numeric_category_as_toggle_not_inline_value() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -11576,7 +11570,10 @@ fn normal_mode_x_with_selection_opens_batch_delete_confirm() {
     app.handle_normal_key(KeyCode::Char('x').into(), &aglet)
         .expect("open batch delete confirm");
 
-    assert_eq!(app.mode, Mode::ConfirmDelete);
+    assert!(matches!(
+        app.mode,
+        Mode::ConfirmDelete(DeleteTarget::Items(_))
+    ));
     assert!(
         app.status.contains("Delete 2 selected items"),
         "status should describe batch delete scope: {}",
@@ -11621,7 +11618,7 @@ fn batch_delete_confirm_y_deletes_selected_items_and_clears_selection() {
     app.set_item_selection_by_id(second.id);
     app.handle_normal_key(KeyCode::Char('x').into(), &aglet)
         .expect("open batch delete confirm");
-    app.handle_confirm_delete_key(KeyCode::Char('y').into(), &aglet)
+    app.handle_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm batch delete");
 
     assert!(store.get_item(first.id).is_err());
@@ -11674,7 +11671,7 @@ fn batch_delete_confirm_esc_preserves_selected_items() {
         .expect("select second");
     app.handle_normal_key(KeyCode::Char('x').into(), &aglet)
         .expect("open batch delete confirm");
-    app.handle_confirm_delete_key(KeyCode::Esc.into(), &aglet)
+    app.handle_key(KeyCode::Esc.into(), &aglet)
         .expect("cancel batch delete");
 
     assert!(store.get_item(first.id).is_ok());
@@ -11715,7 +11712,7 @@ fn normal_mode_jk_scrolls_preview_when_preview_is_focused() {
     assert_eq!(app.preview_summary_scroll, 0);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -11850,7 +11847,7 @@ fn item_info_contains_link_sections_while_summary_stays_primary() {
     assert!(info_lines.iter().any(|line| line.contains("Task D")));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12048,7 +12045,7 @@ fn category_manager_enter_focuses_details_instead_of_opening_config_editor() {
         Some(CategoryManagerFocus::Details)
     );
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12081,7 +12078,7 @@ fn category_manager_enter_on_reserved_category_stays_inline_in_manager() {
         Some(CategoryManagerFocus::Details)
     );
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12350,7 +12347,7 @@ fn opening_and_closing_category_manager_initializes_and_clears_scaffold_state() 
     assert!(app.category_manager.is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12401,7 +12398,7 @@ fn refresh_preserves_category_manager_selection_by_id() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12455,7 +12452,7 @@ fn category_create_panel_opens_and_creates_root_category() {
     assert!(app.input_panel.is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12507,7 +12504,7 @@ fn category_create_panel_n_creates_sibling_under_selected_parent() {
     assert_eq!(app.mode, Mode::CategoryManager);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12560,7 +12557,7 @@ fn category_create_panel_upper_n_creates_child_of_selected_category() {
     assert_eq!(child.parent, Some(alpha.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12607,7 +12604,7 @@ fn category_create_panel_n_on_root_selection_creates_top_level_sibling() {
     assert_eq!(beta.parent, None);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12658,7 +12655,7 @@ fn category_create_panel_render_uses_category_manager_backdrop() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12718,7 +12715,7 @@ fn category_create_panel_save_updates_visible_rows_without_reopening_manager() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12779,7 +12776,7 @@ fn category_create_panel_numeric_via_type_toggle() {
     assert!(app.status.contains("numeric"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12809,7 +12806,7 @@ fn category_create_panel_esc_with_empty_name_cancels() {
     assert!(app.input_panel.is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12850,7 +12847,7 @@ fn category_create_panel_esc_cancels_without_saving() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12893,7 +12890,7 @@ fn category_create_panel_rejects_duplicate_name() {
     assert_eq!(count, 1);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12931,7 +12928,7 @@ fn category_create_panel_rejects_reserved_name() {
     assert!(app.input_panel.is_some());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -12980,7 +12977,7 @@ fn category_manager_inline_rename_avoids_input_panel_and_updates_name() {
         .is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13018,7 +13015,7 @@ fn category_manager_inline_rename_unchanged_cancels_cleanly() {
     assert_eq!(store.get_category(category.id).expect("load").name, "Work");
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13057,7 +13054,7 @@ fn category_manager_inline_rename_reserved_category_is_blocked() {
         .is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13104,7 +13101,7 @@ fn category_manager_inline_delete_confirm_stays_in_manager_mode() {
         .is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13142,7 +13139,7 @@ fn category_manager_inline_delete_cancel_keeps_category() {
         .is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13187,7 +13184,7 @@ fn category_manager_inline_delete_non_leaf_shows_error_and_stays_in_manager() {
         .is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13236,7 +13233,7 @@ fn category_manager_filter_focus_types_text_instead_of_triggering_commands() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13305,7 +13302,7 @@ fn category_manager_slash_arms_filter_without_inserting_slash() {
     assert!(state.filter_editing);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13348,7 +13345,7 @@ fn category_manager_tab_focuses_details_and_p_no_longer_opens_reparent_ui() {
     assert_eq!(app.selected_category_id(), Some(child.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13386,7 +13383,7 @@ fn category_manager_upper_k_reorders_selected_category_up_among_siblings() {
     assert!(app.status.contains("Moved Beta up"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13425,7 +13422,7 @@ fn category_manager_upper_k_on_first_sibling_is_noop_with_status() {
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13463,7 +13460,7 @@ fn category_manager_upper_j_reorders_selected_category_down_among_siblings() {
     assert!(app.status.contains("Moved Alpha down"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13508,7 +13505,7 @@ fn category_manager_upper_l_indents_selected_category_under_previous_sibling() {
     assert!(app.status.contains("Indented Beta under Alpha"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13553,7 +13550,7 @@ fn category_manager_upper_l_on_first_sibling_is_noop_with_status() {
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13598,7 +13595,7 @@ fn category_manager_double_angle_right_indents_selected_category_under_previous_
     assert_eq!(app.selected_category_id(), Some(beta.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13645,7 +13642,7 @@ fn category_manager_double_angle_left_outdents_selected_category() {
     assert_eq!(app.selected_category_id(), Some(child.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13697,7 +13694,7 @@ fn category_manager_upper_h_outdents_selected_category_after_parent() {
     assert!(app.status.contains("Outdented Child"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13753,7 +13750,7 @@ fn category_manager_upper_h_outdents_child_to_root() {
     assert!(app.status.contains("Outdented Child to top level"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13784,7 +13781,7 @@ fn category_manager_upper_h_on_root_is_noop_with_status() {
     assert_eq!(app.selected_category_id(), Some(root.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13830,7 +13827,7 @@ fn category_manager_direct_moves_are_blocked_while_filter_active() {
         .contains("Clear category filter before direct H/L/J/K moves"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13869,7 +13866,7 @@ fn category_manager_details_note_tab_auto_saves() {
     assert_eq!(saved.note.as_deref(), Some("Ship"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13915,7 +13912,7 @@ fn category_manager_details_note_shift_s_modifier_saves() {
     assert_eq!(saved.note.as_deref(), Some("Ship"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -13971,7 +13968,7 @@ fn category_manager_details_also_match_save_persists_one_entry_per_line() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14013,7 +14010,7 @@ fn category_manager_details_also_match_esc_auto_saves() {
     assert_eq!(saved.also_match, vec!["phoned".to_string()]);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14061,7 +14058,7 @@ fn category_manager_details_also_match_tab_away_auto_saves() {
     assert_eq!(saved.also_match, vec!["dial".to_string()]);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14111,7 +14108,7 @@ fn category_manager_note_focus_lowercase_j_and_capital_s_are_text_input() {
     assert_eq!(saved.note.as_deref(), Some("jS"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14153,7 +14150,7 @@ fn category_manager_details_note_edit_esc_auto_saves() {
     assert!(!app.category_manager_details_note_editing());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14200,7 +14197,7 @@ fn category_manager_esc_auto_saves_then_closes() {
     assert!(app.category_manager.is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14246,7 +14243,7 @@ fn category_manager_tab_auto_saves_note_then_esc_closes() {
     assert!(app.category_manager.is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14293,7 +14290,7 @@ fn category_manager_note_auto_saved_on_tab_then_esc_closes_cleanly() {
     assert!(app.category_manager.is_none());
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14335,7 +14332,7 @@ fn category_manager_note_auto_saved_on_tab_persists_to_db() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14386,7 +14383,7 @@ fn category_manager_details_dirty_note_saved_on_selection_change() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14434,7 +14431,7 @@ fn category_manager_details_and_quick_flag_toggles_work_inline() {
     assert_eq!(app.mode, Mode::CategoryManager);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14472,7 +14469,7 @@ fn category_manager_enter_on_flag_toggles_and_returns_to_tree() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14509,7 +14506,7 @@ fn category_manager_semantic_match_toggle_persists() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 fn open_global_settings_for_test(app: &mut App, aglet: &Aglet<'_>) {
@@ -14583,7 +14580,7 @@ fn workflow_ready_role_assignment_disables_implicit_match() {
     assert!(app.status.contains("Auto-match disabled for workflow role"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14618,7 +14615,7 @@ fn workflow_claim_role_assignment_disables_implicit_match() {
     assert!(app.status.contains("Auto-match disabled for workflow role"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14659,7 +14656,7 @@ fn workflow_role_disable_does_not_reenable_implicit_match() {
     assert_eq!(app.status, "Cleared Ready Queue category (Ready)");
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14711,7 +14708,7 @@ fn global_settings_workflow_picker_opens_and_closes() {
     assert_eq!(app.status, "Workflow category picker closed");
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14818,7 +14815,7 @@ fn workflow_role_replacement_only_sanitizes_new_category() {
     assert!(app.status.contains("(replaced ReadyA)"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14857,7 +14854,7 @@ fn workflow_role_assignment_warns_when_conditions_exist() {
         .contains("warning: profile rules/actions can still assign it"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14900,7 +14897,7 @@ fn workflow_role_assignment_warns_when_actions_exist() {
         .contains("warning: profile rules/actions can still assign it"));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -14949,7 +14946,7 @@ fn workflow_role_assignment_combines_cleanup_and_single_warning() {
     assert_eq!(warning_count, 1, "warning should appear once");
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15000,7 +14997,7 @@ fn workflow_role_assignment_reclassifies_items_after_disabling_implicit_match() 
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15157,7 +15154,7 @@ fn category_manager_details_jk_navigates_fields_without_moving_category_selectio
     assert_eq!(app.selected_category_id(), Some(alpha.id));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15219,7 +15216,7 @@ fn category_manager_details_blocks_shift_hjkl_structure_moves() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15251,7 +15248,7 @@ fn category_manager_numeric_initial_focus_is_integer_toggle() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15294,7 +15291,7 @@ fn category_manager_numeric_integer_toggle_restores_two_decimal_default() {
     assert_eq!(fmt.decimal_places, 2);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15347,7 +15344,7 @@ fn category_manager_numeric_fields_edit_and_persist() {
     assert!(fmt.use_thousands_separator);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15528,7 +15525,7 @@ fn category_manager_format_cycle_does_not_reclassify_items() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15565,7 +15562,7 @@ fn normal_mode_ga_jumps_to_all_items_view() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15595,7 +15592,7 @@ fn normal_mode_gs_opens_global_settings_and_esc_returns_to_normal() {
     assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.status, "Closed Global Settings");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15620,7 +15617,7 @@ fn normal_mode_f10_opens_global_settings() {
         app.status
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15663,7 +15660,7 @@ fn normal_mode_g_slash_opens_global_search_session() {
         "header should keep the return view visible during global search: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15773,7 +15770,7 @@ fn global_search_enter_opens_top_visible_item_and_esc_restores_previous_view() {
         "global search session should be closed after restore"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15825,7 +15822,7 @@ fn global_search_enter_with_no_results_does_not_create_item() {
         "global search session should be closed after Esc restore"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15861,7 +15858,7 @@ fn normal_mode_d_toggles_done_state() {
     assert!(!store.get_item(item.id).expect("load item").is_done);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -15900,7 +15897,7 @@ fn normal_mode_d_refuses_done_for_non_actionable_item() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16072,7 +16069,7 @@ fn batch_done_with_blockers_opens_confirm_prompt() {
     app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
 
-    assert_eq!(app.mode, Mode::ConfirmDelete);
+    assert!(matches!(app.mode, Mode::DoneBlocksConfirm(_)));
     assert!(
         app.status.contains("1 selected item blocks 2 other items"),
         "status should summarize batch blocker confirm: {}",
@@ -16118,7 +16115,7 @@ fn batch_done_confirm_y_marks_done_and_removes_links() {
 
     app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
-    app.handle_confirm_delete_key(KeyCode::Char('y').into(), &aglet)
+    app.handle_key(KeyCode::Char('y').into(), &aglet)
         .expect("confirm batch done with cleanup");
 
     assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
@@ -16172,7 +16169,7 @@ fn batch_done_confirm_n_marks_done_and_keeps_links() {
 
     app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("batch done");
-    app.handle_confirm_delete_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("confirm batch done without cleanup");
 
     assert!(store.get_item(blocker.id).expect("reload blocker").is_done);
@@ -16224,13 +16221,13 @@ fn normal_mode_d_prompts_then_y_clears_blocker_links() {
 
     app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("d should open done confirm");
-    assert_eq!(app.mode, Mode::ConfirmDelete);
+    assert!(matches!(app.mode, Mode::DoneBlocksConfirm(_)));
     assert!(
         !store.get_item(blocker.id).expect("load blocker").is_done,
         "item should not be marked done until confirm"
     );
 
-    app.handle_confirm_delete_key(KeyCode::Char('y').into(), &aglet)
+    app.handle_key(KeyCode::Char('y').into(), &aglet)
         .expect("y should confirm done + link cleanup");
 
     assert!(store.get_item(blocker.id).expect("load blocker").is_done);
@@ -16248,7 +16245,7 @@ fn normal_mode_d_prompts_then_y_clears_blocker_links() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16282,9 +16279,9 @@ fn normal_mode_d_prompt_n_keeps_blocker_links() {
 
     app.handle_normal_key(KeyCode::Char('d').into(), &aglet)
         .expect("d should open done confirm");
-    assert_eq!(app.mode, Mode::ConfirmDelete);
+    assert!(matches!(app.mode, Mode::DoneBlocksConfirm(_)));
 
-    app.handle_confirm_delete_key(KeyCode::Char('n').into(), &aglet)
+    app.handle_key(KeyCode::Char('n').into(), &aglet)
         .expect("n should mark done and keep links");
 
     assert!(store.get_item(blocker.id).expect("load blocker").is_done);
@@ -16298,7 +16295,7 @@ fn normal_mode_d_prompt_n_keeps_blocker_links() {
     assert_eq!(app.mode, Mode::Normal);
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16353,7 +16350,7 @@ fn item_assign_hidden_reserved_done_does_not_open_confirm_or_change_item() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16418,7 +16415,7 @@ fn batch_item_assign_hidden_reserved_done_keeps_picker_and_selection() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16484,7 +16481,7 @@ fn batch_item_assign_hidden_reserved_done_does_not_mark_selected_items_done() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16760,7 +16757,7 @@ fn board_legacy_rows_keep_item_and_categories_visually_separated_when_truncated(
         "expected at least one visible separator before category token: {row_line:?}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16825,7 +16822,7 @@ fn board_legacy_when_column_shows_date_without_time() {
         "legacy board row should not include time component: {row_line}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16907,7 +16904,7 @@ fn board_dynamic_rows_keep_adjacent_columns_separated_when_truncated() {
         "expected at least one visible separator before dynamic token: {row_line:?}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -16981,7 +16978,7 @@ fn board_dynamic_when_column_shows_date_without_time() {
         "dynamic board should not include time component in row cells: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17116,7 +17113,7 @@ fn board_column_header_uses_view_alias_for_numeric_heading() {
         "board header should prefer alias over canonical heading: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17182,7 +17179,7 @@ fn board_legacy_column_labels_render_in_top_border() {
         lines.join("\n")
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17283,7 +17280,7 @@ fn board_dynamic_column_labels_render_in_top_border() {
         lines.join("\n")
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17385,7 +17382,7 @@ fn board_inline_border_keeps_adjacent_labels_visibly_separated() {
         "adjacent labels should have visible spacing: {border_line}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17486,7 +17483,7 @@ fn board_inline_border_shows_item_label_when_item_column_is_reordered() {
         "title should precede column headers: {border_line}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 // -------------------------------------------------------------------------
@@ -17526,7 +17523,7 @@ fn store_section_roundtrip_smoke() {
         1,
         "store section roundtrip should work"
     );
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 fn make_test_store_with_view(suffix: &str) -> (Store, std::path::PathBuf) {
@@ -17548,6 +17545,16 @@ fn test_view_from_app(app: &App) -> View {
         .find(|view| view.name == "TestView")
         .cloned()
         .expect("TestView should exist")
+}
+
+/// Delete a test database and SQLite's `-wal`/`-shm` sidecars. Removing only
+/// the database file left two sidecars per test in the temp dir.
+fn remove_test_db(path: &std::path::Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut file = path.as_os_str().to_owned();
+        file.push(suffix);
+        let _ = std::fs::remove_file(file);
+    }
 }
 
 fn terminal_buffer_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
@@ -17624,7 +17631,7 @@ fn view_edit_section_details_render_plain_focus_prefix_and_field_footer() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17650,7 +17657,7 @@ fn view_picker_e_opens_view_edit() {
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.is_some());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17684,7 +17691,7 @@ fn view_picker_n_opens_new_view_editor_with_name_focus_and_default_section() {
         Some(super::ViewEditInlineInput::ViewName)
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17709,7 +17716,7 @@ fn normal_v_then_e_opens_view_edit_for_active_view() {
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.is_some());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17729,7 +17736,7 @@ fn view_picker_e_clamps_stale_picker_index_before_editing() {
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.is_some());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17785,7 +17792,7 @@ fn view_edit_criteria_rows_render_in_draft_order_and_space_toggles_selected_row(
     assert_eq!(state.draft.criteria.criteria[0].category_id, medium.id);
     assert_eq!(state.draft.criteria.criteria[0].mode, CriterionMode::Not);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -17825,7 +17832,7 @@ fn view_edit_existing_criteria_enter_opens_category_picker() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18007,7 +18014,7 @@ fn view_edit_picker_space_cycles_criterion_mode() {
         "space in criteria region should cycle Not → Or"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18063,7 +18070,7 @@ fn view_edit_tab_cycles_panes() {
         ViewEditRegion::Criteria
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18092,7 +18099,7 @@ fn view_edit_shift_tab_cycles_panes_backwards() {
         ViewEditRegion::Sections
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18112,7 +18119,7 @@ fn view_edit_esc_returns_to_view_picker() {
     assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.view_edit_state.is_none());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18152,7 +18159,7 @@ fn view_edit_esc_on_dirty_prompts_save_confirm() {
     assert!(matches!(app.mode, Mode::ViewPicker { .. }));
     assert!(app.view_edit_state.is_none());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18209,7 +18216,7 @@ fn view_edit_inline_input_intercepts_keys_before_region() {
     assert_eq!(app.mode, Mode::ViewEdit);
     assert!(app.view_edit_state.as_ref().unwrap().inline_input.is_none());
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18245,7 +18252,7 @@ fn view_edit_category_picker_tab_closes_and_cycles_panes() {
         ViewEditRegion::Sections
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18278,7 +18285,7 @@ fn view_edit_criteria_picker_enter_closes_without_toggling() {
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Details);
     assert_eq!(state.region, ViewEditRegion::Criteria);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18424,7 +18431,7 @@ fn view_edit_details_jk_moves_between_criteria_and_view_aux_rows() {
         ViewEditRegion::Criteria
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18482,7 +18489,7 @@ fn view_edit_unmatched_enter_uses_selected_details_row() {
         Some(super::ViewEditInlineInput::UnmatchedLabel)
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18521,7 +18528,7 @@ fn view_edit_empty_sections_row_enter_cycles_view_setting() {
         EmptySections::Hide
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18562,7 +18569,7 @@ fn view_edit_section_flow_row_enter_toggles_flow_direction() {
         SectionFlow::Vertical
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18628,7 +18635,7 @@ fn view_edit_alias_row_enter_opens_alias_picker_and_saves_value() {
         Some("Client")
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18682,7 +18689,7 @@ fn view_edit_alias_input_empty_enter_clears_alias() {
         "empty alias input should clear alias mapping"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18742,7 +18749,7 @@ fn view_edit_view_details_enter_opens_when_picker_and_toggles_display_mode() {
         before
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18865,7 +18872,7 @@ fn view_edit_view_type_row_toggles_board_and_datebook() {
         "board views should retain or receive at least one editable section"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18889,7 +18896,7 @@ fn view_edit_view_type_row_is_locked_for_saved_views() {
     assert!(state.draft.datebook_config.is_none());
     assert_eq!(app.status, "View type is locked after view creation");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18925,7 +18932,7 @@ fn view_edit_empty_criteria_enter_opens_category_picker() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -18979,7 +18986,7 @@ fn view_edit_section_details_field_count_is_nine() {
         "max section details field index should be 8 (9 fields: 0-8)"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19117,7 +19124,7 @@ fn view_edit_section_details_enter_opens_picker_backed_rows() {
     app.handle_view_edit_key(KeyCode::Esc.into(), &aglet)
         .expect("close picker");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19184,7 +19191,7 @@ fn view_edit_section_layout_space_toggles_split_mode() {
             .show_children
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19244,7 +19251,7 @@ fn view_edit_h_does_not_toggle_section_layout() {
         "h shortcut should not toggle section layout"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19321,7 +19328,7 @@ fn view_edit_section_x_prompts_before_delete_and_y_confirms() {
         .iter()
         .all(|s| s.title != "Alpha"));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19387,7 +19394,7 @@ fn view_edit_section_details_x_prompts_before_delete() {
         1
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19461,7 +19468,7 @@ fn view_edit_category_picker_allows_multi_select_with_space() {
     assert!(app.view_edit_state.as_ref().unwrap().overlay.is_none());
     assert_eq!(app.mode, Mode::ViewEdit);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 // type-to-filter test removed: category picker no longer supports inline filtering
@@ -19517,7 +19524,7 @@ fn view_edit_section_plus_opens_criteria_picker_without_pre_expand() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19553,7 +19560,7 @@ fn view_edit_section_e_starts_section_title_edit() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19589,7 +19596,7 @@ fn view_edit_section_uppercase_n_adds_and_starts_section_title_edit() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19653,7 +19660,7 @@ fn view_edit_section_lowercase_n_inserts_below_current_and_starts_title_edit() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19716,7 +19723,7 @@ fn view_edit_section_uppercase_n_inserts_above_current_and_starts_title_edit() {
         })
     ));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19777,7 +19784,7 @@ fn view_edit_section_uppercase_jk_reorders_sections() {
     assert_eq!(state.draft.sections[0].title, "Alpha");
     assert_eq!(state.draft.sections[1].title, "Bravo");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19828,7 +19835,7 @@ fn view_edit_sections_up_from_first_row_focuses_view_settings() {
         ViewEditRegion::Criteria
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19864,7 +19871,7 @@ fn view_edit_view_row_r_starts_name_edit_and_enter_saves_draft_name() {
     assert_eq!(state.draft.name, "UX Board");
     assert!(state.dirty, "renaming view should mark draft dirty");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19900,7 +19907,7 @@ fn view_edit_name_tab_commits_and_moves_to_view_type() {
     assert!(!state.name_focused);
     assert!(state.view_type_focused);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -19983,7 +19990,7 @@ fn view_edit_slash_opens_section_filter_and_esc_clears_filter_before_close() {
         ""
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20100,7 +20107,7 @@ fn view_edit_p_toggles_preview_and_tab_cycles_preview_pane() {
     assert!(!state.preview_visible);
     assert_eq!(state.pane_focus, ViewEditPaneFocus::Sections);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20139,7 +20146,7 @@ fn view_edit_preview_renders_on_narrow_terminal_without_panic() {
         .draw(|frame| app.draw(frame))
         .expect("narrow preview render should not panic");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20180,7 +20187,7 @@ fn view_edit_settings_focus_still_shows_first_section_details() {
         "settings focus should not blank section details: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20238,7 +20245,7 @@ fn view_edit_section_c_opens_columns_picker_and_toggles_column() {
         .iter()
         .any(|column| column.heading == work.id));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20314,7 +20321,7 @@ fn section_column_picker_shows_but_blocks_leaf_tag_headings() {
         "ineligible toggle should explain why it is blocked"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20367,7 +20374,7 @@ fn section_column_picker_includes_non_leaf_tag_headings() {
         "non-leaf tag category should be selectable as column heading"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20423,7 +20430,7 @@ fn section_column_picker_includes_nested_non_leaf_tag_headings() {
         "nested non-leaf tag category should be selectable as column heading"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20474,7 +20481,7 @@ fn section_column_picker_includes_numeric_leaf_headings() {
         "numeric leaf category should be selectable as column heading"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20612,7 +20619,7 @@ fn view_edit_save_persists_view() {
         Some(BoardDisplayMode::SingleLine)
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 // ── Per-section filter tests (Phase 3) ─────────────────────────────────
@@ -20745,7 +20752,7 @@ fn normal_mode_shift_down_moves_item_to_next_section_like_right_bracket() {
         "item should leave the original section"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20780,7 +20787,7 @@ fn normal_mode_right_bracket_moves_item_and_reports_category_delta() {
         app.status
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20817,7 +20824,7 @@ fn normal_mode_shift_up_moves_item_to_previous_section_like_left_bracket() {
         "item should leave the original section"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20869,7 +20876,7 @@ fn horizontal_section_flow_hl_moves_between_sections_and_restores_lane_item_inde
         "first lane should restore its remembered row selection"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -20918,7 +20925,7 @@ fn vertical_section_tab_restores_section_item_index() {
         "second section should restore its remembered row selection"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21020,7 +21027,7 @@ fn vertical_section_tab_keeps_section_scroll_offset_stable() {
         "tabbing away should preserve the previous section scroll offset"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21155,7 +21162,7 @@ fn horizontal_multiline_cards_wrap_titles_and_use_label_metadata() {
         "selected multi-line card should use a single marker: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 fn render_non_datebook_empty_sections_mode(mode: EmptySections) -> String {
@@ -21352,7 +21359,7 @@ fn horizontal_section_tab_keeps_lane_scroll_offset_stable() {
         "tabbing away should preserve the previous lane scroll offset"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21421,7 +21428,7 @@ fn horizontal_singleline_cards_preserve_glyphs() {
         "single-line horizontal cards should render glyphs before the title text: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21460,7 +21467,7 @@ fn section_filters_are_independent() {
     assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
     assert_eq!(app.slots[1].items.len(), 2, "Personal unaffected");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21495,7 +21502,7 @@ fn section_filter_cleared_by_esc_in_normal_mode() {
         "slot 1 unaffected by slot 0 esc"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21529,7 +21536,7 @@ fn search_bar_esc_clears_filter_and_buffer() {
     );
     assert_eq!(app.section_filters[0], None, "filter should be cleared");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21562,7 +21569,7 @@ fn section_filters_reset_on_view_switch() {
         "all filters should be cleared after view switch"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21591,7 +21598,7 @@ fn search_bar_live_filtering() {
     // "Fix timeout bug" matches "f"
     assert_eq!(app.slots[0].items.len(), 1, "one item matches 'f'");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21622,7 +21629,7 @@ fn search_bar_filters_match_assigned_category_names() {
         "items should match by assigned Personal category name"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21667,7 +21674,7 @@ fn search_bar_filters_match_item_uuid_prefix() {
     );
     assert_eq!(app.slots[0].items[0].text, "Fix timeout bug");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21742,7 +21749,7 @@ fn fuzzy_search_ranks_title_matches_before_substring_fallback_and_uses_sort_as_t
         "fuzzy title score should outrank substring fallback even when slot sort would put fallback first"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21808,7 +21815,7 @@ fn fuzzy_search_preserves_note_category_and_uuid_substring_fallbacks() {
     assert_eq!(app.slots[0].items.len(), 1);
     assert_eq!(app.slots[0].items[0].id, uuid_item.id);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21845,7 +21852,7 @@ fn search_bar_enter_reveals_top_visible_item() {
         "top visible local result should be selected on Enter"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21892,7 +21899,7 @@ fn search_bar_enter_with_no_match_does_not_create_item() {
         "section search zero-match state should suggest global search: {rendered}"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21924,7 +21931,7 @@ fn search_bar_down_unfocuses_keeps_filter() {
         "filter stays active"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -21958,7 +21965,7 @@ fn search_bar_slash_resumes_with_text() {
     assert_eq!(app.mode, Mode::SearchBarFocused);
     assert_eq!(app.search_buffer.text(), "fix", "buffer retains text");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22046,7 +22053,7 @@ fn board_sorting_new_column_becomes_primary_and_previous_becomes_secondary() {
     );
     assert_eq!(app.slot_sort_keys[0].len(), 2);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22145,7 +22152,7 @@ fn board_sorting_numeric_missing_values_are_last_for_asc_and_desc() {
         "third sort press on primary should clear that key"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22217,7 +22224,7 @@ fn board_sorting_angle_brackets_alias_ascending_and_descending_sort() {
         .expect("descending sort alias");
     assert_eq!(app.slot_sort_keys[0][0].direction, SortDirection::Desc);
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22319,7 +22326,7 @@ fn board_render_summary_row_supports_all_summary_functions() {
     assert!(rendered.contains("max=250"), "max missing: {rendered}");
     assert!(rendered.contains("count=2"), "count missing: {rendered}");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22393,7 +22400,7 @@ fn shift_f_cycles_column_summary_fn() {
     assert_eq!(col.summary_fn, Some(SummaryFn::Avg));
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22451,7 +22458,7 @@ fn shift_f_on_non_numeric_column_is_noop() {
     );
 
     drop(store);
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 // --- Phase 6: Numeric cell editing tests ---
@@ -22536,7 +22543,7 @@ fn numeric_column_enter_opens_numeric_editor_not_category_picker() {
         "should not open category picker for numeric columns"
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22578,7 +22585,7 @@ fn numeric_column_edit_saves_value_and_returns_to_normal() {
         .expect("should have numeric value");
     assert_eq!(value, rust_decimal::Decimal::new(24596, 2));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22614,7 +22621,7 @@ fn numeric_column_edit_invalid_input_shows_error_and_keeps_panel_open() {
         app.status
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22650,7 +22657,7 @@ fn numeric_column_edit_prefills_existing_value() {
         .unwrap_or_default();
     assert_eq!(panel_text, "50.00", "should prefill existing value");
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 // --- Edit panel numeric values tests ---
@@ -22740,7 +22747,7 @@ fn edit_panel_shows_numeric_buffers_for_assigned_numeric_categories() {
         Some(rust_decimal::Decimal::new(4200, 2))
     );
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22905,7 +22912,7 @@ fn edit_panel_actions_open_assign_and_return_to_edit() {
         .expect("assignments");
     assert!(assignments.contains_key(&extra.id));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]
@@ -22961,7 +22968,7 @@ fn edit_panel_assign_roundtrip_preserves_unsaved_text() {
     assert_eq!(saved.text, "Test item updated");
     assert!(saved.assignments.contains_key(&extra.id));
 
-    let _ = std::fs::remove_file(&db_path);
+    remove_test_db(&db_path);
 }
 
 #[test]

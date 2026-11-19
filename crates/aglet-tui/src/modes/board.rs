@@ -1,3 +1,4 @@
+use crate::modes::confirm_delete::DeleteTarget;
 use crate::*;
 use aglet_core::error::AgletError;
 use aglet_core::model::RecurrenceRule;
@@ -1525,9 +1526,8 @@ impl App {
             .find(|c| c.id == column.heading)
             .map(|c| c.name.clone())
             .unwrap_or_else(|| "(deleted)".to_string());
-        self.board_pending_delete_column_label = Some(label.clone());
-        self.mode = Mode::BoardColumnDeleteConfirm;
         self.status = format!("WARNING: Delete column '{label}' from this section? [Y/n]");
+        self.mode = Mode::BoardColumnDeleteConfirm { label };
     }
 
     fn remove_current_board_column(&mut self, aglet: &Aglet<'_>) -> TuiResult<()> {
@@ -1590,23 +1590,18 @@ impl App {
 
     pub(crate) fn handle_board_column_delete_confirm_key(
         &mut self,
+        label: String,
         key: KeyEvent,
         aglet: &Aglet<'_>,
     ) -> TuiResult<bool> {
-        let code = key.code;
-        match code {
+        match key.code {
             KeyCode::Char('y') => {
-                self.board_pending_delete_column_label = None;
                 self.mode = Mode::Normal;
                 self.remove_current_board_column(aglet)?;
             }
             KeyCode::Esc => {
-                let label = self.board_pending_delete_column_label.take();
                 self.mode = Mode::Normal;
-                self.status = match label {
-                    Some(name) => format!("Delete column '{}' canceled", name),
-                    None => "Delete column canceled".to_string(),
-                };
+                self.status = format!("Delete column '{label}' canceled");
             }
             _ => {}
         }
@@ -2589,17 +2584,15 @@ impl App {
             }
             KeyCode::Char('x') => {
                 if self.has_selected_items() {
-                    self.done_blocks_confirm = None;
-                    self.batch_delete_item_ids = Some(self.selected_item_ids_in_view_order());
                     let selected_count = self.selected_count();
                     let item_suffix = if selected_count == 1 { "" } else { "s" };
-                    self.mode = Mode::ConfirmDelete;
+                    self.mode = Mode::ConfirmDelete(DeleteTarget::Items(
+                        self.selected_item_ids_in_view_order(),
+                    ));
                     self.status =
                         format!("Delete {selected_count} selected item{item_suffix}? y/n");
-                } else if self.selected_item_id().is_some() {
-                    self.done_blocks_confirm = None;
-                    self.batch_delete_item_ids = None;
-                    self.mode = Mode::ConfirmDelete;
+                } else if let Some(item_id) = self.selected_item_id() {
+                    self.mode = Mode::ConfirmDelete(DeleteTarget::Item(item_id));
                     self.status = "Delete item? y/n".to_string();
                 }
             }
@@ -2774,14 +2767,13 @@ impl App {
             if !blocked_item_ids.is_empty() {
                 let blocked_count = blocked_item_ids.len();
                 let suffix = if blocked_count == 1 { "" } else { "s" };
-                self.done_blocks_confirm = Some(DoneBlocksConfirmState {
+                self.mode = Mode::DoneBlocksConfirm(DoneBlocksConfirmState {
                     scope: DoneBlocksConfirmScope::Single {
                         item_id,
                         blocked_item_ids,
                     },
                     origin,
                 });
-                self.mode = Mode::ConfirmDelete;
                 self.status = format!(
                     "This item blocks {blocked_count} other item{suffix}. Remove that link and mark done?"
                 );
@@ -2846,7 +2838,7 @@ impl App {
             if blocked_link_count > 0 {
                 let item_suffix = if blocking_item_count == 1 { "" } else { "s" };
                 let blocked_suffix = if blocked_link_count == 1 { "" } else { "s" };
-                self.done_blocks_confirm = Some(DoneBlocksConfirmState {
+                self.mode = Mode::DoneBlocksConfirm(DoneBlocksConfirmState {
                     scope: DoneBlocksConfirmScope::Batch {
                         item_ids: action_item_ids,
                         blocking_item_count,
@@ -2854,7 +2846,6 @@ impl App {
                     },
                     origin,
                 });
-                self.mode = Mode::ConfirmDelete;
                 self.status = format!(
                     "{blocking_item_count} selected item{item_suffix} blocks {blocked_link_count} other item{blocked_suffix}. Remove those links and mark done?"
                 );

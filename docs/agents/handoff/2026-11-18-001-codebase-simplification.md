@@ -11,7 +11,7 @@ Written by Claude (Opus 5.5, Claude Code). Supersedes
 **Plan:** `docs/plans/codebase-review-and-simplification-plan.md` (active).
 **D1 plan:** `docs/plans/schema-squash-v21.md` (active, implemented).
 **Worktree:** `/home/code/src/aglet/.claude/worktrees/simplify`
-**Top branch:** `simplify/phase-4d-view-picker`
+**Top branch:** `simplify/phase-4e-confirm-dialogs`
 
 ## PR stack
 
@@ -32,6 +32,7 @@ merge it upward one branch at a time and push each.
 | #166 | `simplify/phase-4b-key-events` | Handlers take `KeyEvent` |
 | #167 | `simplify/phase-4c-small-modes` | HelpPanel owns its state |
 | #168 | `simplify/phase-4d-view-picker` | ViewPicker owns its state |
+| #169 | `simplify/phase-4e-confirm-dialogs` | Confirm dialogs own their state |
 
 Review comments on #158, #159, #162, #164, and #165 were fixed, merged up
 the stack, and answered inline on 2026-11-18.
@@ -65,10 +66,13 @@ palette row lives in `Mode::ViewPicker { index }` / `ViewDeleteConfirm
 { index }`, `NameInputContext::ViewRename` / `ViewClone` carry `view_id` and
 `picker_index`, and `ViewEditState::return_picker_index` brings the view
 editor back to the row. The handler takes `index` as a parameter from the
-dispatch, so there is no guard. `handle_confirm_delete_key` moved to
-`modes/confirm_delete.rs`, the next mode to migrate.
+dispatch, so there is no guard.
 
-Remaining order: the confirm dialogs, LinkWizard,
+**Confirm dialogs (#169):** `Mode::ConfirmDelete(DeleteTarget)`,
+`Mode::DoneBlocksConfirm(state)`, and `Mode::BoardColumnDeleteConfirm { label }`
+replace one multiplexed mode plus three `Option` fields.
+
+Remaining order: LinkWizard,
 GlobalSettings, SuggestionReview, CategoryColumnPicker, CategoryDirectEdit,
 InputPanel, item assign, CategoryManager, ViewEdit, then Normal. Step 4 (form
 descriptors) follows.
@@ -85,6 +89,9 @@ footer), fixed in `9d0e549`. Re-run it after each mode migration.
 ## Working notes
 
 - Build with `CARGO_TARGET_DIR=/home/code/src/aglet/target`.
+- `/tmp` is a small tmpfs. TUI tests used to leave `-wal`/`-shm` files there on
+  every run (fixed in #169 with `remove_test_db`); if tests fail with "Disk
+  quota exceeded", look for leftover `/tmp/aglet-*` files.
 - The worktree guard rejects large heredocs and compound commands; write
   scripts to the scratchpad and run them with `python3 -I`.
 - `cargo test` filters are plain substrings; `a\|b` matches nothing.
