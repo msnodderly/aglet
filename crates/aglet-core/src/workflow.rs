@@ -125,19 +125,7 @@ pub fn claimability_for_item(
     item: &Item,
     config: ResolvedWorkflowConfig,
 ) -> Result<Claimability> {
-    if item.is_done {
-        return Ok(Claimability::Done);
-    }
-    if item.assignments.contains_key(&config.claim_category_id) {
-        return Ok(Claimability::AlreadyClaimed);
-    }
-    if !item.assignments.contains_key(&config.ready_category_id) {
-        return Ok(Claimability::MissingReady);
-    }
-    if item_is_dependency_blocked(store, item.id)? {
-        return Ok(Claimability::Blocked);
-    }
-    Ok(Claimability::Claimable)
+    claimability(item, config, || item_is_dependency_blocked(store, item.id))
 }
 
 /// The subset of `items` that `claimability_for_item` would report as
@@ -148,16 +136,36 @@ pub fn claimable_item_ids(
     config: ResolvedWorkflowConfig,
 ) -> Result<HashSet<ItemId>> {
     let blocked = store.list_blocked_item_ids()?;
-    Ok(items
-        .iter()
-        .filter(|item| {
-            !item.is_done
-                && !item.assignments.contains_key(&config.claim_category_id)
-                && item.assignments.contains_key(&config.ready_category_id)
-                && !blocked.contains(&item.id)
-        })
-        .map(|item| item.id)
-        .collect())
+    let mut claimable = HashSet::new();
+    for item in items {
+        if claimability(item, config, || Ok(blocked.contains(&item.id)))? == Claimability::Claimable
+        {
+            claimable.insert(item.id);
+        }
+    }
+    Ok(claimable)
+}
+
+/// The claim rule, shared by `aglet claim` and `aglet ready` so they cannot
+/// disagree. `is_blocked` is only called once the cheaper checks pass.
+fn claimability(
+    item: &Item,
+    config: ResolvedWorkflowConfig,
+    is_blocked: impl FnOnce() -> Result<bool>,
+) -> Result<Claimability> {
+    if item.is_done {
+        return Ok(Claimability::Done);
+    }
+    if item.assignments.contains_key(&config.claim_category_id) {
+        return Ok(Claimability::AlreadyClaimed);
+    }
+    if !item.assignments.contains_key(&config.ready_category_id) {
+        return Ok(Claimability::MissingReady);
+    }
+    if is_blocked()? {
+        return Ok(Claimability::Blocked);
+    }
+    Ok(Claimability::Claimable)
 }
 
 pub fn build_ready_queue_view(store: &Store, config: ResolvedWorkflowConfig) -> Result<View> {
@@ -218,12 +226,15 @@ mod tests {
         let unblocked = item("ready, done dependency");
         let done_dep = item("done dependency");
         let taken = item("ready and claimed");
+        let finished = item("ready but done");
 
-        let mut done = store.get_item(done_dep).expect("get");
-        done.is_done = true;
-        store.update_item(&done).expect("mark done");
+        for id in [done_dep, finished] {
+            let mut done = store.get_item(id).expect("get");
+            done.is_done = true;
+            store.update_item(&done).expect("mark done");
+        }
 
-        for id in [free, waiting, unblocked, taken] {
+        for id in [free, waiting, unblocked, taken, finished] {
             aglet.assign_item_manual(id, ready.id, None).expect("ready");
         }
         aglet
