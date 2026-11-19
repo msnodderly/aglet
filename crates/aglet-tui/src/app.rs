@@ -382,15 +382,12 @@ impl App {
                 *self.category_assignment_counts.entry(*cat_id).or_insert(0) += 1;
             }
         }
-        self.item_links_by_item_id.clear();
-        for item in &items {
-            let links = aglet_core::model::ItemLinksForItem {
-                depends_on: store.list_dependency_ids_for_item(item.id)?,
-                blocks: store.list_dependent_ids_for_item(item.id)?,
-                related: store.list_related_ids_for_item(item.id)?,
-            };
-            self.item_links_by_item_id.insert(item.id, links);
-        }
+        // Every item gets an entry, linked or not, as readers expect.
+        let mut links_by_item = store.list_item_links_by_item()?;
+        self.item_links_by_item_id = items
+            .iter()
+            .map(|item| (item.id, links_by_item.remove(&item.id).unwrap_or_default()))
+            .collect();
         let slots = projection::project_slots(self, store, &items)?;
 
         self.slots = slots;

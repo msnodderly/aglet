@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -99,16 +99,15 @@ pub fn item_is_dependency_blocked(store: &Store, item_id: ItemId) -> Result<bool
     Ok(false)
 }
 
+/// The subset of `items` with an unresolved `depends-on` prerequisite. One
+/// query regardless of how many items are passed.
 pub fn blocked_item_ids(store: &Store, items: &[Item]) -> Result<HashSet<ItemId>> {
-    let done_by_item_id = dependency_done_map(store, items)?;
-    let mut blocked = HashSet::new();
-    for item in items {
-        let dependency_ids = store.list_dependency_ids_for_item(item.id)?;
-        if dependency_ids_are_blocked(&dependency_ids, &done_by_item_id) {
-            blocked.insert(item.id);
-        }
-    }
-    Ok(blocked)
+    let blocked = store.list_blocked_item_ids()?;
+    Ok(items
+        .iter()
+        .map(|item| item.id)
+        .filter(|item_id| blocked.contains(item_id))
+        .collect())
 }
 
 pub fn retain_items_by_dependency_state(
@@ -126,6 +125,34 @@ pub fn claimability_for_item(
     item: &Item,
     config: ResolvedWorkflowConfig,
 ) -> Result<Claimability> {
+    claimability(item, config, || item_is_dependency_blocked(store, item.id))
+}
+
+/// The subset of `items` that `claimability_for_item` would report as
+/// `Claimable`, with the dependency check done once for the whole list.
+pub fn claimable_item_ids(
+    store: &Store,
+    items: &[Item],
+    config: ResolvedWorkflowConfig,
+) -> Result<HashSet<ItemId>> {
+    let blocked = store.list_blocked_item_ids()?;
+    let mut claimable = HashSet::new();
+    for item in items {
+        if claimability(item, config, || Ok(blocked.contains(&item.id)))? == Claimability::Claimable
+        {
+            claimable.insert(item.id);
+        }
+    }
+    Ok(claimable)
+}
+
+/// The claim rule, shared by `aglet claim` and `aglet ready` so they cannot
+/// disagree. `is_blocked` is only called once the cheaper checks pass.
+fn claimability(
+    item: &Item,
+    config: ResolvedWorkflowConfig,
+    is_blocked: impl FnOnce() -> Result<bool>,
+) -> Result<Claimability> {
     if item.is_done {
         return Ok(Claimability::Done);
     }
@@ -135,48 +162,10 @@ pub fn claimability_for_item(
     if !item.assignments.contains_key(&config.ready_category_id) {
         return Ok(Claimability::MissingReady);
     }
-    if item_is_dependency_blocked(store, item.id)? {
+    if is_blocked()? {
         return Ok(Claimability::Blocked);
     }
     Ok(Claimability::Claimable)
-}
-
-fn dependency_done_map(store: &Store, items: &[Item]) -> Result<HashMap<ItemId, bool>> {
-    let mut done_by_item_id: HashMap<ItemId, bool> =
-        items.iter().map(|item| (item.id, item.is_done)).collect();
-
-    for item in items {
-        for dependency_id in store.list_dependency_ids_for_item(item.id)? {
-            done_by_item_id
-                .entry(dependency_id)
-                .or_insert(store.get_item(dependency_id)?.is_done);
-        }
-    }
-
-    Ok(done_by_item_id)
-}
-
-fn dependency_ids_are_blocked(
-    dependency_ids: &[ItemId],
-    done_by_item_id: &HashMap<ItemId, bool>,
-) -> bool {
-    dependency_ids
-        .iter()
-        .any(|dep_id| !done_by_item_id.get(dep_id).copied().unwrap_or(false))
-}
-
-pub fn claimable_item_ids(
-    store: &Store,
-    items: &[Item],
-    config: ResolvedWorkflowConfig,
-) -> Result<HashSet<ItemId>> {
-    let mut claimable = HashSet::new();
-    for item in items {
-        if claimability_for_item(store, item, config)? == Claimability::Claimable {
-            claimable.insert(item.id);
-        }
-    }
-    Ok(claimable)
 }
 
 pub fn build_ready_queue_view(store: &Store, config: ResolvedWorkflowConfig) -> Result<View> {
@@ -200,13 +189,112 @@ pub fn build_ready_queue_view(store: &Store, config: ResolvedWorkflowConfig) -> 
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_item_ids, item_is_dependency_blocked, retain_items_by_dependency_state,
-        workflow_setup_error_message,
+        blocked_item_ids, claimability_for_item, claimable_item_ids, item_is_dependency_blocked,
+        retain_items_by_dependency_state, workflow_setup_error_message, Claimability,
+        ResolvedWorkflowConfig,
     };
     use crate::aglet::Aglet;
     use crate::matcher::SubstringClassifier;
-    use crate::model::Item;
+    use crate::model::{Category, Item};
     use crate::store::Store;
+
+    /// The whole-table queries behind TUI refresh and the ready queue must
+    /// agree with the per-item queries they replaced.
+    #[test]
+    fn batch_link_and_claim_queries_match_per_item_queries() {
+        let store = Store::open_memory().expect("store");
+        let classifier = SubstringClassifier;
+        let aglet = Aglet::new(&store, &classifier);
+
+        let ready = Category::new("Ready".to_string());
+        let claimed = Category::new("In Progress".to_string());
+        store.create_category(&ready).expect("ready");
+        store.create_category(&claimed).expect("claimed");
+        let config = ResolvedWorkflowConfig {
+            ready_category_id: ready.id,
+            claim_category_id: claimed.id,
+        };
+
+        let item = |text: &str| {
+            let item = Item::new(text.to_string());
+            store.create_item(&item).expect("create item");
+            item.id
+        };
+        let free = item("free and ready");
+        let waiting = item("ready, open dependency");
+        let open_dep = item("open dependency");
+        let unblocked = item("ready, done dependency");
+        let done_dep = item("done dependency");
+        let taken = item("ready and claimed");
+        let finished = item("ready but done");
+
+        for id in [done_dep, finished] {
+            let mut done = store.get_item(id).expect("get");
+            done.is_done = true;
+            store.update_item(&done).expect("mark done");
+        }
+
+        for id in [free, waiting, unblocked, taken, finished] {
+            aglet.assign_item_manual(id, ready.id, None).expect("ready");
+        }
+        aglet
+            .assign_item_manual(taken, claimed.id, None)
+            .expect("claim");
+        aglet
+            .link_items_depends_on(waiting, open_dep)
+            .expect("link");
+        aglet.link_items_depends_on(waiting, free).expect("link");
+        aglet
+            .link_items_depends_on(unblocked, done_dep)
+            .expect("link");
+        aglet.link_items_related(free, open_dep).expect("link");
+        aglet.link_items_related(taken, free).expect("link");
+
+        let items = store.list_items().expect("list items");
+        let links = store.list_item_links_by_item().expect("links");
+        let blocked = blocked_item_ids(&store, &items).expect("blocked");
+        let claimable = claimable_item_ids(&store, &items, config).expect("claimable");
+
+        for item in &items {
+            let batch = links.get(&item.id).cloned().unwrap_or_default();
+            assert_eq!(
+                batch.depends_on,
+                store.list_dependency_ids_for_item(item.id).expect("deps"),
+                "depends_on for {}",
+                item.text
+            );
+            assert_eq!(
+                batch.blocks,
+                store.list_dependent_ids_for_item(item.id).expect("blocks"),
+                "blocks for {}",
+                item.text
+            );
+            assert_eq!(
+                batch.related,
+                store.list_related_ids_for_item(item.id).expect("related"),
+                "related for {}",
+                item.text
+            );
+            assert_eq!(
+                blocked.contains(&item.id),
+                item_is_dependency_blocked(&store, item.id).expect("blocked check"),
+                "blocked for {}",
+                item.text
+            );
+            assert_eq!(
+                claimable.contains(&item.id),
+                claimability_for_item(&store, item, config).expect("claimability")
+                    == Claimability::Claimable,
+                "claimable for {}",
+                item.text
+            );
+        }
+        assert_eq!(blocked, std::collections::HashSet::from([waiting]));
+        assert_eq!(
+            claimable,
+            std::collections::HashSet::from([free, unblocked])
+        );
+    }
 
     #[test]
     fn workflow_setup_error_message_points_to_global_settings() {

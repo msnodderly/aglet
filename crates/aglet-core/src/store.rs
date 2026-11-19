@@ -16,8 +16,9 @@ use crate::error::{AgletError, Result};
 use crate::model::{
     Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
     CategoryId, CategoryValueKind, Condition, ConditionMatchMode, DatebookConfig, DeletionLogEntry,
-    EmptySections, Item, ItemId, ItemLink, ItemLinkKind, NumericFormat, Query, RecurrenceRule,
-    Section, SectionFlow, View, RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
+    EmptySections, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, NumericFormat, Query,
+    RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
@@ -562,9 +563,16 @@ impl Store {
             .query_map([], Self::row_to_item)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        rows.into_iter()
-            .map(|item| self.load_assignments(item))
-            .collect()
+        // One query for every assignment, grouped in memory. Loading per
+        // item would cost one statement per row of `items`.
+        let mut assignments_by_item = self.load_all_assignments()?;
+        Ok(rows
+            .into_iter()
+            .map(|mut item| {
+                item.assignments = assignments_by_item.remove(&item.id).unwrap_or_default();
+                item
+            })
+            .collect())
     }
 
     pub fn list_deleted_items(&self) -> Result<Vec<DeletionLogEntry>> {
@@ -1269,68 +1277,74 @@ impl Store {
         })
     }
 
-    fn load_assignments(&self, mut item: Item) -> Result<Item> {
-        let mut stmt = self.conn.prepare(
-            "SELECT category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value
-             FROM assignments WHERE item_id = ?1",
-        )?;
-        let rows = stmt.query_map(params![item.id.to_string()], |row| {
-            let cat_str: String = row.get(0)?;
-            let source_str: String = row.get(1)?;
-            let assigned_str: String = row.get(2)?;
-            let sticky_int: i32 = row.get(3)?;
-            let origin: Option<String> = row.get(4)?;
-            let explanation_json: String = row.get(5)?;
-            let numeric_value: Option<String> = row.get(6)?;
-            Ok((
-                cat_str,
-                source_str,
-                assigned_str,
-                sticky_int,
-                origin,
-                explanation_json,
-                numeric_value,
-            ))
-        })?;
+    const ASSIGNMENT_COLUMNS: &'static str =
+        "item_id, category_id, source, assigned_at, sticky, origin, explanation_json, numeric_value";
 
-        for row in rows {
-            let (
-                cat_str,
-                source_str,
-                assigned_str,
-                sticky_int,
+    /// Decode one `assignments` row selected with `ASSIGNMENT_COLUMNS`.
+    fn row_to_assignment(row: &Row<'_>) -> rusqlite::Result<(ItemId, CategoryId, Assignment)> {
+        let item_str: String = row.get(0)?;
+        let cat_str: String = row.get(1)?;
+        let source_str: String = row.get(2)?;
+        let assigned_str: String = row.get(3)?;
+        let sticky_int: i32 = row.get(4)?;
+        let origin: Option<String> = row.get(5)?;
+        let explanation_json: String = row.get(6)?;
+        let numeric_value_str: Option<String> = row.get(7)?;
+
+        let source = match source_str.as_str() {
+            "Manual" => AssignmentSource::Manual,
+            "AutoMatch" => AssignmentSource::AutoMatch,
+            "AutoClassified" => AssignmentSource::AutoClassified,
+            "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
+            "Action" => AssignmentSource::Action,
+            "Subsumption" => AssignmentSource::Subsumption,
+            _ => AssignmentSource::Manual,
+        };
+        Ok((
+            Uuid::parse_str(&item_str).unwrap_or_default(),
+            Uuid::parse_str(&cat_str).unwrap_or_default(),
+            Assignment {
+                source,
+                assigned_at: assigned_str.parse::<Timestamp>().unwrap_or_default(),
+                sticky: sticky_int != 0,
                 origin,
-                explanation_json,
-                numeric_value_str,
-            ) = row?;
-            let cat_id = Uuid::parse_str(&cat_str).unwrap_or_default();
-            let source = match source_str.as_str() {
-                "Manual" => AssignmentSource::Manual,
-                "AutoMatch" => AssignmentSource::AutoMatch,
-                "AutoClassified" => AssignmentSource::AutoClassified,
-                "SuggestionAccepted" => AssignmentSource::SuggestionAccepted,
-                "Action" => AssignmentSource::Action,
-                "Subsumption" => AssignmentSource::Subsumption,
-                _ => AssignmentSource::Manual,
-            };
-            let assigned_at = assigned_str.parse::<Timestamp>().unwrap_or_default();
-            let explanation =
-                serde_json::from_str::<Option<AssignmentExplanation>>(&explanation_json)
-                    .unwrap_or_default();
-            let numeric_value = numeric_value_str.and_then(|s| s.parse::<Decimal>().ok());
-            item.assignments.insert(
-                cat_id,
-                Assignment {
-                    source,
-                    assigned_at,
-                    sticky: sticky_int != 0,
-                    origin,
-                    explanation,
-                    numeric_value,
-                },
-            );
+                explanation: serde_json::from_str::<Option<AssignmentExplanation>>(
+                    &explanation_json,
+                )
+                .unwrap_or_default(),
+                numeric_value: numeric_value_str.and_then(|s| s.parse::<Decimal>().ok()),
+            },
+        ))
+    }
+
+    fn load_assignments(&self, mut item: Item) -> Result<Item> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {} FROM assignments WHERE item_id = ?1",
+            Self::ASSIGNMENT_COLUMNS
+        ))?;
+        let rows = stmt.query_map(params![item.id.to_string()], Self::row_to_assignment)?;
+        for row in rows {
+            let (_, category_id, assignment) = row?;
+            item.assignments.insert(category_id, assignment);
         }
         Ok(item)
+    }
+
+    fn load_all_assignments(&self) -> Result<HashMap<ItemId, HashMap<CategoryId, Assignment>>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {} FROM assignments",
+            Self::ASSIGNMENT_COLUMNS
+        ))?;
+        let rows = stmt.query_map([], Self::row_to_assignment)?;
+        let mut by_item: HashMap<ItemId, HashMap<CategoryId, Assignment>> = HashMap::new();
+        for row in rows {
+            let (item_id, category_id, assignment) = row?;
+            by_item
+                .entry(item_id)
+                .or_default()
+                .insert(category_id, assignment);
+        }
+        Ok(by_item)
     }
 
     fn row_to_classification_suggestion(
@@ -1541,6 +1555,74 @@ impl Store {
 
         rows.into_iter()
             .map(|raw| Self::parse_uuid_from_db_text(&raw, "item_links.related_neighbor_id"))
+            .collect()
+    }
+
+    /// Every item's immediate links in one query. Items without links have no
+    /// entry. Each list is ordered like the per-item `list_*_ids_for_item`
+    /// queries: by link creation time, then neighbor id.
+    pub fn list_item_links_by_item(&self) -> Result<HashMap<ItemId, ItemLinksForItem>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT item_id, other_item_id, kind, created_at FROM item_links")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // (owner, created_at, neighbor) per relationship, sorted so each
+        // owner's neighbors come out in creation order.
+        let mut depends_on = Vec::new();
+        let mut blocks = Vec::new();
+        let mut related = Vec::new();
+        for (item_raw, other_raw, kind, created_at) in rows {
+            let item_id = Self::parse_uuid_from_db_text(&item_raw, "item_links.item_id")?;
+            let other_id = Self::parse_uuid_from_db_text(&other_raw, "item_links.other_item_id")?;
+            if kind == "depends-on" {
+                depends_on.push((item_id, created_at.clone(), other_id));
+                blocks.push((other_id, created_at, item_id));
+            } else {
+                related.push((item_id, created_at.clone(), other_id));
+                related.push((other_id, created_at, item_id));
+            }
+        }
+        depends_on.sort();
+        blocks.sort();
+        related.sort();
+
+        let mut by_item: HashMap<ItemId, ItemLinksForItem> = HashMap::new();
+        for (owner, _, neighbor) in depends_on {
+            by_item.entry(owner).or_default().depends_on.push(neighbor);
+        }
+        for (owner, _, neighbor) in blocks {
+            by_item.entry(owner).or_default().blocks.push(neighbor);
+        }
+        for (owner, _, neighbor) in related {
+            by_item.entry(owner).or_default().related.push(neighbor);
+        }
+        Ok(by_item)
+    }
+
+    /// Ids of every item with at least one unresolved `depends-on`
+    /// prerequisite (a dependency that is not done), in one query.
+    pub fn list_blocked_item_ids(&self) -> Result<HashSet<ItemId>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT l.item_id
+             FROM item_links l
+             JOIN items dependency ON dependency.id = l.other_item_id
+             WHERE l.kind = 'depends-on' AND dependency.is_done = 0",
+        )?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|raw| Self::parse_uuid_from_db_text(&raw, "item_links.item_id"))
             .collect()
     }
 
