@@ -2035,6 +2035,27 @@ impl Store {
         result
     }
 
+    /// Run `f` in a transaction that is always rolled back, and return what
+    /// `f` returned. Previews use it to ask "what would this change do"
+    /// against the real data without keeping any of the writes.
+    pub fn with_rolled_back_transaction<T>(
+        &self,
+        f: impl FnOnce(&Store) -> Result<T>,
+    ) -> Result<T> {
+        let (begin, rollback) = if self.conn.is_autocommit() {
+            ("BEGIN IMMEDIATE TRANSACTION", "ROLLBACK")
+        } else {
+            (
+                "SAVEPOINT aglet_preview",
+                "ROLLBACK TO SAVEPOINT aglet_preview; RELEASE SAVEPOINT aglet_preview",
+            )
+        };
+        self.conn.execute_batch(begin)?;
+        let result = f(self);
+        self.conn.execute_batch(rollback)?;
+        result
+    }
+
     fn with_category_order_transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
         self.with_immediate_transaction(f)
     }

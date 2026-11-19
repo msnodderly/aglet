@@ -1291,6 +1291,30 @@ fn manual_assignment_applies_subsumption_to_all_ancestors() {
 }
 
 #[test]
+fn preview_inside_a_committed_transaction_still_writes_nothing() {
+    let store = Store::open_memory().unwrap();
+    let classifier = SubstringClassifier;
+    let aglet = Aglet::new(&store, &classifier);
+    let urgent = category("Urgent", false);
+    store.create_category(&urgent).unwrap();
+    let item = Item::new("Pay rent".to_string());
+    store.create_item(&item).unwrap();
+
+    aglet
+        .transaction(|| -> Result<(), AgletError> {
+            let preview = aglet.preview_manual_category_toggle(item.id, urgent.id)?;
+            assert!(preview.assignments.contains_key(&urgent.id));
+            Ok(())
+        })
+        .unwrap();
+
+    assert!(!store
+        .get_assignments_for_item(item.id)
+        .unwrap()
+        .contains_key(&urgent.id));
+}
+
+#[test]
 fn preview_manual_category_toggle_uses_reprocessed_assignments() {
     let store = Store::open_memory().unwrap();
     let classifier = SubstringClassifier;

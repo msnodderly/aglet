@@ -22,11 +22,11 @@ use crate::engine::{
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    is_reserved_category_name, origin as origin_const, Action, Assignment, AssignmentActionKind,
-    AssignmentEvent, AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category,
-    CategoryId, CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind,
-    ItemLinksForItem, RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE,
-    RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
+    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
+    AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
+    CategoryValueKind, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, RecurrenceRule,
+    Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
+    RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -697,53 +697,30 @@ impl<'a> Aglet<'a> {
         self.reprocess_existing_item(item_id)
     }
 
+    /// The item as it would look after a manual toggle of `category_id`,
+    /// with rules and actions applied. Runs on the real store inside a
+    /// transaction that is rolled back, so nothing is kept.
     pub fn preview_manual_category_toggle(
         &self,
         item_id: ItemId,
         category_id: CategoryId,
     ) -> Result<Item> {
-        let source_item = self.store.get_item(item_id)?;
-        let preview_store = Store::open_memory()?;
-        preview_store.set_classification_config(&self.store.get_classification_config()?)?;
-
-        let source_categories = self.store.get_hierarchy()?;
-        let id_map = Self::copy_preview_categories(&preview_store, &source_categories)?;
-
-        let mut preview_item = source_item.clone();
-        preview_item.assignments.clear();
-        preview_store.create_item(&preview_item)?;
-        for (assigned_category_id, assignment) in &source_item.assignments {
-            if let Some(preview_category_id) = id_map.get(assigned_category_id) {
-                preview_store.assign_item(item_id, *preview_category_id, assignment)?;
+        self.store.with_rolled_back_transaction(|store| {
+            if store
+                .get_item(item_id)?
+                .assignments
+                .contains_key(&category_id)
+            {
+                self.unassign_item_manual(item_id, category_id)?;
+            } else {
+                self.assign_item_manual(
+                    item_id,
+                    category_id,
+                    Some("preview:tui.assign".to_string()),
+                )?;
             }
-        }
-
-        let preview_aglet = Aglet::new(&preview_store, self.classifier);
-        let preview_category_id =
-            Self::mapped_category_id(category_id, &id_map, "preview toggle category")?;
-
-        if source_item.assignments.contains_key(&category_id) {
-            preview_aglet.unassign_item_manual(item_id, preview_category_id)?;
-        } else {
-            preview_aglet.assign_item_manual(
-                item_id,
-                preview_category_id,
-                Some("preview:tui.assign".to_string()),
-            )?;
-        }
-
-        let mut preview_result = preview_store.get_item(item_id)?;
-        preview_result.assignments = preview_result
-            .assignments
-            .into_iter()
-            .map(|(preview_id, assignment)| {
-                let source_id =
-                    Self::source_category_id(preview_id, &id_map, "preview result assignment")
-                        .expect("preview category mapping should round-trip");
-                (source_id, assignment)
-            })
-            .collect();
-        Ok(preview_result)
+            store.get_item(item_id)
+        })
     }
 
     pub fn remove_item_from_unmatched(
@@ -1598,60 +1575,32 @@ impl<'a> Aglet<'a> {
         Ok(preview_assignments != current_assignments)
     }
 
+    /// The item as it would look after accepting a suggestion for
+    /// `category_id`. Rolled back like `preview_manual_category_toggle`.
     fn preview_suggestion_assignment(
         &self,
         item_id: ItemId,
         category_id: CategoryId,
     ) -> Result<Item> {
-        let source_item = self.store.get_item(item_id)?;
-        let preview_store = Store::open_memory()?;
-        preview_store.set_classification_config(&self.store.get_classification_config()?)?;
-
-        let source_categories = self.store.get_hierarchy()?;
-        let id_map = Self::copy_preview_categories(&preview_store, &source_categories)?;
-
-        let mut preview_item = source_item.clone();
-        preview_item.assignments.clear();
-        preview_store.create_item(&preview_item)?;
-        for (assigned_category_id, assignment) in &source_item.assignments {
-            if let Some(preview_category_id) = id_map.get(assigned_category_id) {
-                preview_store.assign_item(item_id, *preview_category_id, assignment)?;
-            }
-        }
-
-        let preview_aglet = Aglet::new(&preview_store, self.classifier);
-        let preview_category_id =
-            Self::mapped_category_id(category_id, &id_map, "preview suggestion category")?;
-        let preview_suggestion = ClassificationSuggestion {
-            id: Uuid::new_v4(),
-            item_id,
-            assignment: crate::classification::CandidateAssignment::Category(preview_category_id),
-            provider_id: "preview".to_string(),
-            model: None,
-            confidence: None,
-            rationale: None,
-            context_hash: "preview".to_string(),
-            item_revision_hash: "preview".to_string(),
-            status: SuggestionStatus::Pending,
-            created_at: Timestamp::now(),
-            decided_at: None,
-        };
-        let (_, preview_intent) = preview_aglet.apply_suggestion_assignment(&preview_suggestion)?;
-        preview_aglet
-            .reprocess_existing_item_with_intents(item_id, preview_intent.into_iter().collect())?;
-
-        let mut preview_result = preview_store.get_item(item_id)?;
-        preview_result.assignments = preview_result
-            .assignments
-            .into_iter()
-            .map(|(preview_id, assignment)| {
-                let source_id =
-                    Self::source_category_id(preview_id, &id_map, "preview suggestion result")
-                        .expect("preview category mapping should round-trip");
-                (source_id, assignment)
-            })
-            .collect();
-        Ok(preview_result)
+        self.store.with_rolled_back_transaction(|store| {
+            let preview_suggestion = ClassificationSuggestion {
+                id: Uuid::new_v4(),
+                item_id,
+                assignment: crate::classification::CandidateAssignment::Category(category_id),
+                provider_id: "preview".to_string(),
+                model: None,
+                confidence: None,
+                rationale: None,
+                context_hash: "preview".to_string(),
+                item_revision_hash: "preview".to_string(),
+                status: SuggestionStatus::Pending,
+                created_at: Timestamp::now(),
+                decided_at: None,
+            };
+            let (_, intent) = self.apply_suggestion_assignment(&preview_suggestion)?;
+            self.reprocess_existing_item_with_intents(item_id, intent.into_iter().collect())?;
+            store.get_item(item_id)
+        })
     }
 
     fn process_category_change(&self, category_id: CategoryId) -> Result<EvaluateAllItemsResult> {
@@ -1943,179 +1892,6 @@ impl<'a> Aglet<'a> {
         }
 
         Ok(())
-    }
-
-    fn copy_preview_categories(
-        preview_store: &Store,
-        source_categories: &[Category],
-    ) -> Result<HashMap<CategoryId, CategoryId>> {
-        let preview_reserved: HashMap<String, CategoryId> = preview_store
-            .get_hierarchy()?
-            .into_iter()
-            .filter(|category| is_reserved_category_name(&category.name))
-            .map(|category| (category.name.to_ascii_lowercase(), category.id))
-            .collect();
-
-        let mut id_map = HashMap::new();
-        for category in source_categories {
-            let preview_id = if is_reserved_category_name(&category.name) {
-                *preview_reserved
-                    .get(&category.name.to_ascii_lowercase())
-                    .ok_or_else(|| AgletError::InvalidOperation {
-                        message: format!("missing preview reserved category '{}'", category.name),
-                    })?
-            } else {
-                category.id
-            };
-            id_map.insert(category.id, preview_id);
-        }
-
-        for category in source_categories {
-            let preview_category = Self::remap_category_for_preview(category, &id_map)?;
-            if is_reserved_category_name(&category.name) {
-                preview_store.update_category(&preview_category)?;
-            } else {
-                preview_store.create_category(&preview_category)?;
-            }
-        }
-
-        Ok(id_map)
-    }
-
-    fn remap_category_for_preview(
-        category: &Category,
-        id_map: &HashMap<CategoryId, CategoryId>,
-    ) -> Result<Category> {
-        let mut preview_category = category.clone();
-        preview_category.id = Self::mapped_category_id(category.id, id_map, "preview category id")?;
-        preview_category.parent = category
-            .parent
-            .map(|parent_id| Self::mapped_category_id(parent_id, id_map, "preview parent id"))
-            .transpose()?;
-        preview_category.children.clear();
-        preview_category.conditions = category
-            .conditions
-            .iter()
-            .map(|condition| Self::remap_condition_for_preview(condition, id_map))
-            .collect::<Result<Vec<_>>>()?;
-        preview_category.actions = category
-            .actions
-            .iter()
-            .map(|action| Self::remap_action_for_preview(action, id_map))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(preview_category)
-    }
-
-    fn remap_condition_for_preview(
-        condition: &Condition,
-        id_map: &HashMap<CategoryId, CategoryId>,
-    ) -> Result<Condition> {
-        match condition {
-            Condition::ImplicitString => Ok(Condition::ImplicitString),
-            Condition::Profile { criteria } => Ok(Condition::Profile {
-                criteria: Box::new(Self::remap_query_for_preview(criteria, id_map)?),
-            }),
-            Condition::Date { source, matcher } => Ok(Condition::Date {
-                source: *source,
-                matcher: matcher.clone(),
-            }),
-            Condition::Numeric {
-                category_id,
-                min,
-                max,
-                outside,
-            } => Ok(Condition::Numeric {
-                category_id: Self::mapped_category_id(
-                    *category_id,
-                    id_map,
-                    "preview numeric condition",
-                )?,
-                min: *min,
-                max: *max,
-                outside: *outside,
-            }),
-        }
-    }
-
-    fn remap_action_for_preview(
-        action: &Action,
-        id_map: &HashMap<CategoryId, CategoryId>,
-    ) -> Result<Action> {
-        let remap_targets = |targets: &HashSet<CategoryId>| -> Result<HashSet<CategoryId>> {
-            targets
-                .iter()
-                .map(|target_id| Self::mapped_category_id(*target_id, id_map, "preview action"))
-                .collect()
-        };
-
-        match action {
-            Action::Assign { targets } => Ok(Action::Assign {
-                targets: remap_targets(targets)?,
-            }),
-            Action::AssignNumeric { target, value } => Ok(Action::AssignNumeric {
-                target: Self::mapped_category_id(*target, id_map, "preview numeric action")?,
-                value: *value,
-            }),
-            Action::SetWhen { value } => Ok(Action::SetWhen {
-                value: value.clone(),
-            }),
-            Action::MarkDone => Ok(Action::MarkDone),
-            Action::Delete => Ok(Action::Delete),
-            Action::Remove { targets } => Ok(Action::Remove {
-                targets: remap_targets(targets)?,
-            }),
-        }
-    }
-
-    fn remap_query_for_preview(
-        query: &crate::model::Query,
-        id_map: &HashMap<CategoryId, CategoryId>,
-    ) -> Result<crate::model::Query> {
-        Ok(crate::model::Query {
-            criteria: query
-                .criteria
-                .iter()
-                .map(|criterion| {
-                    Ok(crate::model::Criterion {
-                        mode: criterion.mode,
-                        category_id: Self::mapped_category_id(
-                            criterion.category_id,
-                            id_map,
-                            "preview query criterion",
-                        )?,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?,
-            virtual_include: query.virtual_include.clone(),
-            virtual_exclude: query.virtual_exclude.clone(),
-            text_search: query.text_search.clone(),
-        })
-    }
-
-    fn mapped_category_id(
-        source_id: CategoryId,
-        id_map: &HashMap<CategoryId, CategoryId>,
-        context: &str,
-    ) -> Result<CategoryId> {
-        id_map
-            .get(&source_id)
-            .copied()
-            .ok_or_else(|| AgletError::InvalidOperation {
-                message: format!("missing category mapping for {context}: {source_id}"),
-            })
-    }
-
-    fn source_category_id(
-        preview_id: CategoryId,
-        id_map: &HashMap<CategoryId, CategoryId>,
-        context: &str,
-    ) -> Result<CategoryId> {
-        id_map
-            .iter()
-            .find_map(|(source_id, mapped_id)| (*mapped_id == preview_id).then_some(*source_id))
-            .ok_or_else(|| AgletError::InvalidOperation {
-                message: format!("missing reverse category mapping for {context}: {preview_id}"),
-            })
     }
 
     fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {
