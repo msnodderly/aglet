@@ -2478,8 +2478,9 @@ impl App {
                 }
             }
             KeyCode::F(8) | KeyCode::Char('v') | KeyCode::Char('V') => {
-                self.mode = Mode::ViewPicker;
-                self.picker_index = self.view_index;
+                self.mode = Mode::ViewPicker {
+                    index: self.view_index,
+                };
                 // Derived from the same table as the footer hint row so the
                 // two lines can never advertise different keys.
                 self.status = format!(
@@ -5194,9 +5195,10 @@ impl App {
     /// Returns the mode to return to when a NameInput panel is canceled or completed.
     fn name_input_return_mode(&self) -> Mode {
         match self.name_input_context {
-            Some(NameInputContext::ViewRename) | Some(NameInputContext::ViewClone) => {
-                Mode::ViewPicker
-            }
+            Some(NameInputContext::ViewRename { picker_index, .. })
+            | Some(NameInputContext::ViewClone { picker_index, .. }) => Mode::ViewPicker {
+                index: picker_index,
+            },
             Some(NameInputContext::NumericValueEdit) => Mode::Normal,
             Some(NameInputContext::WhenDateEdit) => Mode::Normal,
             Some(NameInputContext::CategoryCreate) => Mode::CategoryManager,
@@ -5260,7 +5262,10 @@ impl App {
             .unwrap_or_default();
 
         match self.name_input_context {
-            Some(NameInputContext::ViewClone) => {
+            Some(NameInputContext::ViewClone {
+                view_id,
+                picker_index,
+            }) => {
                 if input_text.is_empty() {
                     self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);
                     return Ok(());
@@ -5274,69 +5279,48 @@ impl App {
                     self.status = format!("View \"{name}\" already exists");
                     return Ok(());
                 }
-                let Some(source_id) = self.view_pending_clone_id.take() else {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.mode = Mode::ViewPicker;
-                    self.status = "Clone failed: no source view".to_string();
-                    return Ok(());
-                };
-                match aglet.store().clone_view(source_id, name.clone()) {
+                self.input_panel = None;
+                self.name_input_context = None;
+                match aglet.store().clone_view(view_id, name.clone()) {
                     Ok(_cloned) => {
                         self.refresh(aglet.store())?;
                         self.set_view_selection_by_name(&name);
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.mode = Mode::ViewPicker;
+                        self.mode = Mode::ViewPicker {
+                            index: self.view_index,
+                        };
                         self.status = format!("Cloned view as '{name}'");
                     }
                     Err(err) => {
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.mode = Mode::ViewPicker;
+                        self.mode = Mode::ViewPicker {
+                            index: picker_index,
+                        };
                         self.status = format!("Clone failed: {err}");
                     }
                 }
             }
-            Some(NameInputContext::ViewRename) => {
+            Some(NameInputContext::ViewRename {
+                view_id,
+                picker_index,
+            }) => {
                 if input_text.is_empty() {
                     self.cancel_input_panel_with_status(input_panel::InputPanelKind::NameInput);
                     return Ok(());
                 }
                 let name = input_text.clone();
-                let Some(old_name) = self.view_pending_edit_name.clone() else {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.mode = Mode::ViewPicker;
-                    self.status = "View rename failed: no selected view".to_string();
-                    return Ok(());
+                self.input_panel = None;
+                self.name_input_context = None;
+                self.mode = Mode::ViewPicker {
+                    index: picker_index,
                 };
-                let Some(mut view) = self
-                    .views
-                    .iter()
-                    .find(|v| v.name.eq_ignore_ascii_case(&old_name))
-                    .cloned()
-                else {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.view_pending_edit_name = None;
-                    self.mode = Mode::ViewPicker;
+                let Some(mut view) = self.views.iter().find(|v| v.id == view_id).cloned() else {
                     self.status = "View rename failed: selected view not found".to_string();
                     return Ok(());
                 };
                 if aglet_core::store::is_system_view_name(&view.name) {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.view_pending_edit_name = None;
-                    self.mode = Mode::ViewPicker;
                     self.status = format!("View rename failed: {} view is immutable", view.name);
                     return Ok(());
                 }
                 if view.name == name {
-                    self.input_panel = None;
-                    self.name_input_context = None;
-                    self.view_pending_edit_name = None;
-                    self.mode = Mode::ViewPicker;
                     self.status = "View rename canceled (unchanged)".to_string();
                     return Ok(());
                 }
@@ -5345,19 +5329,12 @@ impl App {
                     Ok(()) => {
                         self.refresh(aglet.store())?;
                         self.set_view_selection_by_name(&name);
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.view_pending_edit_name = None;
-                        self.mode = Mode::ViewPicker;
+                        self.mode = Mode::ViewPicker {
+                            index: self.view_index,
+                        };
                         self.status = format!("Renamed view to {name}");
                     }
-                    Err(err) => {
-                        self.input_panel = None;
-                        self.name_input_context = None;
-                        self.view_pending_edit_name = None;
-                        self.mode = Mode::ViewPicker;
-                        self.status = format!("View rename failed: {err}");
-                    }
+                    Err(err) => self.status = format!("View rename failed: {err}"),
                 }
             }
             Some(NameInputContext::NumericValueEdit) => {

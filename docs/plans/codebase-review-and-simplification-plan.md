@@ -221,8 +221,8 @@ rolled-back transaction, with a bounded lock wait added after review.
 
 ### Phase 4. TUI
 
-Status 2026-11-18: step 1 done (#165), step 2 done (#166). Step 3: HelpPanel
-done (#167); the rest not started. Step 4 not started.
+Status 2026-11-18: step 1 done (#165), step 2 done (#166). Step 3: HelpPanel and ViewPicker
+done (#167, #168); the rest not started. Step 4 not started.
 
 Order matters here: the harness comes first so later steps do not rewrite
 tests twice.

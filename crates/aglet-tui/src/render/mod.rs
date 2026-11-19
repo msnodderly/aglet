@@ -355,7 +355,7 @@ impl App {
         label.to_string()
     }
 
-    fn list_state_for(area: Rect, selected_line: Option<usize>) -> ListState {
+    pub(crate) fn list_state_for(area: Rect, selected_line: Option<usize>) -> ListState {
         let mut state = ListState::default().with_selected(selected_line);
         *state.offset_mut() = list_scroll_for_selected_line(area, selected_line) as usize;
         state
@@ -587,8 +587,13 @@ impl App {
                 self.input_panel = Some(panel);
             }
         }
-        if matches!(self.mode, Mode::ViewPicker | Mode::ViewDeleteConfirm) {
-            self.render_view_picker(frame, centered_rect(60, 60, frame.area()));
+        if let Mode::ViewPicker { index } | Mode::ViewDeleteConfirm { index } = self.mode {
+            modes::view_picker::render(
+                frame,
+                centered_rect(60, 60, frame.area()),
+                &self.views,
+                index,
+            );
         }
         if matches!(self.mode, Mode::ItemAssignPicker | Mode::ItemAssignInput) {
             let popup_area = centered_rect(88, 72, frame.area());
@@ -2069,9 +2074,9 @@ impl App {
             | Mode::LinkWizard
             | Mode::ItemAssignPicker
             | Mode::InspectUnassign
-            | Mode::ViewPicker
+            | Mode::ViewPicker { .. }
             | Mode::ViewEdit
-            | Mode::ViewDeleteConfirm
+            | Mode::ViewDeleteConfirm { .. }
             | Mode::ConfirmDelete
             | Mode::BoardColumnDeleteConfirm
             | Mode::CategoryManager
@@ -4427,7 +4432,7 @@ impl App {
                     "Delete column? y:confirm Esc:cancel".to_string()
                 }
             }
-            Mode::ViewDeleteConfirm => "Delete view? y:confirm Esc:cancel".to_string(),
+            Mode::ViewDeleteConfirm { .. } => "Delete view? y:confirm Esc:cancel".to_string(),
             Mode::ItemAssignPicker => {
                 "Assign categories (type to filter/create; Enter resolves+closes; Space toggles; Esc closes)".to_string()
             }
@@ -4505,7 +4510,7 @@ impl App {
                     parts.join(" | ")
                 }),
             Mode::HelpPanel { .. }
-            | Mode::ViewPicker
+            | Mode::ViewPicker { .. }
             | Mode::ViewEdit
             | Mode::CategoryManager
             | Mode::CategoryDirectEdit
@@ -4596,8 +4601,8 @@ impl App {
                     CATEGORY_MANAGER_TREE_HINTS.to_vec()
                 }
             }
-            Mode::ViewPicker => VIEW_PICKER_HINTS.to_vec(),
-            Mode::ViewDeleteConfirm => CONFIRM_HINTS.to_vec(),
+            Mode::ViewPicker { .. } => VIEW_PICKER_HINTS.to_vec(),
+            Mode::ViewDeleteConfirm { .. } => CONFIRM_HINTS.to_vec(),
             Mode::ViewEdit => {
                 if let Some(state) = &self.view_edit_state {
                     if state.discard_confirm {
@@ -5447,43 +5452,6 @@ impl App {
                 frame.render_widget(Paragraph::new(hint_text).style(hint_style), help2_rect);
             }
         }
-    }
-
-    pub(crate) fn render_view_picker(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        frame.render_widget(Clear, area);
-
-        let items: Vec<ListItem<'_>> = if self.views.is_empty() {
-            vec![ListItem::new(Line::from("(no views configured)"))]
-        } else {
-            self.views
-                .iter()
-                .map(|view| ListItem::new(Line::from(view.name.clone())))
-                .collect()
-        };
-        let mut state = Self::list_state_for(
-            area,
-            if self.views.is_empty() {
-                None
-            } else {
-                Some(self.picker_index)
-            },
-        );
-        let item_count = items.len();
-
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol("> ")
-                .highlight_style(selected_row_style())
-                .block(
-                    Block::default()
-                        .title("View Palette")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Magenta)),
-                ),
-            area,
-            &mut state,
-        );
-        Self::render_vertical_scrollbar(frame, area, item_count, state.offset());
     }
 
     /// Inner text row of the assign popup's category input block (bordered

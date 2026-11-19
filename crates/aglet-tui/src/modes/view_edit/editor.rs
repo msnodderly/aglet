@@ -56,9 +56,15 @@ impl App {
         }
     }
 
-    fn open_view_edit_with_mode(&mut self, view: View, is_new_view: bool) {
+    fn open_view_edit_with_mode(
+        &mut self,
+        view: View,
+        is_new_view: bool,
+        return_picker_index: usize,
+    ) {
         let preview_count = self.preview_count_for_query(&view.criteria);
         self.view_edit_state = Some(ViewEditState {
+            return_picker_index,
             draft: view,
             is_new_view,
             region: ViewEditRegion::Criteria,
@@ -88,12 +94,23 @@ impl App {
         self.status = Self::view_edit_default_status();
     }
 
-    pub(crate) fn open_view_edit(&mut self, view: View) {
-        self.open_view_edit_with_mode(view, false);
+    pub(crate) fn open_view_edit(&mut self, view: View, return_picker_index: usize) {
+        self.open_view_edit_with_mode(view, false, return_picker_index);
     }
 
-    pub(crate) fn open_view_edit_new_view_focus_name(&mut self, view: View) {
-        self.open_view_edit_with_mode(view, true);
+    /// The picker row the open editor returns to.
+    fn view_edit_return_picker_index(&self) -> usize {
+        self.view_edit_state
+            .as_ref()
+            .map_or(self.view_index, |state| state.return_picker_index)
+    }
+
+    pub(crate) fn open_view_edit_new_view_focus_name(
+        &mut self,
+        view: View,
+        return_picker_index: usize,
+    ) {
+        self.open_view_edit_with_mode(view, true, return_picker_index);
         if let Some(state) = &mut self.view_edit_state {
             state.sections_view_row_selected = true;
             state.region = ViewEditRegion::Criteria;
@@ -284,8 +301,9 @@ impl App {
                     .as_ref()
                     .map(|s| s.is_new_view)
                     .unwrap_or(false);
+                let index = self.view_edit_return_picker_index();
                 self.view_edit_state = None;
-                self.mode = Mode::ViewPicker;
+                self.mode = Mode::ViewPicker { index };
                 self.status = if is_new_view {
                     "View creation canceled; unsaved draft discarded".to_string()
                 } else {
@@ -333,8 +351,9 @@ impl App {
                         .as_ref()
                         .map(|s| s.is_new_view)
                         .unwrap_or(false);
+                    let index = self.view_edit_return_picker_index();
                     self.view_edit_state = None;
-                    self.mode = Mode::ViewPicker;
+                    self.mode = Mode::ViewPicker { index };
                     self.status = if is_new_view {
                         "View creation canceled".to_string()
                     } else {
@@ -430,7 +449,10 @@ impl App {
                 self.mode = if is_new_view {
                     Mode::Normal
                 } else {
-                    Mode::ViewPicker
+                    // Saving selected the edited view; the picker follows it.
+                    Mode::ViewPicker {
+                        index: self.view_index,
+                    }
                 };
                 self.status = if is_new_view {
                     format!("Created and switched to view \"{view_name}\"")
@@ -443,5 +465,12 @@ impl App {
             }
         }
         Ok(true)
+    }
+}
+
+impl App {
+    pub(crate) fn preview_count_for_query(&self, query: &Query) -> usize {
+        let reference_date = jiff::Zoned::now().date();
+        evaluate_query(query, &self.all_items, reference_date).len()
     }
 }

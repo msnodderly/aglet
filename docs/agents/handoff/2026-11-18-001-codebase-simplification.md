@@ -11,7 +11,7 @@ Written by Claude (Opus 5.5, Claude Code). Supersedes
 **Plan:** `docs/plans/codebase-review-and-simplification-plan.md` (active).
 **D1 plan:** `docs/plans/schema-squash-v21.md` (active, implemented).
 **Worktree:** `/home/code/src/aglet/.claude/worktrees/simplify`
-**Top branch:** `simplify/phase-4c-small-modes`
+**Top branch:** `simplify/phase-4d-view-picker`
 
 ## PR stack
 
@@ -31,6 +31,7 @@ merge it upward one branch at a time and push each.
 | #165 | `simplify/phase-4a-harness` | Key-driven TUI test harness |
 | #166 | `simplify/phase-4b-key-events` | Handlers take `KeyEvent` |
 | #167 | `simplify/phase-4c-small-modes` | HelpPanel owns its state |
+| #168 | `simplify/phase-4d-view-picker` | ViewPicker owns its state |
 
 Review comments on #158, #159, #162, #164, and #165 were fixed, merged up
 the stack, and answered inline on 2026-11-18.
@@ -59,19 +60,27 @@ HelpPanel (#167) is the pattern:
 4. Port that mode's tests in `tests.rs` to `harness::Harness` and move them
    to `src/tests/<mode>.rs`. Bound any navigation with `press_until`.
 
-**Next: ViewPicker.** `picker_index` outlives the mode today: the picker
-hands off to rename or clone (InputPanel with `NameInputContext::ViewRename`
-/ `ViewClone`, using `view_pending_edit_name` / `view_pending_clone_id`), to
-ViewEdit (`modes/view_edit/editor.rs` returns to the picker on cancel or
-save), and to `ViewDeleteConfirm`. Under D4 each of those children carries
-the picker index back, for example `Mode::ViewDeleteConfirm { picker_index }`
-and the rename context carrying `old_name` plus `picker_index`. The two
-`view_pending_*` fields belong in `NameInputContext` variants.
+**ViewPicker (#168)** follows the same pattern with a return path: the
+palette row lives in `Mode::ViewPicker { index }` / `ViewDeleteConfirm
+{ index }`, `NameInputContext::ViewRename` / `ViewClone` carry `view_id` and
+`picker_index`, and `ViewEditState::return_picker_index` brings the view
+editor back to the row. The handler takes `index` as a parameter from the
+dispatch, so there is no guard. `handle_confirm_delete_key` moved to
+`modes/confirm_delete.rs`, the next mode to migrate.
 
-Remaining order after ViewPicker: the confirm dialogs, LinkWizard,
+Remaining order: the confirm dialogs, LinkWizard,
 GlobalSettings, SuggestionReview, CategoryColumnPicker, CategoryDirectEdit,
 InputPanel, item assign, CategoryManager, ViewEdit, then Normal. Step 4 (form
 descriptors) follows.
+
+## Regression run against main (2026-11-18)
+
+Scripts in the session scratchpad (`regress/`) built `main` (= `v0.1.0`) and
+the top branch, made a v20 fixture with `main`'s CLI, and drove both TUIs in
+tmux with identical keys: 84-step and 31-step scenarios, 0 differing
+screens; 23 read-only CLI commands and the resulting databases identical.
+It found one bug in the #162 review fix (busy notice hidden by the picker's
+footer), fixed in `9d0e549`. Re-run it after each mode migration.
 
 ## Working notes
 

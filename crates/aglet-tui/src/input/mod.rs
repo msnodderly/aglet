@@ -35,9 +35,9 @@ impl App {
             Mode::ItemAssignInput => self.handle_item_assign_category_input_key(key, aglet),
             Mode::InspectUnassign => self.handle_inspect_unassign_key(key, aglet),
             Mode::SearchBarFocused => self.handle_search_bar_key(key, aglet),
-            Mode::ViewPicker => self.handle_view_picker_key(key, aglet),
+            Mode::ViewPicker { index } => self.handle_view_picker_key(index, key, aglet),
             Mode::ViewEdit => self.handle_view_edit_key(key, aglet),
-            Mode::ViewDeleteConfirm => self.handle_view_delete_key(key, aglet),
+            Mode::ViewDeleteConfirm { index } => self.handle_view_delete_key(index, key, aglet),
             Mode::ConfirmDelete => self.handle_confirm_delete_key(key, aglet),
             Mode::BoardColumnDeleteConfirm => {
                 self.handle_board_column_delete_confirm_key(key, aglet)

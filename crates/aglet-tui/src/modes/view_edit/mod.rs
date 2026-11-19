@@ -2,7 +2,6 @@ mod details;
 mod editor;
 mod inline;
 mod overlay;
-mod picker;
 mod sections;
 mod state;
 

@@ -116,8 +116,16 @@ pub(crate) struct LinkWizardState {
 /// is open.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum NameInputContext {
-    ViewRename,
-    ViewClone,
+    /// Renaming `view_id` from the view picker; returns to row `picker_index`.
+    ViewRename {
+        view_id: Uuid,
+        picker_index: usize,
+    },
+    /// Cloning `view_id` from the view picker; returns to row `picker_index`.
+    ViewClone {
+        view_id: Uuid,
+        picker_index: usize,
+    },
     NumericValueEdit,
     WhenDateEdit,
     CategoryCreate,
