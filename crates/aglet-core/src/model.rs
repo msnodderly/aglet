@@ -323,7 +323,6 @@ pub struct Item {
 /// One category on one item, and why it is there. `explanation` is the
 /// provenance; `source()` is derived from it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(from = "AssignmentRecord", into = "AssignmentRecord")]
 pub struct Assignment {
     pub explanation: AssignmentExplanation,
     pub assigned_at: Timestamp,
@@ -334,6 +333,7 @@ pub struct Assignment {
     /// canonical values. Carries detail `explanation` lacks, such as
     /// `manual:done`, `recurrence:carry`, and the category name an LLM chose.
     pub origin: Option<String>,
+    #[serde(default)]
     pub numeric_value: Option<Decimal>,
 }
 
@@ -347,53 +347,6 @@ impl Assignment {
         match &self.explanation {
             AssignmentExplanation::Legacy { .. } => None,
             explanation => Some(explanation),
-        }
-    }
-}
-
-/// The stored shape of an [`Assignment`], used for the `assignments` table
-/// and deletion-log JSON. It keeps `source` and a nullable `explanation` so
-/// files stay readable by older builds; rows with a null explanation load as
-/// [`AssignmentExplanation::Legacy`].
-#[derive(Serialize, Deserialize)]
-pub(crate) struct AssignmentRecord {
-    pub(crate) source: AssignmentSource,
-    pub(crate) assigned_at: Timestamp,
-    pub(crate) sticky: bool,
-    pub(crate) origin: Option<String>,
-    #[serde(default)]
-    pub(crate) explanation: Option<AssignmentExplanation>,
-    #[serde(default)]
-    pub(crate) numeric_value: Option<Decimal>,
-}
-
-impl From<AssignmentRecord> for Assignment {
-    fn from(record: AssignmentRecord) -> Self {
-        Self {
-            explanation: record.explanation.unwrap_or(AssignmentExplanation::Legacy {
-                source: record.source,
-            }),
-            assigned_at: record.assigned_at,
-            sticky: record.sticky,
-            origin: record.origin,
-            numeric_value: record.numeric_value,
-        }
-    }
-}
-
-impl From<Assignment> for AssignmentRecord {
-    fn from(assignment: Assignment) -> Self {
-        let source = assignment.source();
-        Self {
-            source,
-            explanation: match assignment.explanation {
-                AssignmentExplanation::Legacy { .. } => None,
-                explanation => Some(explanation),
-            },
-            assigned_at: assignment.assigned_at,
-            sticky: assignment.sticky,
-            origin: assignment.origin,
-            numeric_value: assignment.numeric_value,
         }
     }
 }
@@ -471,8 +424,8 @@ pub enum AssignmentExplanation {
         model: Option<String>,
         rationale: Option<String>,
     },
-    /// Loaded from a row stored before explanations were recorded; only the
-    /// kind is known. Never written: it is stored as a null explanation.
+    /// An assignment made before explanations were recorded; only the kind
+    /// is known. Created by the v21 schema upgrade from null explanations.
     Legacy {
         source: AssignmentSource,
     },
