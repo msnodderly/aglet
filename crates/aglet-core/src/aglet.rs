@@ -306,14 +306,22 @@ impl<'a> Aglet<'a> {
         self.store.update_item(&item)
     }
 
+    /// Create a category and re-evaluate every item against it. Both happen
+    /// in one transaction: if any item fails, the category is not created.
     pub fn create_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
-        self.store.create_category(category)?;
-        self.process_category_change(category.id)
+        self.transaction(|| {
+            self.store.create_category(category)?;
+            self.process_category_change(category.id)
+        })
     }
 
+    /// Save a category and re-evaluate every item against it, in one
+    /// transaction: a failure keeps the old definition and old assignments.
     pub fn update_category(&self, category: &Category) -> Result<EvaluateAllItemsResult> {
-        self.store.update_category(category)?;
-        self.process_category_change(category.id)
+        self.transaction(|| {
+            self.store.update_category(category)?;
+            self.process_category_change(category.id)
+        })
     }
 
     pub fn add_category_action(
