@@ -211,12 +211,6 @@ pub(crate) enum NormalFocus {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum SlotSortDirection {
-    Asc,
-    Desc,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SlotSortColumn {
     ItemText,
     SectionColumn {
@@ -228,7 +222,28 @@ pub(crate) enum SlotSortColumn {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct SlotSortKey {
     pub(crate) column: SlotSortColumn,
-    pub(crate) direction: SlotSortDirection,
+    pub(crate) direction: SortDirection,
+}
+
+impl SlotSortKey {
+    /// The core sort key this board column sorts by.
+    pub(crate) fn to_sort_key(self) -> SortKey {
+        let field = match self.column {
+            SlotSortColumn::ItemText => SortField::ItemText,
+            SlotSortColumn::SectionColumn {
+                kind: ColumnKind::When,
+                ..
+            } => SortField::WhenDate,
+            SlotSortColumn::SectionColumn {
+                heading,
+                kind: ColumnKind::Standard,
+            } => SortField::Category(heading),
+        };
+        SortKey {
+            field,
+            direction: self.direction,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

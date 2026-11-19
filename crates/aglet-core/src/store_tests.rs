@@ -95,7 +95,7 @@ fn root_names(store: &Store) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter(|category| category.parent.is_none())
-        .filter(|category| !Store::is_reserved_category_name(&category.name))
+        .filter(|category| !is_reserved_category_name(&category.name))
         .map(|category| category.name)
         .collect()
 }

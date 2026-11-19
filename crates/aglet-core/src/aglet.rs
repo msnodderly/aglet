@@ -22,11 +22,11 @@ use crate::engine::{
 use crate::error::{AgletError, Result};
 use crate::matcher::Classifier;
 use crate::model::{
-    origin as origin_const, Action, Assignment, AssignmentActionKind, AssignmentEvent,
-    AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category, CategoryId,
-    CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem,
-    RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE, RESERVED_CATEGORY_NAME_ENTRY,
-    RESERVED_CATEGORY_NAME_WHEN,
+    is_reserved_category_name, origin as origin_const, Action, Assignment, AssignmentActionKind,
+    AssignmentEvent, AssignmentEventKind, AssignmentExplanation, AssignmentSource, Category,
+    CategoryId, CategoryValueKind, Condition, Item, ItemId, ItemLink, ItemLinkKind,
+    ItemLinksForItem, RecurrenceRule, Section, View, RESERVED_CATEGORY_NAME_DONE,
+    RESERVED_CATEGORY_NAME_ENTRY, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::store::Store;
 use crate::workflow::{
@@ -2005,13 +2005,13 @@ impl<'a> Aglet<'a> {
         let preview_reserved: HashMap<String, CategoryId> = preview_store
             .get_hierarchy()?
             .into_iter()
-            .filter(|category| Self::is_reserved_category_name(&category.name))
+            .filter(|category| is_reserved_category_name(&category.name))
             .map(|category| (category.name.to_ascii_lowercase(), category.id))
             .collect();
 
         let mut id_map = HashMap::new();
         for category in source_categories {
-            let preview_id = if Self::is_reserved_category_name(&category.name) {
+            let preview_id = if is_reserved_category_name(&category.name) {
                 *preview_reserved
                     .get(&category.name.to_ascii_lowercase())
                     .ok_or_else(|| AgletError::InvalidOperation {
@@ -2025,7 +2025,7 @@ impl<'a> Aglet<'a> {
 
         for category in source_categories {
             let preview_category = Self::remap_category_for_preview(category, &id_map)?;
-            if Self::is_reserved_category_name(&category.name) {
+            if is_reserved_category_name(&category.name) {
                 preview_store.update_category(&preview_category)?;
             } else {
                 preview_store.create_category(&preview_category)?;
@@ -2169,16 +2169,6 @@ impl<'a> Aglet<'a> {
             .ok_or_else(|| AgletError::InvalidOperation {
                 message: format!("missing reverse category mapping for {context}: {preview_id}"),
             })
-    }
-
-    fn is_reserved_category_name(name: &str) -> bool {
-        [
-            RESERVED_CATEGORY_NAME_WHEN,
-            RESERVED_CATEGORY_NAME_ENTRY,
-            RESERVED_CATEGORY_NAME_DONE,
-        ]
-        .iter()
-        .any(|reserved_name| reserved_name.eq_ignore_ascii_case(name))
     }
 
     fn should_reprocess_with_implicit(&self, cfg: &ClassificationConfig) -> bool {

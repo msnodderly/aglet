@@ -962,8 +962,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        bucket_contains, display_category_ids, evaluate_query, matches_text_search, resolve_view,
-        resolve_when_bucket,
+        bucket_contains, compare_items_by_sort_keys, display_category_ids, evaluate_query,
+        matches_text_search, resolve_view, resolve_when_bucket, SortDirection, SortField, SortKey,
     };
     use crate::model::{
         Assignment, AssignmentSource, Category, CategoryId, CriterionMode, Item, Query, Section,
@@ -1114,6 +1114,56 @@ mod tests {
         category.parent = parent;
         category.children = children.to_vec();
         category
+    }
+
+    fn sorted_texts(items: &mut [Item], key: SortKey, categories: &[Category]) -> Vec<String> {
+        items.sort_by(|left, right| compare_items_by_sort_keys(left, right, &[key], categories));
+        items.iter().map(|item| item.text.clone()).collect()
+    }
+
+    #[test]
+    fn sort_by_category_puts_missing_values_last_in_both_directions() {
+        let mut cost = category(Uuid::new_v4(), "Cost", None, &[]);
+        cost.value_kind = crate::model::CategoryValueKind::Numeric;
+        let urgent = category(Uuid::new_v4(), "Urgent", None, &[]);
+        let categories = vec![cost.clone(), urgent.clone()];
+
+        let mut items: Vec<Item> = [("Ten", Some(10)), ("Missing", None), ("Five", Some(5))]
+            .into_iter()
+            .map(|(text, value)| {
+                let mut item = item_with_assignments(text, None, None, &[]);
+                if let Some(value) = value {
+                    let mut cost_assignment = assignment();
+                    cost_assignment.numeric_value = Some(rust_decimal::Decimal::new(value, 0));
+                    item.assignments.insert(cost.id, cost_assignment);
+                    item.assignments.insert(urgent.id, assignment());
+                }
+                item
+            })
+            .collect();
+
+        let key = |field, direction| SortKey { field, direction };
+        let cost_field = SortField::Category(cost.id);
+        assert_eq!(
+            sorted_texts(&mut items, key(cost_field, SortDirection::Asc), &categories),
+            ["Five", "Ten", "Missing"]
+        );
+        assert_eq!(
+            sorted_texts(
+                &mut items,
+                key(cost_field, SortDirection::Desc),
+                &categories
+            ),
+            ["Ten", "Five", "Missing"]
+        );
+        // A category with no children sorts assigned items ahead of unassigned ones.
+        let urgent_desc = key(SortField::Category(urgent.id), SortDirection::Desc);
+        assert_eq!(
+            sorted_texts(&mut items, urgent_desc, &categories)
+                .last()
+                .map(String::as_str),
+            Some("Missing")
+        );
     }
 
     #[test]

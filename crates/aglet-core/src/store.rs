@@ -14,11 +14,11 @@ use crate::classification::{
 };
 use crate::error::{AgletError, Result};
 use crate::model::{
-    Action, Assignment, AssignmentExplanation, AssignmentSource, BoardDisplayMode, Category,
-    CategoryId, CategoryValueKind, Condition, ConditionMatchMode, DatebookConfig, DeletionLogEntry,
-    EmptySections, Item, ItemId, ItemLink, ItemLinkKind, ItemLinksForItem, NumericFormat, Query,
-    RecurrenceRule, Section, SectionFlow, View, RESERVED_CATEGORY_NAMES,
-    RESERVED_CATEGORY_NAME_WHEN,
+    is_reserved_category_name, Action, Assignment, AssignmentExplanation, AssignmentSource,
+    BoardDisplayMode, Category, CategoryId, CategoryValueKind, Condition, ConditionMatchMode,
+    DatebookConfig, DeletionLogEntry, EmptySections, Item, ItemId, ItemLink, ItemLinkKind,
+    ItemLinksForItem, NumericFormat, Query, RecurrenceRule, Section, SectionFlow, View,
+    RESERVED_CATEGORY_NAMES, RESERVED_CATEGORY_NAME_WHEN,
 };
 use crate::workflow::{WorkflowConfig, READY_QUEUE_VIEW_NAME, WORKFLOW_CONFIG_KEY};
 
@@ -644,7 +644,7 @@ impl Store {
     // ── Category CRUD ───────────────────────────────────────────
 
     pub fn create_category(&self, category: &Category) -> Result<()> {
-        if Self::is_reserved_category_name(&category.name) {
+        if is_reserved_category_name(&category.name) {
             return Err(AgletError::ReservedName {
                 name: category.name.clone(),
             });
@@ -742,14 +742,14 @@ impl Store {
 
         // Reserved categories can be updated, but they cannot be renamed or
         // impersonated by non-reserved categories.
-        if Self::is_reserved_category_name(&category.name)
+        if is_reserved_category_name(&category.name)
             && !existing.name.eq_ignore_ascii_case(&category.name)
         {
             return Err(AgletError::ReservedName {
                 name: category.name.clone(),
             });
         }
-        if Self::is_reserved_category_name(&existing.name)
+        if is_reserved_category_name(&existing.name)
             && !existing.name.eq_ignore_ascii_case(&category.name)
         {
             return Err(AgletError::ReservedName {
@@ -923,7 +923,7 @@ impl Store {
 
     pub fn delete_category(&self, id: CategoryId) -> Result<()> {
         let category = self.get_category(id)?;
-        if Self::is_reserved_category_name(&category.name) {
+        if is_reserved_category_name(&category.name) {
             return Err(AgletError::ReservedName {
                 name: category.name,
             });
@@ -2299,12 +2299,6 @@ impl Store {
         let view = View::new(DEFAULT_VIEW_NAME.to_string());
         self.insert_view(&view)?;
         Ok(())
-    }
-
-    fn is_reserved_category_name(name: &str) -> bool {
-        RESERVED_CATEGORY_NAMES
-            .iter()
-            .any(|reserved| reserved.eq_ignore_ascii_case(name))
     }
 
     fn init(&self) -> Result<()> {
