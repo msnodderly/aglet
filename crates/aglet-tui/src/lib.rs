@@ -605,4 +605,6 @@ impl Default for App {
 }
 
 #[cfg(test)]
+mod harness;
+#[cfg(test)]
 mod tests;
