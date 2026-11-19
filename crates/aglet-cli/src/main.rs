@@ -4027,13 +4027,27 @@ fn cmd_import(aglet: &Aglet<'_>, store: &Store, command: ImportCommand) -> Resul
             };
 
             // LLM suggestions run after the commit so the write lock is never
-            // held across network calls.
+            // held across network calls. The rows are saved by now, so a
+            // classification failure is a warning: failing the command would
+            // invite a retry that duplicates them.
+            let mut unclassified = 0usize;
             for item_id in &created {
-                aglet
-                    .classify_item_semantic_after_save(*item_id)
-                    .map_err(|e| e.to_string())?;
+                if matches!(
+                    aglet.store().get_item(*item_id),
+                    Err(AgletError::NotFound { .. })
+                ) {
+                    // A category action deleted it during the import.
+                    continue;
+                }
+                if let Err(err) = aglet.classify_item_semantic_after_save(*item_id) {
+                    unclassified += 1;
+                    eprintln!("warning: classification failed for {item_id}: {err}");
+                }
             }
             println!("imported_rows={}", created.len());
+            if unclassified > 0 {
+                eprintln!("warning: {unclassified} imported row(s) were saved but not classified");
+            }
             Ok(())
         }
     }
